@@ -7,12 +7,18 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Union, Tuple, TYPE_CHECKING
 from warnings import warn
-from lapy import Solver, TriaMesh
+from lapy import Solver, TriaMesh, TetMesh
 import numpy as np
 from scipy.sparse import spmatrix
 from scipy.sparse.linalg import LinearOperator, eigsh, splu
 from trimesh import Trimesh
 from neuromodes.io import read_surf, mask_surf
+
+# =============================================================================================
+import nibabel as nib
+from scipy.interpolate import griddata
+from trimesh.voxel.ops import matrix_to_marching_cubes
+import gmsh
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray, ArrayLike
@@ -28,7 +34,7 @@ class EigenSolver(Solver):
 
     def __init__(
         self,
-        surf: Union[str, Path, Trimesh, TriaMesh, dict],
+        geometry: Union[str, Path, Trimesh, TriaMesh, dict],
         mask: Union[ArrayLike, None] = None,
         normalize: bool = False,
         hetero: Union[ArrayLike, None] = None,
@@ -69,54 +75,81 @@ class EigenSolver(Solver):
         ValueError
             If `hetero` is constant (raised by `scale_hetero`).
         """
-        # Surface inputs and checks (check_surf called in read_surf and mask_surf)
-        surf = read_surf(surf)
-        if mask is not None:
-            self.mask = np.asarray(mask, dtype=bool)
-            surf = mask_surf(surf, self.mask)
-        else:
-            self.mask = None
-        self.geometry = TriaMesh(surf.vertices, surf.faces)
-        if normalize:
-            self.geometry.normalize_()
-        self.n_verts = surf.vertices.shape[0]
+        # Infer surface or volume (TODO: allow TetMesh, dict, .mgh, .mgz)
+        if isinstance(geometry, (str, Path)) and str(geometry).endswith(('.nii', '.nii.gz')):
+            self.is_vol = True
 
-        # Hetero inputs
-        self._raw_hetero = hetero
-        if hetero is None: # Handle None case by setting to ones
-            if scaling is not None:
-                warn("`scaling` is ignored (and set to None) as `hetero` is None.")
-            if alpha is not None:
-                warn("`alpha` is ignored (and set to None) as `hetero` is None.")
+            # Assign attributes for volume (TODO: handle hetero, masking, other normalizations)
+            geometry, roi_vol = make_tetra_mesh(geometry)
+            
+            if normalize:
+                geometry.v = geometry.v/roi_vol**(1/3)
+
+            self.n_verts = geometry.v.shape[0]
+            self.geometry = geometry
+
+            # Complain
+            if mask is not None or hetero is not None or alpha is not None or scaling is not None:
+                warn("`mask`, `hetero`, `alpha`, `scaling` are not implemented for volumes yet and "
+                     "will be ignored.")
+
+            self.mask = None
+            self._raw_hetero = None
             self._scaling = None
             self._alpha = None
             self.hetero = np.ones(self.n_verts)
+
         else:
-            hetero = np.asarray(hetero)
-            alpha = 1.0 if alpha is None else float(alpha)
-            scaling = "sigmoid" if scaling is None else scaling
+            self.is_vol = False
 
-            # Ensure hetero has correct length (masked or unmasked)
-            if hetero.shape == (self.n_verts,):
-                pass
-            elif self.mask is not None and hetero.shape == (len(self.mask),):
-                hetero = hetero[self.mask]
+            # Surface inputs and checks (check_surf called in read_surf and mask_surf)
+            surf = read_surf(geometry)
+            if mask is not None:
+                self.mask = np.asarray(mask, dtype=bool)
+                surf = mask_surf(surf, self.mask)
             else:
-                err_str = f"the number of vertices in the surface mesh ({self.n_verts})"
-                if self.mask is not None:
-                    err_str += f" or the masked surface mesh (of size {self.mask.sum()})"
-                raise ValueError(
-                    f"`hetero` must be a 1D array with length matching {err_str}."
-                )
+                self.mask = None
+            self.geometry = TriaMesh(surf.vertices, surf.faces)
+            if normalize:
+                self.geometry.normalize_()
+            self.n_verts = surf.vertices.shape[0]
 
-            # Scale and assign the heterogeneity map
-            self._scaling = scaling    
-            self._alpha = alpha
-            self.hetero = scale_hetero(
-                hetero=hetero, 
-                alpha=self._alpha, 
-                scaling=self._scaling
-            )
+            # Hetero inputs
+            self._raw_hetero = hetero
+            if hetero is None: # Handle None case by setting to ones
+                if scaling is not None:
+                    warn("`scaling` is ignored (and set to None) as `hetero` is None.")
+                if alpha is not None:
+                    warn("`alpha` is ignored (and set to None) as `hetero` is None.")
+                self._scaling = None
+                self._alpha = None
+                self.hetero = np.ones(self.n_verts)
+            else:
+                hetero = np.asarray(hetero)
+                alpha = 1.0 if alpha is None else float(alpha)
+                scaling = "sigmoid" if scaling is None else scaling
+
+                # Ensure hetero has correct length (masked or unmasked)
+                if hetero.shape == (self.n_verts,):
+                    pass
+                elif self.mask is not None and hetero.shape == (len(self.mask),):
+                    hetero = hetero[self.mask]
+                else:
+                    err_str = f"the number of vertices in the surface mesh ({self.n_verts})"
+                    if self.mask is not None:
+                        err_str += f" or the masked surface mesh (of size {self.mask.sum()})"
+                    raise ValueError(
+                        f"`hetero` must be a 1D array with length matching {err_str}."
+                    )
+
+                # Scale and assign the heterogeneity map
+                self._scaling = scaling    
+                self._alpha = alpha
+                self.hetero = scale_hetero(
+                    hetero=hetero, 
+                    alpha=self._alpha, 
+                    scaling=self._scaling
+                )
 
     def __str__(self) -> str:
         """String representation of the EigenSolver object."""
@@ -224,9 +257,21 @@ class EigenSolver(Solver):
         AssertionError
             If computed eigenvalues or eigenmodes contain NaNs.
         """
+
         # Validate inputs
         if not isinstance(n_modes, int) or n_modes <= 0:
             raise ValueError("`n_modes` must be a positive integer.")
+        
+        if self.is_vol: # TODO: merge with surface implementation below once compute_lbo supports volumes
+            # calculate eigenvalues and eigenmodes
+            fem = Solver(self.geometry)
+            self.evals, self.emodes = fem.eigs(k=n_modes)
+            if fix_mode1:
+                self.emodes[:, 0] = np.mean(self.emodes[:, 0])
+                self.evals[0] = 0.0
+            if standardize:
+                self.emodes = standardize_modes(self.emodes)
+            return self
 
         # Compute the Laplace-Beltrami operator / set stiffness and mass matrices
         self.compute_lbo(**kwargs)
@@ -541,3 +586,162 @@ def is_orthonormal_basis(
     # Check Euclidean or mass-orthonormality
     prod = emodes.T @ emodes if mass is None else emodes.T @ mass @ emodes
     return np.allclose(prod, np.eye(n_modes), rtol=rtol, atol=atol, equal_nan=False)
+
+# ================================================================================================================================================================================================
+# JAMES & KEVIN'S CODE BELOW FOR VOLUME EIGENMODES
+
+def get_tkrvox2ras(voldim, voxres):
+    """Generate transformation matrix to switch between tetrahedral and volume space.
+
+    Parameters
+    ----------
+    voldim : array (1x3)
+        Dimension of the volume (number of voxels in each of the 3 dimensions)
+    voxres : array (!x3)
+        Voxel resolution (resolution in each of the 3 dimensions)
+
+    Returns
+    ------
+    T : array (4x4)
+        Transformation matrix
+    """
+
+    T = np.zeros([4,4])
+    T[3,3] = 1
+
+    T[0,0] = -voxres[0]
+    T[0,3] = voxres[0]*voldim[0]/2
+
+    T[1,2] = voxres[2]
+    T[1,3] = -voxres[2]*voldim[2]/2
+
+
+    T[2,1] = -voxres[1]
+    T[2,3] = voxres[1]*voldim[1]/2
+
+    return T
+
+def make_tetra_mesh(nifti_input_filename):
+    """
+    Tetrahedral meshing using Gmsh's python API.
+    Returns a lapy.TetMesh object.
+    """
+
+    # Load binary NIFTI with ROI
+    img = nib.load(nifti_input_filename)
+    vol = img.get_fdata()
+    vol = (vol > 0).astype(np.uint8)
+
+    # Marching cubes to extract surface (replacing mri_mc from FreeSurfer)
+    surface = matrix_to_marching_cubes(vol)
+    verts = nib.affines.apply_affine(img.affine, surface.vertices)
+    faces = surface.faces
+
+    # Gmsh tetrahedral meshing (replacing terminal commands to gmsh)
+    gmsh.initialize()
+    gmsh.model.add("brain")
+
+    # Add points to gmsh
+    point_tags = []
+    for v in verts:
+        tag = gmsh.model.geo.addPoint(v[0], v[1], v[2])
+        point_tags.append(tag)
+
+    # Add triangular faces
+    triangle_tags = []
+    for f in faces:
+        l1 = gmsh.model.geo.addLine(point_tags[f[0]], point_tags[f[1]])
+        l2 = gmsh.model.geo.addLine(point_tags[f[1]], point_tags[f[2]])
+        l3 = gmsh.model.geo.addLine(point_tags[f[2]], point_tags[f[0]])
+
+        cl = gmsh.model.geo.addCurveLoop([l1, l2, l3])
+        s = gmsh.model.geo.addPlaneSurface([cl])
+        triangle_tags.append(s)
+
+    # Create surface loop and volume
+    sl = gmsh.model.geo.addSurfaceLoop(triangle_tags)
+    gmsh.model.geo.addVolume([sl])
+
+    gmsh.model.geo.synchronize()
+
+    # Match James' Gmsh settings
+    gmsh.option.setNumber("Mesh.Algorithm3D", 4)
+    gmsh.option.setNumber("Mesh.Optimize", 1)
+    gmsh.option.setNumber("Mesh.OptimizeNetgen", 1)
+    
+    gmsh.model.mesh.generate(3)
+
+    # Get mesh data
+    _, node_coords, _ = gmsh.model.mesh.getNodes()
+    elements = gmsh.model.mesh.getElements()
+
+    # Extract tetrahedra
+    elem_types, _, elem_nodes = elements
+
+    tetra_nodes = None
+
+    for etype, nodes in zip(elem_types, elem_nodes):
+        if etype == 4:  # Gmsh tetrahedron element type
+            tetra_nodes = nodes.reshape(-1, 4)
+
+    if tetra_nodes is None:
+        gmsh.finalize()
+        raise RuntimeError("No tetrahedral elements generated")
+
+    points = node_coords.reshape(-1, 3)
+
+    tets = tetra_nodes - 1   # gmsh uses 1-based indexing
+
+    gmsh.finalize()
+
+    # Create lapy TetMesh from vertices and tets
+    mesh = TetMesh(v=points.astype(np.float64), t=tets.astype(np.int32))
+
+    # Get ROI volume in mm^3
+    voxel_dims = (img.header["pixdim"])[1:4]
+    roi_vol = np.sum(vol) * np.prod(voxel_dims)
+
+    return mesh, roi_vol
+
+def project_emodes(nifti_input_filename, emodes, tetmesh):
+    """
+    Main function to calculate the eigenmodes of the ROI volume in a nifti file.
+    """
+    n_modes = emodes.shape[1]
+    # project eigenmodes in tetrahedral surface space into volume space
+
+    # prepare transformation
+    ROI_data = nib.load(nifti_input_filename)
+    roi_data = ROI_data.get_fdata()
+    inds_all = np.where(roi_data==1)
+    xx = inds_all[0]
+    yy = inds_all[1]
+    zz = inds_all[2]
+
+    points = np.zeros([xx.shape[0],4])
+    points[:,0] = xx
+    points[:,1] = yy
+    points[:,2] = zz
+    points[:,3] = 1
+
+    # calculate transformation matrix
+    T = get_tkrvox2ras(ROI_data.shape, ROI_data.header.get_zooms())
+
+    # apply transformation
+    points2 = np.matmul(T, np.transpose(points))
+
+    # initialize nifti output array
+    new_shape = np.array(roi_data.shape)
+    if roi_data.ndim>3:
+        new_shape[3] = n_modes
+    else:
+        new_shape = np.append(new_shape, n_modes)
+    new_data = np.zeros(new_shape)
+
+    # perform interpolation of eigenmodes from tetrahedral surface space to volume space
+    for mode in range(0, n_modes):
+        interpolated_data = griddata(tetmesh.v, emodes[:,mode], np.transpose(points2[0:3,:]), method='linear')
+        for ind in range(0, len(interpolated_data)):
+            new_data[xx[ind],yy[ind],zz[ind],mode] = interpolated_data[ind]
+
+    return nib.Nifti1Image(new_data, ROI_data.affine, header=ROI_data.header)

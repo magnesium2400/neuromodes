@@ -7,9 +7,13 @@ requires-python = ">=3.9"
 keywords = ["python", "modelling", "neuroimaging", "eigenmodes", "brain-mapping"]
 
 dependencies = [
+    "gmsh>=4.15.0",
     "lapy>=1.1.0",
+    "nbformat>=5.10.4",
     "nibabel>=5.2.1",
+    "nilearn>=0.12.1",
     "numpy>=1.24.4",
+    "scikit-image>=0.24.0",
     "scipy>=1.10.1",
     "trimesh>=4.8.1",
 ]
