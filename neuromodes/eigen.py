@@ -77,31 +77,19 @@ class EigenSolver(Solver):
         """
         # Infer surface or volume (TODO: allow TetMesh, dict, .mgh, .mgz)
         if isinstance(geometry, (str, Path)) and str(geometry).endswith(('.nii', '.nii.gz')):
-            self.is_vol = True
-
-            # Assign attributes for volume (TODO: handle hetero, masking, other normalizations)
             geometry, roi_vol = make_tetra_mesh(geometry)
             
+            # Normalise to unit volume
             if normalize:
                 geometry.v = geometry.v/roi_vol**(1/3)
 
             self.n_verts = geometry.v.shape[0]
             self.geometry = geometry
 
-            # Complain
-            if mask is not None or hetero is not None or alpha is not None or scaling is not None:
-                warn("`mask`, `hetero`, `alpha`, `scaling` are not implemented for volumes yet and "
-                     "will be ignored.")
-
-            self.mask = None
-            self._raw_hetero = None
-            self._scaling = None
-            self._alpha = None
-            self.hetero = np.ones(self.n_verts)
-
+            if mask is not None or hetero is not None:
+                raise NotImplementedError("`mask` and `hetero` are not implemented for volumes yet "
+                                          "and must be `None`.")
         else:
-            self.is_vol = False
-
             # Surface inputs and checks (check_surf called in read_surf and mask_surf)
             surf = read_surf(geometry)
             if mask is not None:
@@ -114,42 +102,42 @@ class EigenSolver(Solver):
                 self.geometry.normalize_()
             self.n_verts = surf.vertices.shape[0]
 
-            # Hetero inputs
-            self._raw_hetero = hetero
-            if hetero is None: # Handle None case by setting to ones
-                if scaling is not None:
-                    warn("`scaling` is ignored (and set to None) as `hetero` is None.")
-                if alpha is not None:
-                    warn("`alpha` is ignored (and set to None) as `hetero` is None.")
-                self._scaling = None
-                self._alpha = None
-                self.hetero = np.ones(self.n_verts)
+        # Hetero inputs
+        self._raw_hetero = hetero
+        if hetero is None: # Handle None case by setting to ones
+            if scaling is not None:
+                warn("`scaling` is ignored (and set to None) as `hetero` is None.")
+            if alpha is not None:
+                warn("`alpha` is ignored (and set to None) as `hetero` is None.")
+            self._scaling = None
+            self._alpha = None
+            self.hetero = np.ones(self.n_verts)
+        else:
+            hetero = np.asarray(hetero)
+            alpha = 1.0 if alpha is None else float(alpha)
+            scaling = "sigmoid" if scaling is None else scaling
+
+            # Ensure hetero has correct length (masked or unmasked)
+            if hetero.shape == (self.n_verts,):
+                pass
+            elif self.mask is not None and hetero.shape == (len(self.mask),):
+                hetero = hetero[self.mask]
             else:
-                hetero = np.asarray(hetero)
-                alpha = 1.0 if alpha is None else float(alpha)
-                scaling = "sigmoid" if scaling is None else scaling
-
-                # Ensure hetero has correct length (masked or unmasked)
-                if hetero.shape == (self.n_verts,):
-                    pass
-                elif self.mask is not None and hetero.shape == (len(self.mask),):
-                    hetero = hetero[self.mask]
-                else:
-                    err_str = f"the number of vertices in the surface mesh ({self.n_verts})"
-                    if self.mask is not None:
-                        err_str += f" or the masked surface mesh (of size {self.mask.sum()})"
-                    raise ValueError(
-                        f"`hetero` must be a 1D array with length matching {err_str}."
-                    )
-
-                # Scale and assign the heterogeneity map
-                self._scaling = scaling    
-                self._alpha = alpha
-                self.hetero = scale_hetero(
-                    hetero=hetero, 
-                    alpha=self._alpha, 
-                    scaling=self._scaling
+                err_str = f"the number of vertices in the surface mesh ({self.n_verts})"
+                if self.mask is not None:
+                    err_str += f" or the masked surface mesh (of size {self.mask.sum()})"
+                raise ValueError(
+                    f"`hetero` must be a 1D array with length matching {err_str}."
                 )
+
+            # Scale and assign the heterogeneity map
+            self._scaling = scaling    
+            self._alpha = alpha
+            self.hetero = scale_hetero(
+                hetero=hetero, 
+                alpha=self._alpha, 
+                scaling=self._scaling
+            )
 
     def __str__(self) -> str:
         """String representation of the EigenSolver object."""
@@ -165,7 +153,7 @@ class EigenSolver(Solver):
     def compute_lbo(
         self, 
         lump: bool = False,
-        smoothit: int = 10
+        smoothit: int = None  # default to 10 for surfaces
     ) -> EigenSolver:
         """
         This method computes the Laplace-Beltrami operator using finite element methods on a
@@ -177,7 +165,9 @@ class EigenSolver(Solver):
         lump : bool, optional
             Whether to use lumped mass matrix for the Laplace-Beltrami operator. Default is `False`.
         smoothit : int, optional
-            Number of smoothing iterations for curvature calculation. Default is `10`.
+            Number of smoothing iterations for curvature calculation. If `EigenSolver` was
+            initialised with a surface mesh, defaults to 10. If `EigenSolver` was initialised with a
+            volumetric mesh, this parameter is ignored and set to `None`.
 
         Returns
         -------
@@ -189,16 +179,27 @@ class EigenSolver(Solver):
         ValueError
             If `smoothit` is negative or not an integer.
         """
-        if not isinstance(smoothit, int) or smoothit < 0:
-            raise ValueError("`smoothit` must be a non-negative integer.")
+        if isinstance(self.geometry, TetMesh):
+            # Isotropic volumetric FEM (no Solver._fem_tet_aniso yet)
+            if smoothit is not None:
+                warn("`smoothit` is not yet supported for volumetric meshes and will be ignored.")
+            fem = Solver(self.geometry, lump=lump)
+            self.stiffness = fem.stiffness
+            self.mass = fem.mass
+        else:
+            # Anisotropic surface FEM
+            if smoothit is None:
+                smoothit = 10
+            elif not isinstance(smoothit, int) or smoothit < 0:
+                raise ValueError("`smoothit` must be a non-negative integer.")
 
-        u1, u2, _, _ = self.geometry.curvature_tria(smoothit)
+            u1, u2, _, _ = self.geometry.curvature_tria(smoothit)
 
-        hetero_tri = self.geometry.map_vfunc_to_tfunc(self.hetero)
-        hetero_mat = np.tile(hetero_tri[:, np.newaxis], (1, 2))
+            hetero_tri = self.geometry.map_vfunc_to_tfunc(self.hetero)
+            hetero_mat = np.tile(hetero_tri[:, np.newaxis], (1, 2))
 
-        self.stiffness, self.mass = self._fem_tria_aniso(self.geometry, u1, u2,
-                                                         hetero_mat, lump)
+            self.stiffness, self.mass = self._fem_tria_aniso(self.geometry, u1, u2,
+                                                            hetero_mat, lump)
         return self
 
     def solve(
@@ -261,17 +262,6 @@ class EigenSolver(Solver):
         # Validate inputs
         if not isinstance(n_modes, int) or n_modes <= 0:
             raise ValueError("`n_modes` must be a positive integer.")
-        
-        if self.is_vol: # TODO: merge with surface implementation below once compute_lbo supports volumes
-            # calculate eigenvalues and eigenmodes
-            fem = Solver(self.geometry)
-            self.evals, self.emodes = fem.eigs(k=n_modes)
-            if fix_mode1:
-                self.emodes[:, 0] = np.mean(self.emodes[:, 0])
-                self.evals[0] = 0.0
-            if standardize:
-                self.emodes = standardize_modes(self.emodes)
-            return self
 
         # Compute the Laplace-Beltrami operator / set stiffness and mass matrices
         self.compute_lbo(**kwargs)
@@ -305,7 +295,7 @@ class EigenSolver(Solver):
         )
 
         # Validate results
-        assert not np.isnan(self.evals).any() or np.isnan(self.emodes).any(), (
+        assert not (np.isnan(self.evals).any() or np.isnan(self.emodes).any()), (
             "Computed eigenvalues or eigenmodes contain NaNs. This may indicate numerical "
             "instability; consider adjusting `sigma` or checking mesh quality.")
 
@@ -440,7 +430,7 @@ class EigenSolver(Solver):
             emodes=self.emodes,
             evals=self.evals,
             mass=self.mass,
-            scaled_hetero=self.hetero,
+            scaled_hetero=(self.hetero if self._raw_hetero is not None else None),
             check_ortho=False,
             **kwargs
         )
