@@ -21,7 +21,7 @@ def simulate_waves(
     bold_out: bool = False,
     ext_input: Union[ArrayLike, None] = None,
     dt: float = 1e-4,
-    r: float = 18.0,
+    r: float = 17.4,
     gamma: float = 116.0,
     pde_method: str = "fourier",
     decomp_method: str = "project",
@@ -56,7 +56,7 @@ def simulate_waves(
     dt : float, optional
         Time step for simulation in seconds. Default is `1e-4`.
     r : float, optional
-        Spatial length scale of wave propagation in millimeters. Default is `18.0`.
+        Spatial length scale of wave propagation in millimeters. Default is `17.4`.
     gamma : float, optional
         Damping rate of wave propagation in seconds^-1. Default is `116.0`.
     pde_method : str, optional

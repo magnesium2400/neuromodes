@@ -1,5 +1,5 @@
 """
-Module for reading, validating, and manipulating surface meshes.
+Module for reading, validating, and manipulating meshes of brain structures.
 """
 
 from __future__ import annotations
@@ -7,7 +7,6 @@ from importlib.resources import files, as_file
 import os
 from pathlib import Path
 from typing import Union, Tuple, cast, TYPE_CHECKING
-from warnings import warn
 import gmsh
 from lapy import TriaMesh, TetMesh
 from nibabel.affines import apply_affine
@@ -29,42 +28,55 @@ def is_vol(geometry) -> bool:
         or isinstance(geometry, TetMesh)) else False
 
 def read_vol(
-    geometry: Union[str, Path, TetMesh, dict]
+    vol: Union[str, Path, dict]
 ) -> TetMesh:
     """
-    Tetrahedral meshing using Gmsh's python API.
-    Returns a lapy.TetMesh object.
+    Load and validate a tetrahedral volume mesh.
+
+    Parameters
+    ----------
+    vol : str, Path, or dict
+        Volume mesh specified as a file path (string or Path) to a VTK (.tetra.vtk) file,
+        or a dictionary with `vertices` and `tetras` keys.
+
+    Returns
+    -------
+    lapy.TetMesh
+        Validated volume mesh with vertices and tetrahedra.
+
+    Raises
+    ------
+    ValueError
+        If `vol` is a path-like string to an unsupported format.
     """
-    if isinstance(geometry, dict):
-        tetras = geometry['tetras']
-        verts = geometry['vertices']
-        mesh = TetMesh(v=verts.astype(np.float64), t=tetras.astype(np.int32))
-    elif isinstance(geometry, (str, Path)) and (geometry.endswith('.nii') or geometry.endswith('.nii.gz')):
-        # Load binary NIFTI with ROI
-        nifti = load(geometry)
-        warn("Provided geometry is a NIFTI file. Generating tetrahedral mesh using Gmsh and "
-             "marching cubes algorithm.")
-        verts, tetras = make_tetra_mesh(nifti)
-        mesh = TetMesh(v=verts.astype(np.float64), t=tetras.astype(np.int32))
-    elif isinstance(geometry, (str, Path)) and (geometry.endswith('.vtk')):
+    if isinstance(vol, dict):
+        mesh = TetMesh(
+            v=vol['vertices'].astype(np.float64),
+            t=vol['tetras'].astype(np.int32)
+            )
+    elif isinstance(vol, (str, Path)) and (str(vol).endswith('.tetra.vtk')):
         # Load with lapy
-        mesh = TetMesh.read_vtk(str(geometry))
-    elif isinstance(geometry, TetMesh):
-        mesh = geometry
+        mesh = TetMesh.read_vtk(str(vol))
     else:
-        raise ValueError("Unsupported volume geometry format. Provide a NIFTI (.nii, .nii.gz) or "
-                         "VTK (.vtk) file path, or a dictionary with 'vertices' and 'tetras' keys.")
+        raise ValueError("Unsupported volume geometry format. Provide a VTK (.tetra.vtk) file path,"
+                         " or a dictionary with 'vertices' and 'tetras' keys.")
 
     return mesh
 
-def make_tetra_mesh(
-    nifti: Nifti1Image
-) -> Tuple[NDArray, NDArray]:
+def make_vol_mesh(
+    nifti: Union[str, Path, Nifti1Image]
+) -> TetMesh:
     """
+    TODO: Validate this implementation / test edge cases.
     Tetrahedral meshing using Gmsh's python API and marching cubes algorithm.
-    Returns vertices and tetrahedra arrays.
+    Returns a lapy.TetMesh object.
     """
     # Get ROI from NIFTI
+    if isinstance(nifti, (str, Path)):
+        nifti = load(nifti)
+    elif not isinstance(nifti, Nifti1Image):
+        raise ValueError("nifti must be a Nifti1Image object or a path-like string to a valid "
+                         "`.nii` or `.nii.gz` file.")
     vol = nifti.get_fdata()
     vol = (vol > 0).astype(np.uint8)
 
@@ -123,7 +135,7 @@ def make_tetra_mesh(
     verts = node_coords.reshape(-1, 3)
     tetras = tetra_nodes - 1   # gmsh uses 1-based indexing
 
-    return verts, tetras
+    return TetMesh(v=verts.astype(np.float64), t=tetras.astype(np.int32))
 
 def read_surf(
     mesh: Union[str, Path, Trimesh, TriaMesh, dict]
@@ -213,8 +225,6 @@ def mask_surf(
     ------
     ValueError
         If `mask` does not have a length matching the number of vertices in `surf`.
-    
-    
     """
     mask = np.asarray(mask, dtype=bool)
 
@@ -230,6 +240,31 @@ def mask_surf(
     check_surf(mesh)
     
     return mesh
+
+def check_vol(
+    vol: TetMesh
+) -> None:
+    """
+    Check if the volume mesh has no unreferenced vertices and a contiguous surface boundary.
+    
+    Parameters
+    ----------
+    vol : lapy.TetMesh
+        The volume mesh to check.
+
+    Raises
+    ------
+    ValueError
+        If the volume mesh contains unreferenced vertices.
+    """
+    if vol.has_free_vertices():
+        raise ValueError('Volume mesh contains unreferenced vertices (i.e., not part of any '
+                         'tetrahedron).')
+
+    # Check that surface boundary of volume is contiguous
+    vol_surf = vol.boundary_tria()
+    vol_surf.orient_()
+    read_surf(vol_surf)  # converts to trimesh and runs check_surf within
 
 def check_surf(
     surf: Trimesh
@@ -263,6 +298,45 @@ def check_surf(
     if n_components != 1:
         raise ValueError(f'Surface mesh is not contiguous: {n_components} connected components '
                          'found.')
+
+def fetch_vol(
+    structure: str,
+    species: str = 'human',
+    hemi: str = 'L',
+    template: str = 'MNI152',
+) -> TetMesh:
+    """
+    Load a tetrahedral volume mesh from neuromodes data directory. For a list of available volumes,
+    see https://github.com/NSBLab/neuromodes/tree/main/neuromodes/data/included_data.csv.
+
+    Parameters
+    ----------
+    structure : str
+        Brain structure to load. Options include `'thalamus'`, `'striatum'`, and `'hippocampus'`.
+    species : str, optional
+        Species of the volume mesh. Currently only supports `'human'`. Default is `'human'`.
+    hemi : str, optional
+        Hemisphere of the volume mesh. Options are `'L'` and `'R'`. Default is `'L'`.
+    template : str, optional
+        Template of the volume mesh. Currently only supports `'MNI152'`. Default is `'MNI152'`.
+
+    Returns
+    -------
+    lapy.TetMesh
+        The loaded volume mesh.
+    """
+    data_dir = files('neuromodes.data')
+    filename = f'sp-{species}_tpl-{template}_hemi-{hemi}_{structure}.tetra.vtk'
+
+    try:
+        with as_file(data_dir / filename) as fpath:
+            return read_vol(fpath)
+    except Exception as e:
+        raise ValueError(
+            f"Volume data not found. Please see {data_dir}/included_data.csv or "
+            "https://github.com/NSBLab/neuromodes/tree/main/neuromodes/data/included_data.csv for a"
+            " list of available volumes."
+            ) from e
 
 def fetch_surf(
     species: str = 'human',

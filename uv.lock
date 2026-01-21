@@ -37,6 +37,17 @@ wheels = [
 ]
 
 [[package]]
+name = "bjdata"
+version = "0.6.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.10.*'" },
+    { name = "numpy", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ee/55/ab521a50338693b971f6a3f335ad8a021a72155a5318b4556ff884ecb3d1/bjdata-0.6.5.tar.gz", hash = "sha256:2f84b7feae077b36f69122a5baff2ddeb6b2d371ac2d0abea1c3029df9b2cd19", size = 97274, upload_time = "2026-01-08T05:28:03.849Z" }
+
+[[package]]
 name = "brainspace"
 version = "0.1.22"
 source = { registry = "https://pypi.org/simple" }
@@ -953,6 +964,34 @@ wheels = [
 ]
 
 [[package]]
+name = "iso2mesh"
+version = "0.5.2"
+source = { git = "https://github.com/NeuroJSON/pyiso2mesh.git#bfc6e6958dbd7ae9f0ee3884af1c161437858dac" }
+dependencies = [
+    { name = "bjdata" },
+    { name = "jdata" },
+    { name = "matplotlib", version = "3.9.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
+    { name = "matplotlib", version = "3.10.8", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
+    { name = "numpy", version = "2.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.10.*'" },
+    { name = "numpy", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+
+[[package]]
+name = "jdata"
+version = "0.9.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", version = "2.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
+    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.10.*'" },
+    { name = "numpy", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8f/83/d9e2eb9b9594fb233a3371912da1abb58e7d59ad56edbca0456986bfd037/jdata-0.9.2.tar.gz", hash = "sha256:290f1089dc4709c37d6ff61b05c293ce0c0f0b3490aac18fca2a494bdc3eec4a", size = 85635, upload_time = "2026-01-17T06:00:43.344Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/61/f9/f6f6a449051a913b1db7b9d61d5550d511a0be38ae0e20594ebdc001b297/jdata-0.9.2-py2.py3-none-any.whl", hash = "sha256:c36c2edfae731ff6cfbb3668e9a579382f270af094d88a5ee9b6600c2a241192", size = 71720, upload_time = "2026-01-17T06:00:42.113Z" },
+]
+
+[[package]]
 name = "jedi"
 version = "0.19.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1811,6 +1850,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "gmsh" },
+    { name = "iso2mesh" },
     { name = "lapy" },
     { name = "nbformat" },
     { name = "nibabel" },
@@ -1848,6 +1888,7 @@ tutorials = [
 requires-dist = [
     { name = "gmsh", specifier = ">=4.15.0" },
     { name = "ipykernel", marker = "extra == 'tutorials'", specifier = ">=6.31.0" },
+    { name = "iso2mesh", git = "https://github.com/NeuroJSON/pyiso2mesh.git" },
     { name = "joblib", marker = "extra == 'cache'", specifier = ">=1.5.3" },
     { name = "joblib", marker = "extra == 'testing'", specifier = ">=1.5.3" },
     { name = "lapy", specifier = ">=1.1.0" },

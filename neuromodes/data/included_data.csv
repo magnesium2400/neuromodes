@@ -7,6 +7,12 @@ midthickness,macaque,fsLR,32k,L,Donahue et al. (2016) J Neurosci,10.1523/JNEUROS
 midthickness,macaque,fsLR,32k,R,Donahue et al. (2016) J Neurosci,10.1523/JNEUROSCI.0493-16.2016,Cortical midthickness surface mesh and medial wall mask (Yerkes19)
 midthickness,marmoset,fsLR,32k,L,Hayashi et al. (2021) NeuroImage,10.1016/j.neuroimage.2021.117726,Cortical midthickness surface mesh and medial wall mask (Riken50)
 midthickness,marmoset,fsLR,32k,R,Hayashi et al. (2021) NeuroImage,10.1016/j.neuroimage.2021.117726,Cortical midthickness surface mesh and medial wall mask (Riken50)
+thalamus,human,MNI152,N/A,L,TBA,TBA,Left thalamus volume mesh taken from BrainEigenmodes repo
+thalamus,human,MNI152,N/A,R,TBA,TBA,Right thalamus volume mesh taken from BrainEigenmodes repo
+hippocampus,human,MNI152,N/A,L,TBA,TBA,Left hippocampus volume mesh taken from BrainEigenmodes repo
+hippocampus,human,MNI152,N/A,R,TBA,TBA,Right hippocampus volume mesh taken from BrainEigenmodes repo
+striatum,human,MNI152,N/A,L,TBA,TBA,Left striatum volume mesh taken from BrainEigenmodes repo
+striatum,human,MNI152,N/A,R,TBA,TBA,Right striatum volume mesh taken from BrainEigenmodes repo
 fcgradient1,human,fsLR,32k,L,Margulies et al. (2016) PNAS,10.1073/pnas.1608282113,First functional connectivity gradient derived from resting-state fMRI
 myelinmap,human,fsLR,32k,L,Glasser et al. (2016) Nature,10.1038/nature18933,Myelin map derived from T1w/T2w ratio
 ndi,human,fsLR,32k,L,Fukutomi et al. (2018) NeuroImage,10.1016/j.neuroimage.2018.02.017,Neurite density index derived from NODDI
