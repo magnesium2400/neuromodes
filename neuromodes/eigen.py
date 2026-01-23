@@ -91,7 +91,6 @@ class EigenSolver(Solver):
 
             check_vol(vol)
 
-            self.n_verts = vol.v.shape[0]
             self.geometry = vol
             if mask is not None:
                 warn("`mask` is not supported for volumes yet and will be ignored.")
@@ -107,13 +106,14 @@ class EigenSolver(Solver):
             self.geometry = TriaMesh(surf.vertices, surf.faces)
             if normalize:
                 self.geometry.normalize_()
-            self.n_verts = surf.vertices.shape[0]
         else:
             raise ValueError(
                 '`geometry` must be a path-like string to a valid surface or volume mesh, a '
                 '`trimesh.Trimesh`, `lapy.TriaMesh`, or `lapy.TetMesh` instance, or a dictionary '
                 'with keys `vertices` and either `faces` (for surfaces) or `tetras` (for volumes).'
             )
+        self.n_verts = self.geometry.v.shape[0]
+        self.n_elems = self.geometry.t.shape[0]
 
         # Hetero inputs
         if hetero is None: # Handle None case by setting to ones
@@ -159,7 +159,7 @@ class EigenSolver(Solver):
             )} mesh: {self.n_verts} vertices'
         if self.mask is not None:
             str_out += f' ({np.sum(self.mask == 0)} others masked out)'
-        str_out += f', {self.geometry.t.shape[0]} {"tetrahedra" if is_vol else "triangles"}'
+        str_out += f', {self.n_elems} {"tetrahedra" if is_vol else "triangles"}'
         if self.hetero is not None:
             str_out += f'\nHeterogeneity map scaling: {self._scaling} (alpha={self._alpha})'
         str_out += f'\n{self.n_modes if hasattr(self, "n_modes") else "No"} eigenmodes computed'
