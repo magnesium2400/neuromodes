@@ -486,7 +486,7 @@ class EigenSolver(Solver):
         This is a wrapper for `neuromodes.basis.decompose`, see its documentation for details: 
         https://neuromodes.readthedocs.io/en/latest/generated/nsbtools.basis.decompose.html
 
-        Note that `emodes`, `mass`, and `check_ortho` are passed automatically by the `EigenSolver`
+        Note that `emodes`, `mass`, and `checks` are passed automatically by the `EigenSolver`
         instance.
         """
         from neuromodes.basis import decompose
@@ -497,7 +497,7 @@ class EigenSolver(Solver):
             data,
             self.emodes,
             mass=self.mass,
-            check_ortho=False,
+            checks=False,
             **kwargs
         )
     
@@ -510,7 +510,7 @@ class EigenSolver(Solver):
         This is a wrapper for `neuromodes.basis.reconstruct`, see its documentation for details:
         https://neuromodes.readthedocs.io/en/latest/generated/nsbtools.basis.reconstruct.html
 
-        Note that `emodes`, `mass`, and `check_ortho` are passed automatically by the `EigenSolver`
+        Note that `emodes`, `mass`, and `checks` are passed automatically by the `EigenSolver`
         instance.
         """
         from neuromodes.basis import reconstruct
@@ -521,7 +521,7 @@ class EigenSolver(Solver):
             data,
             self.emodes,
             mass=self.mass,
-            check_ortho=False,
+            checks=False,
             **kwargs
         )
     
@@ -535,7 +535,7 @@ class EigenSolver(Solver):
         details:
         https://neuromodes.readthedocs.io/en/latest/generated/nsbtools.basis.reconstruct_timeseries.html
 
-        Note that `emodes`, `mass`, and `check_ortho` are passed automatically by the `EigenSolver`
+        Note that `emodes`, `mass`, and `checks` are passed automatically by the `EigenSolver`
         instance.
         """
         from neuromodes.basis import reconstruct_timeseries
@@ -546,7 +546,7 @@ class EigenSolver(Solver):
             data,
             self.emodes,
             mass=self.mass,
-            check_ortho=False,
+            checks=False,
             **kwargs
         )
     
@@ -559,7 +559,8 @@ class EigenSolver(Solver):
         details:
         https://neuromodes.readthedocs.io/en/latest/generated/nsbtools.connectome.model_connectome.html
 
-        Note that `emodes` and `evals` are passed automatically by the `EigenSolver` instance.
+        Note that `emodes`, `evals`, and `checks` are passed automatically by the `EigenSolver`
+        instance.
         """
         from neuromodes.connectome import model_connectome
 
@@ -568,6 +569,7 @@ class EigenSolver(Solver):
         return model_connectome(
             emodes=self.emodes,
             evals=self.evals,
+            checks=False,
             **kwargs
         )
     
@@ -579,8 +581,8 @@ class EigenSolver(Solver):
         This is a wrapper for `neuromodes.waves.simulate_waves`, see its documentation for details:
         https://neuromodes.readthedocs.io/en/latest/generated/nsbtools.waves.simulate_waves.html
 
-        Note that `emodes`, `evals`, `mass`, `scaled_hetero`, and `check_ortho` are passed
-        automatically by the `EigenSolver` instance.
+        Note that `emodes`, `evals`, `mass`, `scaled_hetero`, and `checks` are passed automatically
+        by the `EigenSolver` instance.
         """
         from neuromodes.waves import simulate_waves
 
@@ -591,7 +593,7 @@ class EigenSolver(Solver):
             evals=self.evals,
             mass=self.mass,
             scaled_hetero=self.hetero,
-            check_ortho=False,
+            checks=False,
             **kwargs
         )
 

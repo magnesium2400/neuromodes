@@ -13,7 +13,8 @@ def model_connectome(
     emodes: ArrayLike,
     evals: ArrayLike,
     r: float = 9.53,
-    k: int = 108
+    k: int = 108,
+    checks: bool = True
 ) -> NDArray:
     """
     Generate a vertex-wise structural connectivity matrix using the Green's function approach
@@ -30,6 +31,8 @@ def model_connectome(
         Spatial scale parameter for the Green's function, in millimeters. Default is `9.53`.
     k : int, optional
         Number of eigenmodes to use. Default is `108`.
+    checks : bool, optional
+        Whether to verify shapes of `emodes` and `evals` before computation. Default is `True`.
 
     Returns
     -------
@@ -53,15 +56,16 @@ def model_connectome(
     match the density of the empirical data.
     """
     # Format / validate arguments
-    emodes = np.asarray_chkfinite(emodes)
-    evals = np.asarray_chkfinite(evals)
+    if checks:
+        emodes = np.asarray_chkfinite(emodes)
+        evals = np.asarray_chkfinite(evals)
 
-    if emodes.ndim != 2 or emodes.shape[0] < emodes.shape[1]:
-        raise ValueError("`emodes` must have shape (n_verts, n_modes), where n_verts ≥ n_modes.")
+        if emodes.ndim != 2 or emodes.shape[0] < emodes.shape[1]:
+            raise ValueError("`emodes` must have shape (n_verts, n_modes), with n_verts ≥ n_modes.")
     n_modes = emodes.shape[1]
-    if evals.shape != (n_modes,):
+    if checks and evals.shape != (n_modes,):
         raise ValueError(f"`evals` must have shape (n_modes,) = {(n_modes,)}, matching the number "
-                         "of columns in `emodes`.")
+                        "of columns in `emodes`.")
     if not isinstance(r, (int, float)) or r <= 0:
         raise ValueError("Parameter `r` must be a positive number.")
     if not isinstance(k, int) or k <= 0 or k > n_modes:

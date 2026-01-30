@@ -18,7 +18,7 @@ def decompose(
     emodes: ArrayLike,
     method: str = 'project',
     mass: Union[spmatrix, ArrayLike, None] = None,
-    check_ortho: bool = True,
+    checks: bool = True,
 ) -> NDArray:
     """
     Calculate the decomposition of the given data onto a basis set.
@@ -39,8 +39,8 @@ def decompose(
         The mass matrix of shape (n_verts, n_verts) used for the decomposition when method is
         `'project'`. If vectors are orthonormal in Euclidean space, leave as `None`. See
         `eigen.is_orthonormal_basis` for more details. Default is `None`.
-    check_ortho : bool, optional
-        Whether to check if `emodes` are mass-orthonormal before using the `'project'` method. 
+    checks : bool, optional
+        Whether to verify shapes and orthonormality of `emodes` and `mass` before decomposition.
         Default is `True`.
 
     Returns
@@ -57,29 +57,26 @@ def decompose(
     ValueError
         If `mass` does not have shape (n_verts, n_verts) when provided.
     ValueError
-        If `method='project'` and `emodes` columns do not form an orthonormal basis set (when
-        `check_ortho=True`).
+        If `method='project'` and `emodes` columns do not form an orthonormal basis set.
     ValueError
         If `method` is not 'project' or 'regress'.
     """
     # Format / validate inputs
     data = np.asarray_chkfinite(data)
-    emodes = np.asarray_chkfinite(emodes)
 
-    if emodes.ndim != 2 or emodes.shape[0] < emodes.shape[1]:
-        raise ValueError("`emodes` must have shape (n_verts, n_modes), where n_verts ≥ n_modes.")
+    if method not in ['project', 'regress']:
+        raise ValueError(f"Invalid `method` '{method}'; must be 'project' or 'regress'.")
+    if checks:
+        emodes = np.asarray_chkfinite(emodes)
+        if emodes.ndim != 2 or emodes.shape[0] < emodes.shape[1]:
+            raise ValueError("`emodes` must have shape (n_verts, n_modes), with n_verts ≥ n_modes.")
     n_verts = emodes.shape[0]
     if data.ndim == 1:
         data = data[:, np.newaxis]
     if data.ndim != 2 or data.shape[0] != n_verts:
         raise ValueError("`data` must have shape (n_verts,) or (n_verts, n_maps), where n_verts is "
                          f"the number of rows in `emodes` ({n_verts}).")
-    if method == 'project':
-        if check_ortho and not is_orthonormal_basis(emodes, mass):
-            err_str = "in Euclidean space" if mass is None else "with the provided mass matrix"
-            raise ValueError("The columns of `emodes` do not form an orthonormal basis set "
-                             f"{err_str}. Consider providing a suitable `mass` matrix or using "
-                             "`method='regress'`.")
+    if checks and method == 'project':
         if mass is not None:
             if not isinstance(mass, spmatrix):
                 mass = np.asarray_chkfinite(mass)
@@ -89,8 +86,13 @@ def decompose(
             if mass_shape != (n_verts, n_verts):
                 raise ValueError("`mass` must have shape (n_verts, n_verts), where n_verts is the "
                                  f"number of rows in `emodes` ({n_verts}).")
-    elif method != 'regress':
-        raise ValueError(f"Invalid `method` '{method}'; must be 'project' or 'regress'.")
+        if not is_orthonormal_basis(emodes, mass):
+            err_str = "in Euclidean space" if mass is None else "with the provided mass matrix"
+            raise ValueError(
+                f"The columns of `emodes` do not form an orthonormal basis set {err_str}. Either "
+                "provide a suitable `mass` matrix such that `emodes.T @ mass @ emodes = I`, use "
+                "`method='regress'`, or set `checks=False`."
+                )
 
     # Decomposition
     if method == 'project':
@@ -105,7 +107,7 @@ def reconstruct(
     mass: Union[spmatrix, ArrayLike, None] = None,
     mode_counts: Union[ArrayLike, None] = None,
     metric: Union[_MetricCallback, _MetricKind, None] = 'correlation',
-    check_ortho: bool = True,
+    checks: bool = True,
     **cdist_kwargs
 ) -> Tuple[NDArray, NDArray, list[NDArray]]:
     """
@@ -138,8 +140,8 @@ def reconstruct(
         The metric used for calculating reconstruction error. Should be one of the options from
         `scipy.spatial.distance.cdist`, or `None` if no scoring is required. Default is
         `'correlation'`.
-    check_ortho : bool, optional
-        Whether to check if `emodes` are mass-orthonormal before using the `'project'` method. 
+    checks : bool, optional
+        Whether to verify shapes and orthonormality of `emodes` and `mass` before reconstruction.
         Default is `True`.
     **cdist_kwargs
         Additional keyword arguments to pass to `scipy.spatial.distance.cdist`.
@@ -179,11 +181,11 @@ def reconstruct(
     if method == 'project':
         # only need to decompose once (with n=max modes) if using orthogonal method
         tmp = decompose(data, emodes[:, :np.max(mode_counts)], mass=mass,
-                        method=method, check_ortho=check_ortho)
+                        method=method, checks=checks)
         beta = [tmp[:mq, :] for mq in mode_counts]
     else:
         beta = [
-            decompose(data, emodes[:, :mq], mass=mass, method=method)
+            decompose(data, emodes[:, :mq], mass=None, method=method, checks=checks)
             for mq in mode_counts
         ]
 
@@ -203,7 +205,7 @@ def reconstruct_timeseries(
     mass: Union[spmatrix, ArrayLike, None] = None,
     mode_counts: Union[ArrayLike, None] = None,
     metric: Union[_MetricCallback, _MetricKind, None] = 'correlation',
-    check_ortho: bool = True,
+    checks: bool = True,
     **cdist_kwargs
 ) -> Tuple[NDArray, NDArray, NDArray, NDArray, list[NDArray]]:
     """
@@ -235,8 +237,8 @@ def reconstruct_timeseries(
         The metric used for calculating reconstruction error. Should be one of the options from
         `scipy.spatial.distance.cdist`, or `None` if no scoring is required. Default is
         `'correlation'`.
-    check_ortho : bool, optional
-        Whether to check if `emodes` are mass-orthonormal before using the `'project'` method. 
+    checks : bool, optional
+        Whether to verify shapes and orthonormality of `emodes` and `mass` before reconstruction.
         Default is `True`.
     **cdist_kwargs
         Additional keyword arguments to pass to `scipy.spatial.distance.cdist`.
@@ -282,7 +284,7 @@ def reconstruct_timeseries(
         mass=mass,
         mode_counts=mode_counts,
         metric=metric,
-        check_ortho=check_ortho
+        checks=checks
     )
 
     fc = calc_vec_fc(data)[np.newaxis, :]

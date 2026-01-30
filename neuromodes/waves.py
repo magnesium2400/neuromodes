@@ -28,7 +28,7 @@ def simulate_waves(
     mass: Union[spmatrix, ArrayLike, None] = None,
     speed_limits: Union[tuple[float, float], None] = (0, 150),
     scaled_hetero: Union[ArrayLike, None] = None,
-    check_ortho: bool = True,
+    checks: bool = True,
     seed: Union[int, None] = None,
     cache_input: bool = False,
     **balloon_params
@@ -79,7 +79,7 @@ def simulate_waves(
         `speed_limits` above). If not provided, wave speed is assumed to be spatially uniform. To
         scale a heterogeneity map, use the `eigen.scale_hetero` function.
         Default is `None`.
-    check_ortho : bool, optional
+    checks : bool, optional
         Whether to check if `emodes` are mass-orthonormal before using the `'project'` method for
         decomposition. Default is `True`.
     seed : int, optional
@@ -126,15 +126,16 @@ def simulate_waves(
     system to reach a steady state.
     """
     # Format / validate arguments
-    emodes = np.asarray(emodes) # chkfinite in decompose
-    evals = np.asarray_chkfinite(evals)
     r = float(r)
     gamma = float(gamma)
     
-    if emodes.ndim != 2 or emodes.shape[0] < emodes.shape[1]:
-        raise ValueError("`emodes` must have shape (n_verts, n_modes), where n_verts ≥ n_modes.")
+    if checks:
+        emodes = np.asarray(emodes) # chkfinite in decompose
+        evals = np.asarray_chkfinite(evals)
+        if emodes.ndim != 2 or emodes.shape[0] < emodes.shape[1]:
+            raise ValueError("`emodes` must have shape (n_verts, n_modes), where n_verts ≥ n_modes.")
     n_verts, n_modes = emodes.shape
-    if evals.shape != (n_modes,):
+    if checks and evals.shape != (n_modes,):
         raise ValueError("`evals` must have shape (n_modes,), matching the number of columns in "
                          f"`emodes` ({n_modes}).")
     if r <= 0:
@@ -188,8 +189,7 @@ def simulate_waves(
         ext_input = gen_input((n_verts, nt), seed)
 
     # Eigendecompose external input to get modal coefficients over time
-    input_coeffs = decompose(ext_input, emodes, method=decomp_method,
-                             mass=mass, check_ortho=check_ortho)
+    input_coeffs = decompose(ext_input, emodes, method=decomp_method, mass=mass, checks=checks)
 
     # Compute activity timeseries for each mode
     mode_coeffs = (_model_wave_fourier(input_coeffs, dt, r, gamma, evals)
