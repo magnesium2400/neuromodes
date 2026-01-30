@@ -55,6 +55,8 @@ def decompose(
     ValueError
         If `data` does not have shape (n_verts,) or (n_verts, n_maps).
     ValueError
+        If `mass` does not have shape (n_verts, n_verts) when provided.
+    ValueError
         If `method='project'` and `emodes` columns do not form an orthonormal basis set (when
         `check_ortho=True`).
     ValueError
@@ -78,8 +80,15 @@ def decompose(
             raise ValueError("The columns of `emodes` do not form an orthonormal basis set "
                              f"{err_str}. Consider providing a suitable `mass` matrix or using "
                              "`method='regress'`.")
-        if not isinstance(mass, (spmatrix, type(None))):
-            mass = np.asarray_chkfinite(mass)
+        if mass is not None:
+            if not isinstance(mass, spmatrix):
+                mass = np.asarray_chkfinite(mass)
+                mass_shape = mass.shape
+            else:
+                mass_shape = mass.get_shape()
+            if mass_shape != (n_verts, n_verts):
+                raise ValueError("`mass` must have shape (n_verts, n_verts), where n_verts is the "
+                                 f"number of rows in `emodes` ({n_verts}).")
     elif method != 'regress':
         raise ValueError(f"Invalid `method` '{method}'; must be 'project' or 'regress'.")
 

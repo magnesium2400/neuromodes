@@ -236,7 +236,8 @@ class EigenSolver(Solver):
         Parameters
         ----------
         n_modes : int
-            Number of eigenmodes to compute.
+            Number of eigenmodes to compute. Must be a positive integer less than the number of
+            vertices.
         standardize : bool, optional
             If `True`, standardizes the sign of the eigenmodes so the first element is positive.
             Default is `False`.
@@ -268,15 +269,16 @@ class EigenSolver(Solver):
         Raises
         ------
         ValueError
-            If `n_modes` is not a positive integer.
+            If `n_modes` is not a positive integer less than the number of vertices.
         ValueError
             If `seed` is an array but does not have shape (n_verts,).
         AssertionError
             If computed eigenvalues or eigenmodes contain NaNs.
         """
         # Validate arguments
-        if not isinstance(n_modes, int) or n_modes <= 0:
-            raise ValueError("`n_modes` must be a positive integer.")
+        if not isinstance(n_modes, int) or n_modes <= 0 or n_modes >= self.n_verts:
+            raise ValueError("`n_modes` must be a positive integer less than the number of vertices"
+                             f" ({self.n_verts}).")
 
         # Compute the Laplace-Beltrami operator / set stiffness and mass matrices
         self.compute_lbo(**kwargs)
@@ -320,7 +322,7 @@ class EigenSolver(Solver):
         # Post-process
         if fix_mode1:
             # Value given by mass-orthonormality condition
-            self.emodes[:, 0] = np.full(self.n_verts, 1 / np.sqrt(self.mass.sum()))
+            self.emodes[:, 0] = self.mass.sum()**(-0.5)
             self.evals[0] = 0.0
 
         if standardize:

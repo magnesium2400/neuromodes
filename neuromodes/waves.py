@@ -8,7 +8,7 @@ from typing import Union, TYPE_CHECKING
 from warnings import warn
 import numpy as np
 from scipy.integrate import solve_ivp
-from scipy.sparse import spmatrix
+from scipy.sparse import spmatrix, linalg
 from neuromodes.basis import decompose
 
 if TYPE_CHECKING:
@@ -17,9 +17,9 @@ if TYPE_CHECKING:
 def simulate_waves(
     emodes: ArrayLike,
     evals: ArrayLike,
-    nt: int = 1000,
-    bold_out: bool = False,
+    nt: int = None,
     ext_input: Union[ArrayLike, None] = None,
+    bold_out: bool = False,
     dt: float = 1e-4,
     r: float = 17.4,
     gamma: float = 116.0,
@@ -46,13 +46,14 @@ def simulate_waves(
     evals : array-like
         The eigenvalues array of shape (n_modes,).
     nt : int, optional
-        Number of time points to simulate Default is `1000`.
+        Number of time points to simulate under white noise input. Note that either `nt` or
+        `ext_input` must be provided. Default is `None`.
     bold_out : bool, optional
         If `True`, simulate BOLD signal using the balloon model. If `False`, simulate neural
         activity. Default is `False`.
     ext_input : array-like, optional
-        External input array of shape (n_verts, n_timepoints). If `None`, random input is generated.
-        Default is `None`.
+        External input array of shape (n_verts, n_timepoints). If `None`, white noise input is
+        generated to simulate `nt` time points. Default is `None`.
     dt : float, optional
         Time step for simulation in seconds. Default is `1e-4`.
     r : float, optional
@@ -60,9 +61,10 @@ def simulate_waves(
     gamma : float, optional
         Damping rate of wave propagation in seconds^-1. Default is `116.0`.
     pde_method : str, optional
-        Method for solving the wave PDE. Either `'fourier'` or `'ode'`. Default is `'fourier'`.
+        Method for solving the wave and balloon PDEs. Either `'fourier'` or `'ode'`. Default is
+        `'fourier'`.
     decomp_method : str, optional
-        The method used for the eigendecomposition, either `'project'` to project data into a
+        The method used to eigendecompose `ext_input`, either `'project'` to project data into a
         mass-orthonormal space or `'regress'` for least-squares fitting. Note that the beta values
         from `'regress'` tend towards those from `'project'` when more modes are provided. Default
         is `'project'`.
@@ -112,6 +114,8 @@ def simulate_waves(
     ValueError
         If `ext_input` is provided but does not have shape (n_verts, nt).
     ValueError
+        If `nt` is not provided when `ext_input` is `None`.
+    ValueError
         If `pde_method` is not `'fourier'` or `'ode'`.
     RuntimeError
         If the ODE solver fails when using `pde_method='ode'` and `bold_out=True`.
@@ -160,16 +164,16 @@ def simulate_waves(
         raise ValueError(f"Invalid PDE method '{pde_method}'; must be 'fourier' or 'ode'.")
 
     if ext_input is not None:
-        ext_input = np.asarray(ext_input) # chkfinite in decompose
-        if ext_input.shape != (n_verts, nt):
+        ext_input = np.asarray_chkfinite(ext_input)
+        if nt is not None and ext_input.shape != (n_verts, nt):
             raise ValueError(f"`ext_input` must have shape (n_verts, nt) = {(n_verts, nt)}.")
-
         if seed is not None:
             warn("`seed` is ignored when `ext_input` is provided.")
         if cache_input:
             warn("`cache_input` is ignored when `ext_input` is provided.")
     else:
-        # Use Gaussian white noise input if none provided
+        if nt is None:
+            raise ValueError("`nt` must be provided when `ext_input` is `None`.")
         if cache_input:
             if seed is None:
                 warn("`cache_input` is ignored when `seed` is None.")
@@ -599,3 +603,97 @@ def _model_balloon_ode(
         bold_coeffs[j, :] = V_0 * (k1 * (1 - q) + k2 * (1 - q / v) + k3 * (1 - v))
 
     return bold_coeffs
+
+def _simulate_waves_fem(
+    mass: spmatrix,
+    stiffness: spmatrix,
+    nt: int = None,
+    ext_input: ArrayLike = None,
+    dt: float = 1e-4,
+    r: float = 17.4,
+    gamma: float = 116.0,
+    speed_limits: Union[tuple[float, float], None] = (0, 150),
+    scaled_hetero: Union[ArrayLike, None] = None,
+    seed: int = None,
+    cache_input: bool = False
+) -> NDArray:
+    """
+    Full FEM version of `simulate_waves(..., bold_out=False)`, for validating the eigenmode
+    expansion approach.
+    """
+    # Format / validate arguments
+    r = float(r)
+    gamma = float(gamma)
+    
+    if not isinstance(mass, spmatrix) or not isinstance(stiffness, spmatrix):
+        raise ValueError("`mass` and `stiffness` must be scipy sparse matrices.")
+    n_verts = mass.get_shape()[0]
+    if mass.get_shape() != (n_verts, n_verts) or stiffness.get_shape() != (n_verts, n_verts):
+        raise ValueError("`mass` and `stiffness` must have shape (n_verts, n_verts).")
+    if r <= 0:
+        raise ValueError("Parameter `r` must be positive.")
+    if gamma <= 0:
+        raise ValueError("Parameter `gamma` must be positive.")
+    if dt <= 0:
+        raise ValueError("`dt` must be positive.")
+    if not isinstance(nt, int) or nt <= 0:
+        raise ValueError("`nt` must be a positive integer.")
+    if speed_limits is not None:
+        if (not isinstance(speed_limits, tuple) or not len(speed_limits) == 2
+            or speed_limits[0] < 0 or speed_limits[0] >= speed_limits[1]):
+            raise ValueError("`speed_limits` must be a tuple of (min_speed, max_speed), where "
+                             "0 ≤ min_speed < max_speed.")
+        speed = calc_wave_speed(r, gamma, scaled_hetero=scaled_hetero)
+        min_speed, max_speed = np.min(speed), np.max(speed)
+        if min_speed < speed_limits[0] or max_speed > speed_limits[1]:
+            calc_str = min_speed if min_speed == max_speed else f"{min_speed:.1f}-{max_speed:.1f}"
+            warn("The combination of `r`, `gamma`, and `scaled_hetero` leads to wave speeds "
+                 f"outside the range of {speed_limits[0]}-{speed_limits[1]} m/s (calculated "
+                 f"{calc_str} m/s). Consider changing these parameters to ensure physiologically "
+                 "plausible wave speeds, or adjust `speed_limits`.")
+
+    if ext_input is not None:
+        ext_input = np.asarray_chkfinite(ext_input)
+        if nt is not None and ext_input.shape != (n_verts, nt):
+            raise ValueError(f"`ext_input` must have shape (n_verts, nt) = {(n_verts, nt)}.")
+        if seed is not None:
+            warn("`seed` is ignored when `ext_input` is provided.")
+        if cache_input:
+            warn("`cache_input` is ignored when `ext_input` is provided.")
+    else:
+        if nt is None:
+            raise ValueError("`nt` must be provided when `ext_input` is `None`.")
+        if cache_input:
+            if seed is None:
+                warn("`cache_input` is ignored when `seed` is None.")
+            else:
+                from neuromodes.io import _set_cache
+
+                memory = _set_cache()
+                gen_input = memory.cache(_gen_noise)
+        else:
+            gen_input = _gen_noise
+        
+        ext_input = gen_input((n_verts, nt), seed)
+
+    # Pad input with zeros on negative side to ensure causality (system is only driven for t >= 0)
+    # This is required for the correct Green's function solution of the damped wave equation.
+    ext_input_padded = np.concatenate([np.zeros((n_verts, nt)), ext_input], axis=1)
+
+    # Apply inverse Fourier transform to get frequency-domain representation of the causal signal.
+    ext_input_freqs = np.fft.fftshift(np.fft.ifft(ext_input_padded, axis=1), axes=1)
+    omega = 2 * np.pi * np.fft.fftshift(np.fft.fftfreq(2 * nt, dt))
+
+    # Compute response at each frequency
+    phi_freqs = np.zeros_like(ext_input_freqs, dtype=complex)
+    for k, w in enumerate(omega):
+        operator = mass * (-w**2 / gamma**2 - 2j * w / gamma + 1) + stiffness * r**2
+
+        # Sparse LU decomposition and solve PDE
+        phi_freqs[:, k] = linalg.splu(operator).solve(ext_input_freqs[:, k])
+
+    # Inverse transform to time domain, implemented as forward FFT for causality
+    phi = np.real(np.fft.fft(np.fft.ifftshift(phi_freqs, axes=1), axis=1))
+
+    # Return only the non-negative time part (t >= 0)
+    return phi[:, nt:]

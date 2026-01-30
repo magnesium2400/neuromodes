@@ -44,7 +44,7 @@ def make_thin_vol(surface_mesh, scaling=0.99, **kwargs):
     
     return TetMesh(v=vol_vertices, t=vol_tets)
 
-def plot_mesh_data(geometry, data, cmap='seismic_r', width=700, height=700):
+def plot_mesh_data(geometry, data, cmap='seismic_r', cnorm=True, width=700, height=700):
     """
     Plot a colored mesh surface with overlaid edges.
     
@@ -56,50 +56,88 @@ def plot_mesh_data(geometry, data, cmap='seismic_r', width=700, height=700):
         Data values (n_vertices,).
     cmap : str, optional
         Matplotlib colormap name (default: 'seismic_r').
+    cnorm : bool, optional
+        If data is 2D, whether to normalize color scale across frames (default: True).
     width : int, optional
         Figure width in pixels (default: 700).
     height : int, optional
         Figure height in pixels (default: 700).
     """
-    # Make seismic_r colormap for plotly
-    cmap = colormaps.get_cmap(cmap)
+    # Make colormap for plotly
+    cmap_obj = colormaps.get_cmap(cmap)
     vals = np.linspace(0, 1, 256)
     colorscale = [
         [i / (256 - 1), f"rgb({int(r*255)},{int(g*255)},{int(b*255)})"]
-        for i, (r, g, b, _) in enumerate(cmap(vals))
-]
+        for i, (r, g, b, _) in enumerate(cmap_obj(vals))
+    ]
 
     x, y, z = geometry.v.T
     i, j, k = geometry.t.T
-    
-    # Create colored mesh surface
-    fig = go.Figure(data=[
-        go.Mesh3d(
-            x=x, y=y, z=z, i=i, j=j, k=k,
-            intensity=data,
-            colorscale=colorscale,
-            flatshading=False,
-            showscale=False,
-        )
-    ])
-    
-    # Extract and add edges
+
+    # Edge coordinates (static, shared across frames)
     edges = []
     for idx_i, idx_j, idx_k in zip(i, j, k):
         edges.append((idx_i, idx_j))
         edges.append((idx_j, idx_k))
         edges.append((idx_k, idx_i))
-    
     edges = list(set(edges))
-    
-    edge_x = []
-    edge_y = []
-    edge_z = []
+
+    edge_x, edge_y, edge_z = [], [], []
     for idx_i, idx_j in edges:
         edge_x.extend([x[idx_i], x[idx_j], None])
         edge_y.extend([y[idx_i], y[idx_j], None])
         edge_z.extend([z[idx_i], z[idx_j], None])
-    
+
+    is_animated = data.ndim == 2
+    if is_animated:
+        n_vertices, n_frames = data.shape
+        if n_vertices != len(x):
+            raise ValueError("data shape[0] must match number of vertices.")
+        cmin, cmax = (np.nanmin(data), np.nanmax(data)) if cnorm else (np.nanmin(data[:, 0]), np.nanmax(data[:, 0]))
+
+        # Base frame (first timepoint)
+        base_mesh = go.Mesh3d(
+            x=x, y=y, z=z, i=i, j=j, k=k,
+            intensity=data[:, 0],
+            colorscale=colorscale,
+            cmin=cmin, cmax=cmax,
+            flatshading=False,
+            showscale=False,
+        )
+
+
+        frames = [
+            go.Frame(
+                data=[
+                    go.Mesh3d(
+                        x=x, y=y, z=z, i=i, j=j, k=k,
+                        intensity=data[:, t],
+                        colorscale=colorscale,
+                        cmin=(cmin if cnorm else np.nanmin(data[:, t])), cmax=(cmax if cnorm else np.nanmax(data[:, t])),
+                        flatshading=False,
+                        showscale=False,
+                    )
+                ],
+                name=str(t),
+            )
+            for t in range(n_frames)
+        ]
+
+        fig = go.Figure(data=[base_mesh], frames=frames)
+    else:
+        cmin, cmax = np.nanmin(data), np.nanmax(data)
+        fig = go.Figure(data=[
+            go.Mesh3d(
+                x=x, y=y, z=z, i=i, j=j, k=k,
+                intensity=data,
+                colorscale=colorscale,
+                cmin=cmin, cmax=cmax,
+                flatshading=False,
+                showscale=False,
+            )
+        ])
+
+    # Add static edge overlay
     fig.add_trace(go.Scatter3d(
         x=edge_x, y=edge_y, z=edge_z,
         mode='lines',
@@ -107,11 +145,34 @@ def plot_mesh_data(geometry, data, cmap='seismic_r', width=700, height=700):
         showlegend=False,
         hoverinfo='skip',
     ))
-    
-    fig.update_layout(
+
+    # Layout + optional animation controls
+    layout_kwargs = dict(
         width=width,
         height=height,
-        scene=dict(aspectmode="data")
+        scene=dict(aspectmode="data"),
     )
-    
+
+    if is_animated:
+        slider_steps = [
+            dict(method="animate", args=[[str(t)], dict(mode="immediate", frame=dict(duration=0), transition=dict(duration=0))], label=str(t))
+            for t in range(n_frames)
+        ]
+        sliders = [dict(active=0, pad=dict(t=50), steps=slider_steps)]
+        play_pause = [
+            dict(label="▶️ Play", method="animate",
+                 args=[None, dict(frame=dict(duration=50, redraw=True),
+                                  transition=dict(duration=0),
+                                  fromcurrent=True, mode="immediate")]),
+            dict(label="⏸️ Pause", method="animate",
+                 args=[[None], dict(frame=dict(duration=0, redraw=False),
+                                    transition=dict(duration=0),
+                                    mode="immediate")]),
+        ]
+        layout_kwargs.update(
+            sliders=sliders,
+            updatemenus=[dict(type="buttons", showactive=False, buttons=play_pause, x=0, y=0)],
+        )
+
+    fig.update_layout(**layout_kwargs)
     fig.show()
