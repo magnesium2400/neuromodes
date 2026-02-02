@@ -18,15 +18,49 @@ if TYPE_CHECKING:
 
 class EigenSolver(Solver):
     """
-    This class computes the Laplace-Beltrami operator on a either a triangular surface mesh or a 
-    tetrahedral volume mesh via the Finite Element Method, which discretizes the eigenvalue problem
-    according to mass and stiffness matrices. Spatial heterogeneity can be optionally incorporated,
-    modifying the Laplace-Beltrami operator via a symmetric diffusion tensor. After calling the
-    `solve` method to compute eigenvalues and eigenmodes, a range of mode-based methods can be
-    called (`decompose`, `reconstruct`, `reconstruct_timeseries`, `simulate_waves`, and
-    `model_connectome`).
-    """
+    Class for computing eigenmodes and eigenvalues from a brain structure mesh via the Finite
+    Element Method, which discretizes the Laplace-Beltrami eigenvalue problem using mass and
+    stiffness matrices. Spatial heterogeneity can be optionally incorporated, modifying the
+    Laplace-Beltrami operator via a symmetric diffusion tensor. After calling the `solve` method, a
+    range of mode-based methods can be called (`decompose`, `reconstruct`, `reconstruct_timeseries`,
+    `simulate_waves`, and `model_connectome`).
 
+    Parameters
+    ----------
+    geometry : str, pathlib.Path, trimesh.Trimesh, lapy.TriaMesh, lapy.TetMesh, or dict
+        The surface or volume mesh of a brain structure. Can be:
+        - A path to one of the following file formats: `.gii`, `.vtk`, `.tetra.vtk`, `.white`,
+        `.pial`, `.inflated`, `.orig`, `.sphere`, `.smoothwm`, `.qsphere`, `.fsaverage`
+        - A supported mesh object (`trimesh.Trimesh`, `lapy.TriaMesh`, or `lapy.TetMesh`)
+        - A dictionary with keys `'vertices'` and either `'faces'` (for surfaces) or `'tetras'`
+        (for volumes).
+    mask : array-like, optional
+        A boolean mask to exclude certain points (e.g., medial wall) from a surface mesh. This
+        parameter is not yet supported for volumes. Default is `None`.
+    normalize : bool, optional
+        Whether to normalize the mesh to have unit surface area or volume and centroid at the
+        origin (modifies the vertices). Default is `False`.
+    hetero : array-like, optional
+        A heterogeneity map to scale the Laplace-Beltrami operator. Default is `None`.
+    alpha : float, optional
+        Scaling parameter for the heterogeneity map. If a heterogenity map is specified, the
+        default is `1.0`. Otherwise, this value is ignored (and is set to `None`).
+    scaling : str, optional
+        Scaling function to apply to the heterogeneity map. Must be `'sigmoid'` or
+        `'exponential'`. If a heterogenity map is specified, the default is `'sigmoid'`.
+        Otherwise, this value is ignored (and is set to `None`).
+
+    Raises
+    ------
+    ValueError
+        If `geometry` is not a valid surface or volume mesh.
+    ValueError
+        If `hetero` length does not match the number of vertices (masked or unmasked).
+    ValueError
+        If `scaling` is not 'sigmoid' or 'exponential' (raised by `scale_hetero`).
+    ValueError
+        If `hetero` is constant (raised by `scale_hetero`).
+    """
     def __init__(
         self,
         geometry: Union[str, Path, Trimesh, TriaMesh, TetMesh, dict],
@@ -36,46 +70,6 @@ class EigenSolver(Solver):
         alpha: Union[float, None] = None, # default to 1.0 if hetero given (and remains None)
         scaling: Union[str, None] = None  # default to "sigmoid" if hetero given (and remains None)
     ):
-        """
-        Initialize the EigenSolver class with a surface or volume mesh, and optionally with a
-        heterogeneity map.
-
-        Parameters
-        ----------
-        geometry : str, pathlib.Path, trimesh.Trimesh, lapy.TriaMesh, lapy.TetMesh, or dict
-            The surface or volume mesh of a brain structure. Can be:
-            - A path to one of the following file formats: `.gii`, `.vtk`, `.tetra.vtk`, `.white`,
-            `.pial`, `.inflated`, `.orig`, `.sphere`, `.smoothwm`, `.qsphere`, `.fsaverage`
-            - A supported mesh object (`trimesh.Trimesh`, `lapy.TriaMesh`, or `lapy.TetMesh`)
-            - A dictionary with keys `'vertices'` and either `'faces'` (for surfaces) or `'tetras'`
-            (for volumes).
-        mask : array-like, optional
-            A boolean mask to exclude certain points (e.g., medial wall) from a surface mesh. This
-            parameter is not yet supported for volumes. Default is `None`.
-        normalize : bool, optional
-            Whether to normalize the mesh to have unit surface area or volume and centroid at the
-            origin (modifies the vertices). Default is `False`.
-        hetero : array-like, optional
-            A heterogeneity map to scale the Laplace-Beltrami operator. Default is `None`.
-        alpha : float, optional
-            Scaling parameter for the heterogeneity map. If a heterogenity map is specified, the
-            default is `1.0`. Otherwise, this value is ignored (and is set to `None`).
-        scaling : str, optional
-            Scaling function to apply to the heterogeneity map. Must be `'sigmoid'` or
-            `'exponential'`. If a heterogenity map is specified, the default is `'sigmoid'`.
-            Otherwise, this value is ignored (and is set to `None`).
-
-        Raises
-        ------
-        ValueError
-            If `geometry` is not a valid surface or volume mesh.
-        ValueError
-            If `hetero` length does not match the number of vertices (masked or unmasked).
-        ValueError
-            If `scaling` is not 'sigmoid' or 'exponential' (raised by `scale_hetero`).
-        ValueError
-            If `hetero` is constant (raised by `scale_hetero`).
-        """
         # Infer surface or volume
         if is_vol(geometry):
             vol = read_vol(geometry) if not isinstance(geometry, TetMesh) else geometry
@@ -686,9 +680,9 @@ def is_orthonormal_basis(
     rtol: float = 1e-05
 ) -> bool:
     """
-    Check if a set of vectors is orthonormal in Euclidean space (i.e., `emodes.T @ emodes == I`) or
-    with respect to a mass matrix (i.e., `emodes.T @ mass @ emodes == I`), where `I` is the identity
-    matrix. Mass-orthonormality is expected for the geometric eigenmodes (see notes).
+    Check if a set of vectors is orthonormal in Euclidean space (i.e., `emodes.T @ emodes == I`,
+    where `I` is the identity matrix) or with respect to a mass matrix (i.e., `emodes.T @ mass @
+    emodes == I`). Mass-orthonormality is expected for the geometric eigenmodes (see notes).
 
     Parameters
     ----------
@@ -717,14 +711,13 @@ def is_orthonormal_basis(
 
     Notes
     -----
-    Under discretization, the set of solutions for the generalized eigenvalue problem is expected to
-    be mass-orthogonal (mode_i^T * mass matrix * mode_j = 0 for i ≠ j), rather than orthogonal with
-    respect to the standard Euclidean inner (dot) product (mode_i^T * mode_j = 0 for i ≠ j).
-    Eigenmodes are also expected to be mass-normal (mode_i^T * mass matrix * mode_i = 1). It follows
-    that the first mode is expected to be a specific constant, but precision error during
-    computation can introduce spurious spatial heterogeneity. Since many eigenmode analyses rely on
-    mass-orthonormality (e.g., decomposition, wave simulation), this function serves to ensure the
-    validity of any calculated or provided eigenmodes.
+    Under discretization, the set of solutions for any generalized eigenvalue problem `stiffness @
+    emodes = - evals * mass @ emodes` is expected to be mass-orthonormal, rather than orthonormal
+    with respect to the standard Euclidean inner (dot) product. It follows that the first mode is
+    expected to be a specific constant, but precision error during computation can introduce
+    spurious spatial heterogeneity. Since many eigenmode analyses rely on mass-orthonormality (e.g.,
+    decomposition, wave simulation), this function serves to ensure the validity of any calculated
+    or provided eigenmodes.
     """
     # Format / validate arguments
     emodes = np.asarray_chkfinite(emodes)
