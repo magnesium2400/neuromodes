@@ -71,7 +71,7 @@ def read_vol(
 def read_surf(
     mesh: Union[str, Path, Trimesh, TriaMesh, dict]
 ) -> Trimesh:
-    """Load and validate a surface mesh.
+    """Load a triangular surface mesh.
 
     Parameters
     ----------
@@ -84,7 +84,7 @@ def read_surf(
     Returns
     -------
     trimesh.Trimesh
-        Validated surface mesh with vertices and faces.
+        Surface mesh with vertices and faces.
 
     Raises
     ------
@@ -94,11 +94,11 @@ def read_surf(
         If `mesh` is a path-like string to a file that does not exist.
     """
     if isinstance(mesh, Trimesh):
-        trimesh = mesh
+        return mesh
     elif isinstance(mesh, TriaMesh):
-        trimesh = Trimesh(vertices=mesh.v, faces=mesh.t)
+        return Trimesh(vertices=mesh.v, faces=mesh.t)
     elif isinstance(mesh, dict):
-        trimesh = Trimesh(vertices=mesh['vertices'], faces=mesh['faces'])
+        return Trimesh(vertices=mesh['vertices'], faces=mesh['faces'])
     else:
         mesh_str = str(mesh)
         # check that file exists
@@ -108,33 +108,54 @@ def read_surf(
         # Handle different file types
         if mesh_str.endswith('.vtk'):
             mesh_lapy = TriaMesh.read_vtk(mesh_str)
-            trimesh = Trimesh(vertices=mesh_lapy.v, faces=mesh_lapy.t)
+            return Trimesh(vertices=mesh_lapy.v, faces=mesh_lapy.t)
         elif mesh_str.endswith('.gii'):
             mesh_data = cast(GiftiImage, load(mesh_str)).darrays
-            trimesh = Trimesh(vertices=mesh_data[0].data, faces=mesh_data[1].data)
+            return Trimesh(vertices=mesh_data[0].data, faces=mesh_data[1].data)
         elif mesh_str.endswith(fs_extensions):
             vertices, faces = read_geometry(
                 mesh_str, read_metadata=False, read_stamp=False
                 ) # will only return two outputs now # type: ignore
-            trimesh = Trimesh(vertices=vertices, faces=faces) # type: ignore
-        else:
-            raise ValueError(
-                '`surf` must be a path-like string to a valid VTK (.vtk), GIFTI (.gii), or '
-                f'FreeSurfer file {fs_extensions}, an instance of `trimesh.Trimesh` or '
-                '`lapy.TriaMesh`, or a dictionary of `faces` and `vertices`.'
-                )
-    
-    # Validate the mesh before returning
-    check_surf(trimesh)
+            return Trimesh(vertices=vertices, faces=faces) # type: ignore
+        raise ValueError(
+            '`surf` must be a path-like string to a valid VTK (.vtk), GIFTI (.gii), or '
+            f'FreeSurfer file {fs_extensions}, an instance of `trimesh.Trimesh` or '
+            '`lapy.TriaMesh`, or a dictionary of `faces` and `vertices`.'
+            )
 
-    return trimesh
+def mask_vol(
+    vol: TetMesh,
+    mask: ArrayLike
+) -> TetMesh:
+    """
+    Remove specified vertices and corresponding tetrahedra from the volume mesh. Returns a
+    `lapy.TetMesh` object.
+
+    Parameters
+    ----------
+    vol : lapy.TetMesh
+        The input volume mesh.
+    mask : array-like
+        A boolean array indicating which vertices to keep (`True`) or remove (`False`).
+
+    Returns
+    -------
+    lapy.TetMesh
+        The masked volume mesh.
+
+    Raises
+    ------
+    ValueError
+        If `mask` does not have a length matching the number of vertices in `vol`.
+    """
+    pass
 
 def mask_surf(
     surf: Trimesh,
     mask: ArrayLike
 ) -> Trimesh:
     """
-    Remove specified vertices and corresponding faces from the surface mesh. Returns a validated 
+    Remove specified vertices and corresponding faces from the surface mesh. Returns a 
     `trimesh.Trimesh` object.
 
     Parameters
@@ -162,12 +183,8 @@ def mask_surf(
     
     # Mask faces where all vertices are in the mask
     face_mask = np.all(mask[surf.faces], axis=1)
-    mesh = surf.submesh([face_mask])[0] #type: ignore # submesh returns a list by default
-
-    # Validate the mesh before returning
-    check_surf(mesh)
     
-    return mesh
+    return surf.submesh([face_mask])[0] #type: ignore # submesh returns a list by default
 
 def check_vol(
     vol: TetMesh
@@ -192,7 +209,9 @@ def check_vol(
     # Check that surface boundary of volume is contiguous
     vol_surf = vol.boundary_tria()
     vol_surf.orient_()
-    read_surf(vol_surf)  # converts to trimesh and runs check_surf within
+    check_surf(
+        Trimesh(vertices=vol_surf.v, faces=vol_surf.t)
+        )
 
 def check_surf(
     surf: Trimesh

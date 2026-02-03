@@ -6,11 +6,12 @@ from __future__ import annotations
 from typing import Union, Tuple, TYPE_CHECKING
 from warnings import warn
 from lapy import Solver, TriaMesh, TetMesh
+from lapy.shapedna import normalize_ev
 import numpy as np
 from scipy.sparse import csc_matrix, spmatrix
 from scipy.sparse.linalg import LinearOperator, eigsh, splu
 from trimesh import Trimesh
-from neuromodes.io import read_surf, mask_surf, is_vol, is_surf, read_vol, check_vol
+from neuromodes.io import read_surf, mask_surf, is_vol, is_surf, read_vol, check_vol, check_surf
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -37,9 +38,6 @@ class EigenSolver(Solver):
     mask : array-like, optional
         A boolean mask to exclude certain points (e.g., medial wall) from a surface mesh. This
         parameter is not yet supported for volumes. Default is `None`.
-    normalize : bool, optional
-        Whether to normalize the mesh to have unit surface area or volume and centroid at the
-        origin (modifies the vertices). Default is `False`.
     hetero : array-like, optional
         A heterogeneity map to scale the Laplace-Beltrami operator. Default is `None`.
     alpha : float, optional
@@ -65,7 +63,6 @@ class EigenSolver(Solver):
         self,
         geometry: Union[str, Path, Trimesh, TriaMesh, TetMesh, dict],
         mask: Union[ArrayLike, None] = None,
-        normalize: bool = False,
         hetero: Union[ArrayLike, None] = None,
         alpha: Union[float, None] = None, # default to 1.0 if hetero given (and remains None)
         scaling: Union[str, None] = None  # default to "sigmoid" if hetero given (and remains None)
@@ -74,12 +71,6 @@ class EigenSolver(Solver):
         if is_vol(geometry):
             vol = read_vol(geometry) if not isinstance(geometry, TetMesh) else geometry
 
-            if normalize:
-                # Modify vertices so that volume = 1 and centroid at origin
-                roi_volume = calc_tetmesh_vol(vol)
-                centroid = vol.v.mean(axis=0)
-                vol.v = (vol.v - centroid) / roi_volume**(1/3)
-
             check_vol(vol)
 
             self.geometry = vol
@@ -87,16 +78,17 @@ class EigenSolver(Solver):
                 warn("`mask` is not supported for volumes yet and will be ignored.")
             self.mask = None
         elif is_surf(geometry):
-            # Surface inputs and checks (check_surf called in read_surf and mask_surf)
+            # Read and optionally mask surface
             surf = read_surf(geometry)
             if mask is not None:
                 self.mask = np.asarray(mask, dtype=bool)
                 surf = mask_surf(surf, self.mask)
             else:
                 self.mask = None
+            
+            # Validate and store geometry
+            check_surf(surf)
             self.geometry = TriaMesh(surf.vertices, surf.faces)
-            if normalize:
-                self.geometry.normalize_()
         else:
             raise ValueError(
                 '`geometry` must be a path-like string to a valid surface or volume mesh, a '
@@ -106,13 +98,11 @@ class EigenSolver(Solver):
         self.n_verts = self.geometry.v.shape[0]
 
         # Hetero inputs
-        if hetero is None: # Handle None case by setting to ones
+        if hetero is None:
             if scaling is not None:
-                warn("`scaling` is ignored (and set to None) as `hetero` is None.")
+                warn("`scaling` is ignored as `hetero` is None.")
             if alpha is not None:
-                warn("`alpha` is ignored (and set to None) as `hetero` is None.")
-            self._scaling = None
-            self._alpha = None
+                warn("`alpha` is ignored as `hetero` is None.")
             self.hetero = None
         else:
             hetero = np.asarray(hetero)
@@ -142,15 +132,18 @@ class EigenSolver(Solver):
     def __str__(self) -> str:
         """String representation of the EigenSolver object."""
         is_vol = isinstance(self.geometry, TetMesh)
+
         str_out = f'EigenSolver\n-----------\n{(
             "Volume" if is_vol else "Surface"
             )} mesh: {self.n_verts} vertices'
         if self.mask is not None:
             str_out += f' ({np.sum(self.mask == 0)} others masked out)'
         str_out += f', {self.geometry.t.shape[0]} {"tetrahedra" if is_vol else "triangles"}'
+
         if self.hetero is not None:
             str_out += f'\nHeterogeneity map scaling: {self._scaling} (alpha={self._alpha})'
-        str_out += f'\n{self.n_modes if hasattr(self, "n_modes") else "No"} eigenmodes computed'
+
+        str_out += f'\n{self.n_modes if hasattr(self, "emodes") else "No"} eigenmodes computed'
 
         return str_out
 
@@ -219,6 +212,7 @@ class EigenSolver(Solver):
         n_modes: int, 
         standardize: bool = True,
         fix_mode1: bool = True,
+        norm_evals: bool = False,
         atol: float = 1e-3,
         rtol: float = 1e-5,
         sigma: Union[float, None] = -0.01,
@@ -241,6 +235,9 @@ class EigenSolver(Solver):
             If `True`, sets the first eigenmode to a constant value and the first eigenvalue to
             zero, as is expected analytically. Default is `True`. See the `is_orthonormal_basis`
             function for details.
+        norm_evals : bool, optional
+            If `True`, rescales eigenvalues to reflect geometry having unit surface area or volume,
+            via `lapy.shapedna.normalize_ev`. Default is `False`.
         atol : float, optional
             Absolute tolerance for mass-orthonormality validation. Default is `1e-3`.
         rtol : float, optional
@@ -297,10 +294,9 @@ class EigenSolver(Solver):
             dtype=self.stiffness.dtype,
         )
 
-        self.n_modes = n_modes
-        self.evals, self.emodes = eigsh(
+        evals, emodes = eigsh(
             self.stiffness,
-            k=self.n_modes,
+            k=n_modes,
             M=self.mass,
             sigma=sigma,
             OPinv=op_inv,
@@ -308,22 +304,29 @@ class EigenSolver(Solver):
         )
 
         # Validate results
-        assert not (np.isnan(self.evals).any() or np.isnan(self.emodes).any()), (
+        assert not (np.isnan(evals).any() or np.isnan(emodes).any()), (
             "Computed eigenvalues or eigenmodes contain NaNs. This may indicate numerical "
             "instability; consider adjusting `sigma` or checking mesh quality.")
 
-        if not is_orthonormal_basis(self.emodes, self.mass, atol=atol, rtol=rtol):
+        if not is_orthonormal_basis(emodes, self.mass, atol=atol, rtol=rtol):
             warn(f"Computed eigenmodes are not mass-orthonormal (atol={atol}, rtol={rtol}).")
 
         # Post-process
+        if norm_evals:
+            evals = normalize_ev(self.geometry, evals)
+
         if fix_mode1:
             # Value given by mass-orthonormality condition
-            self.emodes[:, 0] = self.mass.sum()**(-0.5)
-            self.evals[0] = 0.0
+            emodes[:, 0] = self.mass.sum()**(-0.5)
+            evals[0] = 0.0
 
         if standardize:
-            self.emodes = standardize_modes(self.emodes)
+            emodes = standardize_modes(emodes)
 
+        # Store results
+        self.n_modes = n_modes
+        self.evals = evals
+        self.emodes = emodes
         return self
     
     def _fem_tetra_hetero(
@@ -733,21 +736,3 @@ def is_orthonormal_basis(
     # Check Euclidean or mass-orthonormality
     prod = emodes.T @ emodes if mass is None else emodes.T @ mass @ emodes
     return np.allclose(prod, np.eye(n_modes), rtol=rtol, atol=atol, equal_nan=False)
-
-def calc_tetmesh_vol(mesh: TetMesh) -> float:
-    """
-    Compute total volume of a TetMesh by summing volumes of all tetrahedra.
-    Units follow the mesh vertex coordinates (e.g., mm^3 if vertices are in mm).
-    """
-    v = mesh.v.astype(np.float64)
-    t = mesh.t.astype(np.int64)
-
-    A = v[t[:, 0]]
-    B = v[t[:, 1]]
-    C = v[t[:, 2]]
-    D = v[t[:, 3]]
-
-    # Volume of a tetrahedron = |det([B-A, C-A, D-A])| / 6
-    M = np.stack((B - A, C - A, D - A), axis=1)  # shape (n_tets, 3, 3)
-    vol = np.abs(np.linalg.det(M)) / 6.0
-    return vol.sum()

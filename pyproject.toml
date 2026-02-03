@@ -7,23 +7,16 @@ requires-python = ">=3.9"
 keywords = ["python", "modelling", "neuroimaging", "eigenmodes", "brain-mapping"]
 
 dependencies = [
-    "gmsh>=4.15.0",
-    "iso2mesh",
+    "joblib>=1.5.3",
     "lapy>=1.1.0",
-    "nbformat>=5.10.4",
     "nibabel>=5.2.1",
-    "nilearn>=0.12.1",
     "numpy>=1.24.4",
-    "pyvista>=0.46.5",
-    "scikit-image>=0.24.0",
     "scipy>=1.10.1",
-    "tetgen>=0.7.0",
     "trimesh>=4.8.1",
 ]
 
 [project.optional-dependencies]
 testing = [
-    "joblib>=1.5.3",
     "pytest>=8.4.2",
 ]
 tutorials = [
@@ -31,8 +24,9 @@ tutorials = [
     "matplotlib>=3.9.4",
     "nsbutils @ git+https://github.com/NSBLab/nsbutils.git@dev",
 ]
-cache = [
-    "joblib>=1.5.3",
+vol = [
+    "gmsh>=4.15.0",
+    "tetgen>=0.7.0",
 ]
 
 [build-system]
@@ -49,9 +43,6 @@ packages = ["neuromodes", "neuromodes.data"]
 python_functions = ["test_"]
 python_files = ["test_*.py",]
 testpaths = ["tests",]
-
-[tool.uv.sources]
-iso2mesh = { git = "https://github.com/NeuroJSON/pyiso2mesh.git" }
 
 [project.urls]
 "Homepage" = "https://neuromodes.readthedocs.io"

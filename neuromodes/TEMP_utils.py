@@ -337,3 +337,21 @@ def make_vol_mesh(
     tetras = tetra_nodes - 1   # gmsh uses 1-based indexing
 
     return TetMesh(v=verts.astype(np.float64), t=tetras.astype(np.int32))
+
+def calc_tetmesh_vol(mesh: TetMesh) -> float:
+    """
+    Compute total volume of a TetMesh by summing volumes of all tetrahedra.
+    Units follow the mesh vertex coordinates (e.g., mm^3 if vertices are in mm).
+    """
+    v = mesh.v.astype(np.float64)
+    t = mesh.t.astype(np.int64)
+
+    A = v[t[:, 0]]
+    B = v[t[:, 1]]
+    C = v[t[:, 2]]
+    D = v[t[:, 3]]
+
+    # Volume of a tetrahedron = |det([B-A, C-A, D-A])| / 6
+    M = np.stack((B - A, C - A, D - A), axis=1)  # shape (n_tets, 3, 3)
+    vol = np.abs(np.linalg.det(M)) / 6.0
+    return vol.sum()
