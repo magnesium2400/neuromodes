@@ -62,10 +62,10 @@ def model_connectome(
 
         if emodes.ndim != 2 or emodes.shape[0] <= emodes.shape[1]:
             raise ValueError("`emodes` must have shape (n_verts, n_modes), with n_verts > n_modes.")
+        if evals.shape != (emodes.shape[1],):
+            raise ValueError(f"`evals` must have shape (n_modes,) = {(emodes.shape[1],)}, matching "
+                             "the number of columns in `emodes`.")
     n_modes = emodes.shape[1]
-    if checks and evals.shape != (n_modes,):
-        raise ValueError(f"`evals` must have shape (n_modes,) = {(n_modes,)}, matching the number "
-                        "of columns in `emodes`.")
     if not isinstance(r, (int, float)) or r <= 0:
         raise ValueError("Parameter `r` must be a positive number.")
     if not isinstance(k, int) or k <= 0 or k > n_modes:

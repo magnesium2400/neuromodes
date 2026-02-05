@@ -7,6 +7,7 @@ from importlib.resources import files, as_file
 import os
 from pathlib import Path
 from typing import Union, Tuple, cast, TYPE_CHECKING
+from joblib import Memory
 from lapy import TriaMesh, TetMesh
 from nibabel.freesurfer.io import read_geometry
 from nibabel.gifti.gifti import GiftiImage
@@ -21,28 +22,32 @@ fs_extensions = ('.white', '.pial', '.inflated', '.orig', '.sphere', '.smoothwm'
                  '.fsaverage')
 
 def is_vol(geometry) -> bool:
-    return True if (isinstance(geometry, (str, Path))
-                    and str(geometry).endswith(('.tetra.vtk'))
-        or isinstance(geometry, dict) and 'tetras' in geometry
-        or isinstance(geometry, TetMesh)) else False
+    return True if (
+        (isinstance(geometry, (str, Path)) and str(geometry).endswith(('.tetra.vtk')))
+        or (isinstance(geometry, dict) and 'tetras' in geometry)
+        or isinstance(geometry, TetMesh)
+        ) else False
 
 def is_surf(geometry) -> bool:
-    return True if (isinstance(geometry, (str, Path))
-                    and str(geometry).endswith(('.vtk', '.gii') + fs_extensions)
+    return True if (
+        (isinstance(geometry, (str, Path))
+        and str(geometry).endswith(('.vtk', '.gii') + fs_extensions))
         or isinstance(geometry, (Trimesh, TriaMesh))
-        or isinstance(geometry, dict) and 'faces' in geometry) else False
+        or (isinstance(geometry, dict) and 'faces' in geometry)
+        ) else False
 
 def read_vol(
-    vol: Union[str, Path, dict]
+    vol: Union[str, Path, TetMesh, dict]
 ) -> TetMesh:
     """
     Load and validate a tetrahedral volume mesh.
 
     Parameters
     ----------
-    vol : str, Path, or dict
-        Volume mesh specified as a file path (string or Path) to a VTK (.tetra.vtk) file,
-        or a dictionary with `vertices` and `tetras` keys.
+    vol : str, Path, TetMesh, or dict
+        Volume mesh specified as a file path (string or Path) to a VTK (.tetra.vtk) file, an
+        instance of `lapy.TetMesh`, or a dictionary with `'vertices'` and `'tetras'` keys,
+        referencing arrays of shape (n_verts, 3) and (n_tets, 4), respectively.
 
     Returns
     -------
@@ -52,34 +57,37 @@ def read_vol(
     Raises
     ------
     ValueError
-        If `vol` is a path-like string to an unsupported format.
+        If `vol` is not a path-like string to a valid VTK (`.tetra.vtk`) file, an instance of
+        `lapy.TetMesh`, or a dictionary with `'vertices'` and `'tetras'` keys.
     """
-    if isinstance(vol, dict):
-        mesh = TetMesh(
-            v=vol['vertices'].astype(np.float64),
-            t=vol['tetras'].astype(np.int32)
-            )
-    elif isinstance(vol, (str, Path)) and (str(vol).endswith('.tetra.vtk')):
-        # Load with lapy
-        mesh = TetMesh.read_vtk(str(vol))
+    if isinstance(vol, TetMesh):
+        return vol
+    elif isinstance(vol, dict):
+        _check_mesh_dict(vol)
+        return TetMesh(v=vol['vertices'], t=vol['tetras'])
     else:
-        raise ValueError("Unsupported volume geometry format. Provide a VTK (.tetra.vtk) file path,"
-                         " or a dictionary with 'vertices' and 'tetras' keys.")
-
-    return mesh
+        vol_str = str(vol)
+        if not Path(vol_str).is_file():
+            raise ValueError(f"Volume data not found: {vol_str}")
+        if vol_str.endswith('.tetra.vtk'):
+            # Load with lapy
+            return TetMesh.read_vtk(str(vol))
+    raise ValueError("`vol` must be a path-like string to a valid VTK (.tetra.vtk) file, an "
+                    "instance of `lapy.TetMesh`, or a dictionary with 'vertices' and 'tetras' "
+                    "keys.")
 
 def read_surf(
-    mesh: Union[str, Path, Trimesh, TriaMesh, dict]
+    surf: Union[str, Path, Trimesh, TriaMesh, dict]
 ) -> Trimesh:
     """Load a triangular surface mesh.
 
     Parameters
     ----------
-    mesh : str, Path, trimesh.Trimesh, lapy.TriaMesh, or dict
+    surf : str, Path, trimesh.Trimesh, lapy.TriaMesh, or dict
         Surface mesh specified as a file path (string or Path) to a VTK (.vtk), GIFTI (.gii), or
         FreeSurfer file (.white, .pial, .inflated, .orig, .sphere, .smoothwm, .qsphere, .fsaverage),
-        an instance of `trimesh.Trimesh` or `lapy.TriaMesh`, or a dictionary with `vertices` and
-        `faces` keys.
+        an instance of `trimesh.Trimesh` or `lapy.TriaMesh`, or a dictionary with `'vertices'` and
+        `'faces'` keys, referencing arrays of shape (n_verts, 3) and (n_faces, 3), respectively.
 
     Returns
     -------
@@ -89,39 +97,45 @@ def read_surf(
     Raises
     ------
     ValueError
-        If `mesh` is a path-like string to an unsupported format.
+        If `surf` is a path-like string to an unsupported format.
     ValueError
-        If `mesh` is a path-like string to a file that does not exist.
+        If `surf` is a path-like string to a file that does not exist.
     """
-    if isinstance(mesh, Trimesh):
-        return mesh
-    elif isinstance(mesh, TriaMesh):
-        return Trimesh(vertices=mesh.v, faces=mesh.t)
-    elif isinstance(mesh, dict):
-        return Trimesh(vertices=mesh['vertices'], faces=mesh['faces'])
+    if isinstance(surf, Trimesh):
+        return surf
+    elif isinstance(surf, TriaMesh):
+        vertices=surf.v
+        faces=surf.t
+    elif isinstance(surf, dict):
+        _check_mesh_dict(surf)
+        vertices=surf['vertices']
+        faces=surf['faces']
     else:
-        mesh_str = str(mesh)
+        surf_str = str(surf)
         # check that file exists
-        if not Path(mesh_str).is_file():
-            raise ValueError(f'File not found: {mesh_str}')
-
+        if not Path(surf_str).is_file():
+            raise ValueError(f'File not found: {surf_str}')
         # Handle different file types
-        if mesh_str.endswith('.vtk'):
-            mesh_lapy = TriaMesh.read_vtk(mesh_str)
-            return Trimesh(vertices=mesh_lapy.v, faces=mesh_lapy.t)
-        elif mesh_str.endswith('.gii'):
-            mesh_data = cast(GiftiImage, load(mesh_str)).darrays
-            return Trimesh(vertices=mesh_data[0].data, faces=mesh_data[1].data)
-        elif mesh_str.endswith(fs_extensions):
+        if surf_str.endswith('.vtk'):
+            surf_lapy = TriaMesh.read_vtk(surf_str)
+            vertices=surf_lapy.v
+            faces=surf_lapy.t
+        elif surf_str.endswith('.gii'):
+            surf_data = cast(GiftiImage, load(surf_str)).darrays
+            vertices=surf_data[0].data
+            faces=surf_data[1].data
+        elif surf_str.endswith(fs_extensions):
             vertices, faces = read_geometry(
-                mesh_str, read_metadata=False, read_stamp=False
+                surf_str, read_metadata=False, read_stamp=False
                 ) # will only return two outputs now # type: ignore
-            return Trimesh(vertices=vertices, faces=faces) # type: ignore
-        raise ValueError(
-            '`surf` must be a path-like string to a valid VTK (.vtk), GIFTI (.gii), or '
-            f'FreeSurfer file {fs_extensions}, an instance of `trimesh.Trimesh` or '
-            '`lapy.TriaMesh`, or a dictionary of `faces` and `vertices`.'
-            )
+        else:
+            raise ValueError(
+                '`surf` must be a path-like string to a valid VTK (.vtk), GIFTI (.gii), or '
+                f'FreeSurfer file {fs_extensions}, an instance of `trimesh.Trimesh` or '
+                '`lapy.TriaMesh`, or a dictionary of `faces` and `vertices`.'
+                )
+        
+    return Trimesh(vertices=vertices, faces=faces, process=False)
 
 def mask_vol(
     vol: TetMesh,
@@ -148,7 +162,24 @@ def mask_vol(
     ValueError
         If `mask` does not have a length matching the number of vertices in `vol`.
     """
-    pass
+    mask = np.asarray(mask, dtype=bool)
+
+    if mask.shape != (vol.v.shape[0],):
+        raise ValueError(f"`mask` must have shape (n_verts,) = ({(vol.v.shape[0],)},).")
+    
+    # Remove vertices not in mask
+    vol.v = vol.v[mask]
+
+    # Update vertex indices of tetrahedra (-1 for removed vertices)
+    v_map = np.zeros(mask.shape[0]) - 1
+    v_map[mask] = np.arange(np.sum(mask))
+    vol.t = v_map[vol.t]
+    
+    # Keep only tetrahedra where all vertices are in the mask
+    tet_mask = np.all(vol.t != -1, axis=1)
+    vol.t = vol.t[tet_mask]
+
+    return vol
 
 def mask_surf(
     surf: Trimesh,
@@ -178,10 +209,9 @@ def mask_surf(
     mask = np.asarray(mask, dtype=bool)
 
     if mask.shape != (surf.vertices.shape[0],):
-        raise ValueError(f"`mask` must have shape {(surf.vertices.shape[0],)} to match the number "
-                         "of vertices in the surface mesh.")
+        raise ValueError(f"`mask` must have shape (n_verts,) = ({(surf.vertices.shape[0],)},).")
     
-    # Mask faces where all vertices are in the mask
+    # Keep only faces where all vertices are in the mask
     face_mask = np.all(mask[surf.faces], axis=1)
     
     return surf.submesh([face_mask])[0] #type: ignore # submesh returns a list by default
@@ -201,6 +231,8 @@ def check_vol(
     ------
     ValueError
         If the volume mesh contains unreferenced vertices.
+    ValueError
+        If the surface boundary of the volume mesh is not contiguous.
     """
     if vol.has_free_vertices():
         raise ValueError('Volume mesh contains unreferenced vertices (i.e., not part of any '
@@ -209,9 +241,15 @@ def check_vol(
     # Check that surface boundary of volume is contiguous
     vol_surf = vol.boundary_tria()
     vol_surf.orient_()
-    check_surf(
-        Trimesh(vertices=vol_surf.v, faces=vol_surf.t)
-        )
+
+    try:
+        check_surf(Trimesh(vertices=vol_surf.v, faces=vol_surf.t))
+    except ValueError as e:
+        # Adjust error message to specify that the issue is with the surface boundary of the volume
+        first_word, rest = str(e).split(' ', 1)
+        raise ValueError(
+            f'{first_word} boundary of the volume {rest}.'
+            ) from e
 
 def check_surf(
     surf: Trimesh
@@ -277,7 +315,8 @@ def fetch_vol(
 
     try:
         with as_file(data_dir / filename) as fpath:
-            return read_vol(fpath)
+            vol = read_vol(fpath)
+            return vol
     except Exception as e:
         raise ValueError(
             f"Volume data not found. Please see {data_dir}/included_data.csv or "
@@ -391,6 +430,52 @@ def fetch_map(
             "https://github.com/NSBLab/neuromodes/tree/main/neuromodes/data/included_data.csv for a"
             " list of available data files."
         ) from e
+    
+def _check_mesh_dict(
+    mesh_dict: dict
+) -> None:
+    """
+    Check that a dictionary has the required keys and value shapes for a surface or volume mesh.
+
+    Parameters
+    ----------
+    mesh_dict : dict
+        The mesh dictionary to check.
+
+    Raises
+    ------
+    ValueError
+        If the dictionary does not have keys 'vertices' and either 'faces' or 'tetras'.
+    ValueError
+        If the 'vertices' key does not reference an array of shape (n_verts, 3).
+    ValueError
+        If the 'faces' key (for surfaces) does not reference an array of shape (n_faces, 3), or if
+        the 'tetras' key (for volumes) does not reference an array of shape (n_tets, 4).
+    """
+    # Check for required keys
+    if 'vertices' not in mesh_dict or ('faces' not in mesh_dict and 'tetras' not in mesh_dict):
+        raise ValueError("Mesh dictionary must contain keys 'vertices' and either 'faces' or "
+                         "'tetras' for surface and volumes meshes, respectively.")
+    
+    # Check shapes of vertices
+    verts = np.asarray_chkfinite(mesh_dict['vertices'])
+    if verts.ndim != 2 or verts.shape[1] != 3:
+        raise ValueError("Mesh dictionary key 'vertices' must reference an array-like with shape "
+                         f"(n_verts, 3), received {verts.shape}.")
+
+    # Infer surface vs volume
+    if 'faces' in mesh_dict:
+        elems_type = 'faces'
+        elems_verts = 3
+    else:  # 'tetras'
+        elems_type = 'tetras'
+        elems_verts = 4
+
+    # Check shapes of faces/tetras
+    elems = np.asarray_chkfinite(mesh_dict[elems_type])
+    if elems.ndim != 2 or elems.shape[1] != elems_verts:
+        raise ValueError(f"Mesh dictionary key '{elems_type}' must reference an array-like with "
+                         f"shape (n_{elems_type}, {elems_verts}), received {elems.shape}.")
 
 def _set_cache():
     """
@@ -406,15 +491,6 @@ def _set_cache():
     ImportError
         If `joblib` is not installed.
     """
-    try:
-        from joblib import Memory
-    except ImportError:
-        raise ImportError(
-            "joblib is required for caching. Please install it via 'pip install joblib' (or "
-            "install neuromodes with UV via 'uv add \"neuromodes[cache] @ "
-            "git+https://github.com/NSBLab/neuromodes.git\")."
-        )
-
     CACHE_DIR = os.getenv("CACHE_DIR")
     if CACHE_DIR is None:
         CACHE_DIR = Path.home() / ".neuromodes_cache"

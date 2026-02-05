@@ -1,5 +1,6 @@
 """Utility functions for mesh generation and visualization."""
 
+from __future__ import annotations
 import numpy as np
 import tetgen
 import plotly.graph_objs as go
@@ -8,6 +9,7 @@ from matplotlib import colormaps
 from typing import Union, TYPE_CHECKING
 from nibabel import Nifti1Image, load
 from scipy.interpolate import griddata
+from scipy import sparse
 from trimesh.voxel.ops import matrix_to_marching_cubes
 import gmsh
 from nibabel.affines import apply_affine
@@ -355,3 +357,70 @@ def calc_tetmesh_vol(mesh: TetMesh) -> float:
     M = np.stack((B - A, C - A, D - A), axis=1)  # shape (n_tets, 3, 3)
     vol = np.abs(np.linalg.det(M)) / 6.0
     return vol.sum()
+
+def _fem_tria_hetero(tria, lump=False, hetero=None):
+    """
+    Compute FEM matrices for a triangular mesh with heterogeneous elements.
+    Adapted from lapy.fem.tria._fem_tria function to handle heterogeneous triangles.
+    """
+    import sys
+
+    # Compute vertex coordinates and a difference vector for each triangle:
+    t1 = tria.t[:, 0]
+    t2 = tria.t[:, 1]
+    t3 = tria.t[:, 2]
+    v1 = tria.v[t1, :]
+    v2 = tria.v[t2, :]
+    v3 = tria.v[t3, :]
+    v2mv1 = v2 - v1
+    v3mv2 = v3 - v2
+    v1mv3 = v1 - v3
+    # Compute cross product and 4*vol for each triangle:
+    cr = np.cross(v3mv2, v1mv3)
+    vol = 2 * np.sqrt(np.sum(cr * cr, axis=1))
+    # zero vol will cause division by zero below, so set to small value:
+    vol_mean = 0.0001 * np.mean(vol)
+    vol[vol < sys.float_info.epsilon] = vol_mean
+    # compute cotangents for A
+    # using that v2mv1 = - (v3mv2 + v1mv3) this can also be seen by
+    # summing the local matrix entries in the old algorithm
+    a12 = np.sum(v3mv2 * v1mv3, axis=1) / vol
+    a23 = np.sum(v1mv3 * v2mv1, axis=1) / vol
+    a31 = np.sum(v2mv1 * v3mv2, axis=1) / vol
+    # compute diagonals (from row sum = 0)
+    a11 = -a12 - a31
+    a22 = -a12 - a23
+    a33 = -a31 - a23
+    # ----------------------------------- APPLY HETEROGENEITY ---------------------------------
+    hetero_trias = np.sum(hetero[tria.t], axis=1) / 3.0
+    a12 *= hetero_trias
+    a23 *= hetero_trias
+    a11 *= hetero_trias
+    a22 *= hetero_trias
+    a33 *= hetero_trias
+    # -----------------------------------------------------------------------------------------
+    # stack columns to assemble data
+    local_a = np.column_stack(
+        (a12, a12, a23, a23, a31, a31, a11, a22, a33)
+    ).reshape(-1)
+    i = np.column_stack((t1, t2, t2, t3, t3, t1, t1, t2, t3)).reshape(-1)
+    j = np.column_stack((t2, t1, t3, t2, t1, t3, t1, t2, t3)).reshape(-1)
+    # Construct sparse matrix:
+    # a = sparse.csr_matrix((local_a, (i, j)))
+    a = sparse.csc_matrix((local_a, (i, j)))
+    # construct mass matrix (sparse or diagonal if lumped)
+    if not lump:
+        # create b matrix data (account for that vol is 4 times area)
+        b_ii = vol / 24
+        b_ij = vol / 48
+        local_b = np.column_stack(
+            (b_ij, b_ij, b_ij, b_ij, b_ij, b_ij, b_ii, b_ii, b_ii)
+        ).reshape(-1)
+        b = sparse.csc_matrix((local_b, (i, j)))
+    else:
+        # when lumping put all onto diagonal  (area/3 for each vertex)
+        b_ii = vol / 12
+        local_b = np.column_stack((b_ii, b_ii, b_ii)).reshape(-1)
+        i = np.column_stack((t1, t2, t3)).reshape(-1)
+        b = sparse.csc_matrix((local_b, (i, i)))
+    return a, b

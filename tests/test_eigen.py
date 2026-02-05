@@ -233,9 +233,11 @@ def test_solutions(solver):
     assert np.all(np.diff(evals) > 0), 'Eigenvalues are not sorted in descending order.'
 
 def test_n_modes_consistency(solver):
-    emode_set = solver.emodes[:, 1:11]
-    emode_set_diff_n = solver.solve(11, seed=0).emodes[:, 1:11]
-    assert np.allclose(emode_set, emode_set_diff_n, atol=1e-4), \
+    emode_set = solver.emodes
+
+    # Solve for more modes and check that the first 16 modes are approximately the same
+    emode_set_larger_n_modes = solver.solve(100, seed=0).emodes[:, :16]
+    assert np.allclose(emode_set, emode_set_larger_n_modes, atol=1e-4), \
         'Modes differ when solving for different n_modes.'
 
 def test_constant_mode1(solver):
