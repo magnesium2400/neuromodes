@@ -292,7 +292,7 @@ class EigenSolver(Solver):
         )
 
         # Validate results
-        assert not (np.isnan(evals).any() or np.isnan(emodes).any()), (
+        assert not ((np.isnan(evals).any() or np.isnan(emodes).any())), (
             "Computed eigenvalues or eigenmodes contain NaNs. This may indicate numerical "
             "instability; consider adjusting `sigma` or checking mesh quality.")
 

@@ -10,14 +10,13 @@ Features
 .. image:: https://github.com/NSBLab/neuromodes/raw/main/docs/_static/overview.png
 
 - ``eigen``: Compute geometric eigenmodes from cortical surface meshes, optionally incorporating spatial heterogeneity
-- ``basis``: Decompose and reconstruct cortical maps using the modes, or another basis set
+- ``basis``: Decompose and reconstruct cortical maps and timeseries using the geometric eigenmodes, or another basis set
 - ``waves``: Simulate neural activity and BOLD signals using the wave propagation model from `Pang et al. (2023) <https://doi.org/10.1038/s41586-023-06098-1>`_
-- ``connectome``: Simulate structural connectomes using the generative model from `Normand et al. (2025) <https://doi.org/10.1101/2025.09.17.676944>`_
+- ``connectome``: Generate models of structural connectomes using the Geometric Eigenmode Model from `Normand et al. (2025) <https://doi.org/10.1101/2025.09.17.676944>`_
 - ``io``: Access triangular surface meshes for human, macaque, and marmoset cortices
-- ``morphometry`` *(under development)*: Quantify multiscale anatomical differences using the method from `Cao et al. (2024) <https://doi.org/10.1002/hbm.26640>`_
-- ``parcellation`` *(under development)*: Create parcellations with any number of regions using the method from `Pang et al. (2025) <https://doi.org/10.1101/2025.01.30.635820>`_
-
-To compare cortical maps while accounting for spatial autocorrelation, we recommend using the `eigenstrapping <https://eigenstrapping.readthedocs.io/en/stable/index.html>`_ package, which uses the geometric eigenmodes for rigorous null modelling.
+- ``nulls`` *(under development)*: Generate null models of cortical maps that preserve spatial autocorrelation, using the Eigenstrapping method from `Koussis et al. (2025) <https://doi.org/10.1162/IMAG.a.71>`_
+- ``morphometry`` *(under development)*: Quantify multiscale anatomical differences using Mode-Based Morphometry from `Cao et al. (2024) <https://doi.org/10.1002/hbm.26640>`_
+- ``parcellation`` *(under development)*: Create parcellations with any number of regions using the hierarchical bipartitioning method from `Pang et al. (2025) <https://doi.org/10.1101/2025.01.30.635820>`_
 
 Installation
 ------------
@@ -37,7 +36,7 @@ Alternatively, ``neuromodes`` can be added as a dependency to your ``pyproject.t
 
 .. code-block:: bash
 
-  uv add git+https://github.com/NSBLab/neuromodes.git.
+  uv add git+https://github.com/NSBLab/neuromodes.git.  # add '@dev' to clone from dev branch
 |
 If you wish to run the tutorials, please instead install our extra ``tutorials`` dependencies via:
 
@@ -60,7 +59,7 @@ If you encounter any problems, please consider `opening an issue <https://github
   uv venv --python 3.13.3
   uv sync --frozen
 |
-Tests can be run with ``pytest`` via:
+Tests can be run with ``pytest`` from the repository root:
 
 .. code-block:: bash
 
@@ -77,6 +76,10 @@ J.C. Pang, K.M. Aquino, M. Oldehinkel, P.A. Robinson, B.D. Fulcher, M. Breakspea
 M\. Reuter, F-E. Wolter, N. Peinecke, Laplace-Beltrami spectra as 'Shape-DNA' of surfaces and solids, Computer-Aided Design, 38(4), 342-366 (2006). (DOI: 10.1016/j.cad.2005.10.011)
 
 C\. Wachinger, P. Golland, W. Kremen, B. Fischl, M. Reuter, BrainPrint: a discriminative characterization of brain morphology, Neuroimage, 109, 232-248 (2015). (DOI: 10.1016/j.neuroimage.2015.01.032)
+
+If you use the ``hetero`` parameter in ``EigenSolver``, please also cite:
+
+V\. Barnes, J. Cruddas, T. Cao, I.Z. Pope, T. Xu, T. Funck, N. Palomera-Gallagher, J.C. Pang, A. Fornito, Regional heterogeneity shapes macroscopic wave dynamics of the human and non-human primate cortex, BioRxiv (2026) (DOI: 10.64898/2026.01.22.701178)
 
 If you use the ``model_connectome`` function, please also cite:
 

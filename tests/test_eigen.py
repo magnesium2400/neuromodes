@@ -34,7 +34,7 @@ def test_no_medmask(surf_medmask_hetero):
 def test_invalid_mask_shape(surf_medmask_hetero):
     surf, _, _ = surf_medmask_hetero
     bad_mask = np.ones(10)
-    with pytest.raises(ValueError, match=r"`mask` must have shape \(4002,\)"):
+    with pytest.raises(ValueError, match=r"`mask` must have shape \(n_verts,\) = \(4002,\)"):
         EigenSolver(surf, mask=bad_mask)
 
 def test_no_hetero(surf_medmask_hetero):

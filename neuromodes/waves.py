@@ -122,6 +122,20 @@ def simulate_waves(
     -----
     Since the simulation begins at rest, consider discarding the first ~50 seconds to allow the
     system to reach a steady state.
+
+    References
+    ----------
+    ..  [1] Pang, J. C., et al. (2023). Geometric constraints on human brain function. Nature.
+        https://doi.org/10.1038/s41586-023-06098-1
+    ..  [2] Barnes, V., et al. (2026). Regional heterogeneity shapes macroscopic wave dynamics of
+        the human and non-human primate cortex. bioRxiv. https://doi.org/10.64898/2026.01.22.701178
+    ..  [3] Robinson, P. A., et al. (1997). Propagation and stability of waves of electrical
+        activity in the cerebral cortex. Physical Review E. https://doi.org/10.1103/physreve.56.826
+    ..  [4] Buxton, R. B., et al. (1998). Dynamics of blood flow and oxygenation changes during
+        brain activation: The balloon model. Magnetic Resonance in Med.
+        https://doi.org/10.1002/mrm.1910390602
+    ..  [5] Stephan, K. E., et al. (2007). Comparing hemodynamic models with DCM. NeuroImage.
+        https://doi.org/10.1016/j.neuroimage.2007.07.040
     """
     # Format / validate arguments
     r = float(r)

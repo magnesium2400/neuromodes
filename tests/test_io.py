@@ -75,7 +75,7 @@ def test_fetch_medmask():
 
 def test_fetch_invalid_surf():
     with raises(ValueError, match="Surface data not found"):
-        fetch_surf(surf='makessense')
+        fetch_surf(surf_type='makessense')
 
 def test_fetch_gradient():
     grad = fetch_map('fcgradient1')

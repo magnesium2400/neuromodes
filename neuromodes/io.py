@@ -205,16 +205,20 @@ def mask_surf(
     ------
     ValueError
         If `mask` does not have a length matching the number of vertices in `surf`.
+
+    Notes
+    -----
+    In `Trimesh.submesh`, `repair=False` is used to avoid an unnecessary dependency on 
+    `networkx`. Mesh validation is handled separately in `check_surf` in `EigenSolver`.
     """
     mask = np.asarray(mask, dtype=bool)
 
     if mask.shape != (surf.vertices.shape[0],):
-        raise ValueError(f"`mask` must have shape (n_verts,) = ({(surf.vertices.shape[0],)},).")
+        raise ValueError(f"`mask` must have shape (n_verts,) = ({surf.vertices.shape[0]},).")
     
     # Keep only faces where all vertices are in the mask
     face_mask = np.all(mask[surf.faces], axis=1)
-    
-    return surf.submesh([face_mask])[0] #type: ignore # submesh returns a list by default
+    return surf.submesh([face_mask], repair=False)[0] #type: ignore; submesh returns list by default
 
 def check_vol(
     vol: TetMesh
@@ -268,9 +272,7 @@ def check_surf(
         If the surface mesh contains unreferenced vertices.
     ValueError
         If the surface mesh is not contiguous.
-    
     """
-
     # Check for unreferenced vertices
     referenced = np.zeros(len(surf.vertices), dtype=bool)
     referenced[surf.faces] = True
@@ -278,7 +280,7 @@ def check_surf(
         raise ValueError(f'Surface mesh contains {np.sum(~referenced)} unreferenced '
                          'vertices (i.e., not part of any face).')
 
-    # Check if the mesh is contiguous
+    # Ensure surface is contiguous
     n_components = surf.body_count
     if n_components != 1:
         raise ValueError(f'Surface mesh is not contiguous: {n_components} connected components '
@@ -311,10 +313,10 @@ def fetch_vol(
         The loaded volume mesh.
     """
     data_dir = files('neuromodes.data')
-    filename = f'sp-{species}_tpl-{template}_hemi-{hemi}_{structure}.tetra.vtk'
+    file_name = f'sp-{species}_tpl-{template}_hemi-{hemi}_{structure}.tetra.vtk'
 
     try:
-        with as_file(data_dir / filename) as fpath:
+        with as_file(data_dir / file_name) as fpath:
             vol = read_vol(fpath)
             return vol
     except Exception as e:
@@ -328,7 +330,7 @@ def fetch_surf(
     species: str = 'human',
     density: str = '32k',
     hemi: str = 'L',
-    surf: str = 'midthickness',
+    surf_type: str = 'midthickness',
     template: str = 'fsLR'
 ) -> Tuple[Trimesh, NDArray]:
     """
@@ -347,14 +349,14 @@ def fetch_surf(
     hemi : str, optional
         Hemisphere of the surface mesh. Options are `'L'` for all species, and `'R'` for human.
         Default is `'L'`.
-    surf : str, optional
+    surf_type : str, optional
         Surface type to load. Currently only supports `'midthickness'`. Default is `'midthickness'`.
     template : str, optional
         Template of the surface mesh. Currently only supports `'fsLR'`. Default is `'fsLR'`.
     
     Returns
     -------
-    mesh : trimesh.Trimesh
+    surf : trimesh.Trimesh
         The loaded surface mesh.
     medmask : np.ndarray
         The medial wall mask as a boolean array.
@@ -365,16 +367,16 @@ def fetch_surf(
         If the specified surface data is not found in the `neuromodes/data` directory.
     """
     data_dir = files('neuromodes.data')
-    meshname = f'sp-{species}_tpl-{template}_den-{density}_hemi-{hemi}_{surf}.surf.gii'
-    maskname = f'sp-{species}_tpl-{template}_den-{density}_hemi-{hemi}_medmask.label.gii'
+    surf_name = f'sp-{species}_tpl-{template}_den-{density}_hemi-{hemi}_{surf_type}.surf.gii'
+    mask_name = f'sp-{species}_tpl-{template}_den-{density}_hemi-{hemi}_medmask.label.gii'
 
     try:
-        with as_file(data_dir / meshname) as fpath:
-            mesh = read_surf(fpath)
-        with as_file(data_dir / maskname) as fpath:
+        with as_file(data_dir / surf_name) as fpath:
+            surf = read_surf(fpath)
+        with as_file(data_dir / mask_name) as fpath:
             medmask = cast(GiftiImage, load(fpath)).darrays[0].data.astype(bool)
         
-        return mesh, medmask
+        return surf, medmask
     except Exception as e:
         raise ValueError(
             f"Surface data not found. Please see {data_dir}/included_data.csv or "
@@ -479,7 +481,8 @@ def _check_mesh_dict(
 
 def _set_cache():
     """
-    Set up joblib memory caching.
+    Set up joblib memory caching based. Uses the directory specified by the `CACHE_DIR` 
+    environment variable, or defaults to `~/.neuromodes_cache` if not set.
     
     Returns
     -------

@@ -183,7 +183,7 @@ def reconstruct(
 
     # Reconstruct and calculate error
     recon = np.stack([emodes[:, :mode_counts[i]] @ beta[i] for i in range(len(beta))], axis=1)
-    recon_error = np.stack([
+    recon_error = np.concatenate([
         cdist(recon[:, :, i].T, data[:, [i]].T, metric=metric, **cdist_kwargs)
         for i in range(data.shape[1])
     ], axis=1) if metric is not None else np.empty(0)
