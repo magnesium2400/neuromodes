@@ -3,7 +3,17 @@ from lapy import TriaMesh
 import numpy as np
 import pytest
 from neuromodes.eigen import EigenSolver, is_orthonormal_basis, scale_hetero
-from neuromodes.io import fetch_surf, fetch_map, mask_surf
+from neuromodes.io import fetch_vol, fetch_surf, fetch_map, mask_surf
+
+def test_vol_modes():
+    for structure in ['thalamus', 'hippocampus', 'striatum']:
+        for hemi in ['L', 'R']:
+            vol = fetch_vol(structure=structure, hemi=hemi)
+            solver = EigenSolver(vol).solve(10, seed=0)
+
+            assert solver.emodes.shape == (vol.v.shape[0], 10), (
+                f'emodes has shape {solver.emodes.shape}, should be {(vol.v.shape[0], 10)}.')
+            assert len(solver.evals) == 10, (f'evals has length {len(solver.evals)}, should be 10.')
 
 @pytest.fixture
 def surf_medmask_hetero():

@@ -62,16 +62,21 @@ def test_surf_not_contiguous():
         check_surf(disconnected_mesh)
 
 def test_fetch_surf():
-    surf, _ = fetch_surf()
-    assert isinstance(surf, Trimesh)
-    assert surf.vertices.shape == (32492, 3)
+    for hemi in ['L', 'R']:
+        for species in ['human', 'macaque', 'marmoset']:
+            for density in ['4k', '32k']:
+                if species != 'human' and density == '4k':
+                    with raises(ValueError, match="Surface data not found"):
+                        fetch_surf(species=species, hemi=hemi, density=density)
+                    continue
 
-def test_fetch_medmask():
-    _, medmask = fetch_surf(species='marmoset')
-    assert isinstance(medmask, np.ndarray)
-    assert medmask.dtype == bool
-    assert medmask.shape == (32492,)
-    assert np.sum(medmask) == 23052
+                surf, medmask = fetch_surf(species=species, hemi=hemi, density=density)
+                assert surf.vertices.shape[0] > 0
+                assert surf.vertices.shape[1] == 3
+                assert surf.faces.shape[0] > 0
+                assert surf.faces.shape[1] == 3
+                assert medmask.dtype == bool
+                assert medmask.shape == (surf.vertices.shape[0],)
 
 def test_fetch_invalid_surf():
     with raises(ValueError, match="Surface data not found"):
@@ -194,9 +199,12 @@ def test_vol_boundary_not_contiguous():
         check_vol(vol)
 
 def test_fetch_vol():
-    vol = fetch_vol('thalamus')
-    assert isinstance(vol, TetMesh)
-    assert vol.v.shape[0] > 0
+    # Check that we can load everything
+    for hemi in ['L', 'R']:
+        for structure in ['thalamus', 'hippocampus', 'striatum']:
+            vol = fetch_vol(structure=structure, hemi=hemi)
+            assert isinstance(vol, TetMesh)
+            assert vol.v.shape[0] > 0
 
 def test_fetch_invalid_vol():
     with raises(ValueError, match="Volume data not found."):
