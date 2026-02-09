@@ -1,9 +1,8 @@
 from pathlib import Path
-from lapy import TriaMesh
 import numpy as np
 import pytest
 from neuromodes.eigen import EigenSolver, is_orthonormal_basis, scale_hetero
-from neuromodes.io import fetch_vol, fetch_surf, fetch_map, mask_surf
+from neuromodes.io import fetch_vol, fetch_surf, fetch_map, mask_geometry
 
 def test_vol_modes():
     for structure in ['thalamus', 'hippocampus', 'striatum']:
@@ -29,13 +28,8 @@ def test_init_params(surf_medmask_hetero):
     
 def test_premasked_surf(surf_medmask_hetero):
     surf, medmask, hetero = surf_medmask_hetero
-    masked_surf = mask_surf(surf, medmask)
+    masked_surf = mask_geometry(surf, medmask)
     _ = EigenSolver(masked_surf, hetero=hetero[medmask])
-    
-def test_triamesh_surf(surf_medmask_hetero):
-    surf, medmask, hetero = surf_medmask_hetero
-    mesh = TriaMesh(surf.vertices, surf.faces)
-    _ = EigenSolver(mesh, mask=medmask, hetero=hetero)
 
 def test_no_medmask(surf_medmask_hetero):
     surf, _, hetero = surf_medmask_hetero

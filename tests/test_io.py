@@ -2,12 +2,11 @@ import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from joblib import Memory
-from lapy import TetMesh
+from lapy import TriaMesh, TetMesh
 import numpy as np
 from pytest import raises
-from trimesh import Trimesh
 from neuromodes.io import (
-    read_vol, read_surf, mask_vol, mask_surf, check_vol, check_surf, fetch_vol, fetch_surf,
+    read_vol, read_surf, mask_geometry, check_vol, check_surf, fetch_vol, fetch_surf,
     fetch_map, _set_cache, _check_mesh_dict
     )
 
@@ -29,23 +28,22 @@ def test_mask_surf():
         [1, 3, 5]
     ])
 
-    vol = Trimesh(vertices=verts, faces=faces)
+    vol = TriaMesh(v=verts, t=faces)
 
     mask = np.array([True, True, True, True, False, False])
 
-    masked_vol = mask_surf(vol, mask)
+    masked_vol = mask_geometry(vol, mask)
 
     # Only the first tetrahedron should remain
-    assert masked_vol.vertices.shape[0] == 4
-    assert (masked_vol.faces == [[0, 1, 2], [0, 2, 3]]).all()
+    assert masked_vol.v.shape[0] == 4
+    assert (masked_vol.t == [[0, 1, 2], [0, 2, 3]]).all()
 
 def test_surf_unreferenced_verts():
     # Create an invalid surface mesh with unreferenced vertices
     vertices = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1], [2, 2, 2]])  # Last vertex unreferenced
     faces = np.array([[0, 1, 2], [0, 2, 3]])  # Only uses first 4 vertices, vertex 4 is unreferenced
     
-    # IMPORTANT: Use process=False to prevent trimesh from automatically cleaning up unreferenced vertices    
-    invalid_mesh = Trimesh(vertices=vertices, faces=faces, process=False)
+    invalid_mesh = TriaMesh(v=vertices, t=faces)
    
     # check_surf should raise ValueError due to unreferenced vertex
     with raises(ValueError, match="Surface mesh contains .* unreferenced vertices"):
@@ -55,7 +53,7 @@ def test_surf_not_contiguous():
     # Create two separate triangles (disconnected components)
     vertices = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [2, 0, 0], [3, 0, 0], [2, 1, 0]])
     faces = np.array([[0, 1, 2], [3, 4, 5]])  # Two separate triangles
-    disconnected_mesh = Trimesh(vertices=vertices, faces=faces)
+    disconnected_mesh = TriaMesh(v=vertices, t=faces)
     
     # check_surf should raise ValueError due to multiple components
     with raises(ValueError, match="Surface mesh is not contiguous.*connected components"):
@@ -71,12 +69,12 @@ def test_fetch_surf():
                     continue
 
                 surf, medmask = fetch_surf(species=species, hemi=hemi, density=density)
-                assert surf.vertices.shape[0] > 0
-                assert surf.vertices.shape[1] == 3
-                assert surf.faces.shape[0] > 0
-                assert surf.faces.shape[1] == 3
+                assert surf.v.shape[0] > 0
+                assert surf.v.shape[1] == 3
+                assert surf.t.shape[0] > 0
+                assert surf.t.shape[1] == 3
                 assert medmask.dtype == bool
-                assert medmask.shape == (surf.vertices.shape[0],)
+                assert medmask.shape == (surf.v.shape[0],)
 
 def test_fetch_invalid_surf():
     with raises(ValueError, match="Surface data not found"):
@@ -97,18 +95,18 @@ def test_read_surf_dict():
         'faces': [[0, 1, 2], [1, 2, 3]]
     }
     surf = read_surf(surf_data)
-    assert isinstance(surf, Trimesh)
-    assert surf.vertices.shape == (4, 3)
-    assert surf.faces.shape == (2, 3)
+    assert isinstance(surf, TriaMesh)
+    assert surf.v.shape == (4, 3)
+    assert surf.t.shape == (2, 3)
 
 def test_read_surf_vtk():
     vtk_surf = read_surf(
         Path(__file__).parent / 'test_data' / 'sp-human_tpl-fsaverage5_den-10k_hemi-L_midthickness.vtk'
         )
 
-    assert isinstance(vtk_surf, Trimesh)
-    assert vtk_surf.vertices.shape == (10242, 3)
-    assert vtk_surf.faces.shape == (20480, 3)
+    assert isinstance(vtk_surf, TriaMesh)
+    assert vtk_surf.v.shape == (10242, 3)
+    assert vtk_surf.t.shape == (20480, 3)
 
 def test_read_surf_invalid():
     invalid_path = Path(__file__).parent / 'test_data' / 'civilised_lunch.surf.vtk'
@@ -121,11 +119,11 @@ def test_read_surf_freesurfer():
             Path(__file__).parent / 'test_data' / f'fsaverage-lh.{surf_type}'
             )
          
-        assert isinstance(fs_surf, Trimesh)
-        assert fs_surf.vertices.shape[0] > 100
-        assert fs_surf.faces.shape[0] > 100
-        assert fs_surf.vertices.shape[1] == 3
-        assert fs_surf.faces.shape[1] == 3
+        assert isinstance(fs_surf, TriaMesh)
+        assert fs_surf.v.shape[0] > 100
+        assert fs_surf.t.shape[0] > 100
+        assert fs_surf.v.shape[1] == 3
+        assert fs_surf.t.shape[1] == 3
 
 def test_mask_vol():
     verts = np.array([
@@ -147,7 +145,7 @@ def test_mask_vol():
 
     mask = np.array([True, True, True, True, False, False])
 
-    masked_vol = mask_vol(vol, mask)
+    masked_vol = mask_geometry(vol, mask)
 
     # Only the first tetrahedron should remain
     assert masked_vol.v.shape[0] == 4
@@ -245,8 +243,8 @@ def test_read_vol_vtk():
     assert vtk_vol.t.shape == (5755, 4)
 
 def test_read_vol_invalid():
-    invalid_path = Path(__file__).parent / 'test_data' / 'fossil_lunch.tetra.vtk'
-    with raises(ValueError, match="Volume data not found: .*fossil_lunch.tetra.vtk"):
+    invalid_path = Path(__file__).parent / 'test_data' / 'fossilised_lunch.tetra.vtk'
+    with raises(ValueError, match="Volume data not found: .*fossilised_lunch.tetra.vtk"):
         read_vol(invalid_path)
 
 def test_check_mesh_dict():
@@ -262,7 +260,7 @@ def test_check_mesh_dict():
     vol_invalid = {
         'vertices': vol['vertices']
     }
-    with raises(ValueError, match="Mesh dictionary must contain keys 'vertices'"):
+    with raises(ValueError, match="Mesh dictionary must contain two keys:"):
         _check_mesh_dict(vol_invalid)
 
     # Wrong shape
@@ -271,7 +269,6 @@ def test_check_mesh_dict():
         'tetras': [[0, 1, 2]]  # Should have 4 indices for tetras
     }
 
-    # Do the above but with re.escape() instead of backslashes
     with raises(ValueError, match="Mesh dictionary key 'tetras' must reference an array-like with "
                 r"shape \(n_tetras, 4\), received \(1, 3\)."):
         _check_mesh_dict(vol_invalid)
@@ -288,7 +285,7 @@ def test_check_mesh_dict():
     surf_invalid = {
         'vertices': surf['vertices']
     }
-    with raises(ValueError, match="Mesh dictionary must contain keys 'vertices'"):
+    with raises(ValueError, match="Mesh dictionary must contain two keys:"):
         _check_mesh_dict(surf_invalid)
 
     # Wrong shape

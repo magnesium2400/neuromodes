@@ -10,7 +10,7 @@ from lapy.shapedna import normalize_ev
 import numpy as np
 from scipy.sparse import csc_matrix, spmatrix
 from scipy.sparse.linalg import LinearOperator, eigsh, splu
-from neuromodes.io import (is_vol, is_surf, read_vol, read_surf, mask_vol, mask_surf, check_vol,
+from neuromodes.io import (is_vol, is_surf, read_vol, read_surf, mask_geometry, check_vol,
                            check_surf)
 
 if TYPE_CHECKING:
@@ -18,7 +18,6 @@ if TYPE_CHECKING:
     from lapy import TetMesh
     from nibabel import GiftiImage
     from numpy.typing import NDArray, ArrayLike
-    from trimesh import Trimesh
 
 class EigenSolver(Solver):
     """
@@ -31,11 +30,11 @@ class EigenSolver(Solver):
 
     Parameters
     ----------
-    geometry : str, pathlib.Path, trimesh.Trimesh, lapy.TriaMesh, lapy.TetMesh, or dict
+    geometry : str, pathlib.Path, lapy.TriaMesh, lapy.TetMesh, or dict
         The surface or volume mesh of a brain structure. Can be:
         - A path to one of the following file formats: `.gii`, `.vtk`, `.tetra.vtk`, `.white`,
         `.pial`, `.inflated`, `.orig`, `.sphere`, `.smoothwm`, `.qsphere`, `.fsaverage`
-        - A supported mesh object (`trimesh.Trimesh`, `lapy.TriaMesh`, or `lapy.TetMesh`)
+        - A supported mesh object (`GiftiImage`, `lapy.TriaMesh`, or `lapy.TetMesh`)
         - A dictionary with keys `'vertices'` and either `'faces'` (for surfaces) or `'tetras'`
         (for volumes).
     mask : array-like, optional
@@ -75,38 +74,34 @@ class EigenSolver(Solver):
     """
     def __init__(
         self,
-        geometry: Union[str, Path, GiftiImage, Trimesh, TriaMesh, TetMesh, dict],
+        geometry: Union[str, Path, GiftiImage, TriaMesh, TetMesh, dict],
         mask: Union[ArrayLike, None] = None,
         hetero: Union[ArrayLike, None] = None,
         alpha: Union[float, None] = None, # default to 1.0 if hetero given (and remains None)
         scaling: Union[str, None] = None  # default to "sigmoid" if hetero given (and remains None)
     ):
-        # Format arguments
-        if mask is not None:
-            mask = np.asarray(mask, dtype=bool)
-
-        # Read and validate geometry, with optional masking
+        # Read in mesh
         if is_vol(geometry):
             geometry = read_vol(geometry)
-            if mask is not None:
-                geometry = mask_vol(geometry, mask)
-            check_vol(geometry)
-            
         elif is_surf(geometry):
             geometry = read_surf(geometry)
-            if mask is not None:
-                geometry = mask_surf(geometry, mask)
-            check_surf(geometry)
-
-            # Convert from Trimesh to LaPy format for FEM
-            geometry = TriaMesh(geometry.vertices, geometry.faces)
         else:
             raise ValueError(
                 '`geometry` must be a path-like string to a valid surface or volume mesh, a '
-                '`nibabel.GiftiImage`,`trimesh.Trimesh`, `lapy.TriaMesh`, or `lapy.TetMesh` '
-                'instance, or a dictionary with keys `vertices` and either `faces` (for surfaces) '
-                'or `tetras` (for volumes).'
+                '`nibabel.GiftiImage`, `lapy.TriaMesh`, or `lapy.TetMesh` instance, or a dictionary'
+                ' with keys `vertices` and either `faces` (for surfaces) or `tetras` (for volumes).'
             )
+
+        # Optionally remove vertices/elements from mesh (e.g., medial wall)
+        if mask is not None:
+            mask = np.asarray(mask, dtype=bool)
+            geometry = mask_geometry(geometry, mask)
+        
+        # Validate mesh
+        if is_vol(geometry):
+            check_vol(geometry)
+        else:
+            check_surf(geometry)
 
         # Hetero inputs
         if hetero is None:

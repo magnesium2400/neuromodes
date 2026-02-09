@@ -8,11 +8,10 @@ keywords = ["python", "modelling", "neuroimaging", "eigenmodes", "brain-mapping"
 
 dependencies = [
     "joblib>=1.5.3",
-    "lapy>=1.1.0",
+    "lapy @ git+https://github.com/Deep-MI/LaPy.git",
     "nibabel>=5.2.1",
     "numpy>=1.24.4",
     "scipy>=1.10.1",
-    "trimesh>=4.8.1",
 ]
 
 [project.optional-dependencies]
@@ -27,6 +26,7 @@ tutorials = [
 vol = [
     "gmsh>=4.15.0",
     "tetgen>=0.7.0",
+    "trimesh>=4.11.1",
 ]
 
 [build-system]

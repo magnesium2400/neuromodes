@@ -122,7 +122,7 @@ def simulate_waves(
     -----
     Since the simulation begins at rest, consider discarding the first ~50 seconds to allow the
     system to reach a steady state.
-    
+
     While the wave model can be run using non-cortical modes, users should consider whether this is
     theoretically sensible and physiologically plausible.
 
@@ -149,10 +149,9 @@ def simulate_waves(
         evals = np.asarray_chkfinite(evals)
         if emodes.ndim != 2 or emodes.shape[0] < emodes.shape[1]:
             raise ValueError("`emodes` must have shape (n_verts, n_modes), where n_verts ≥ n_modes.")
-    n_verts, n_modes = emodes.shape
-    if checks and evals.shape != (n_modes,):
-        raise ValueError("`evals` must have shape (n_modes,), matching the number of columns in "
-                         f"`emodes` ({n_modes}).")
+        if evals.shape != (emodes.shape[1],):
+            raise ValueError(f"`evals` must have shape (n_modes,) = {(emodes.shape[1],)}, matching "
+                             "the number of columns in `emodes`.")
     if r <= 0:
         raise ValueError("Parameter `r` must be positive.")
     if gamma <= 0:
@@ -202,7 +201,7 @@ def simulate_waves(
         else:
             gen_input = _gen_noise
         
-        ext_input = gen_input((n_verts, nt), seed)
+        ext_input = gen_input((emodes.shape[0], nt), seed)
 
     # Eigendecompose external input to get modal coefficients over time
     input_coeffs = decompose(ext_input, emodes, method=decomp_method, mass=mass, checks=checks)

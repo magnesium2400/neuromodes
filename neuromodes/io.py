@@ -9,11 +9,9 @@ from pathlib import Path
 from typing import Union, Tuple, cast, TYPE_CHECKING
 from joblib import Memory
 from lapy import TriaMesh, TetMesh
-from nibabel.freesurfer.io import read_geometry
 from nibabel.gifti.gifti import GiftiImage
 from nibabel.loadsave import load
 import numpy as np
-from trimesh import Trimesh
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray, ArrayLike
@@ -30,7 +28,7 @@ def is_vol(geometry) -> bool:
 
 def is_surf(geometry) -> bool:
     return True if (
-        isinstance(geometry, (TriaMesh, Trimesh, GiftiImage))
+        isinstance(geometry, (TriaMesh, GiftiImage))
         or (isinstance(geometry, (str, Path))
         and str(geometry).endswith(('.vtk', '.gii') + fs_extensions))
         or (isinstance(geometry, dict) and 'faces' in geometry)
@@ -77,22 +75,22 @@ def read_vol(
                     "keys.")
 
 def read_surf(
-    surf: Union[str, Path, GiftiImage, Trimesh, TriaMesh, dict]
-) -> Trimesh:
+    surf: Union[str, Path, GiftiImage, TriaMesh, dict]
+) -> TriaMesh:
     """Load a triangular surface mesh.
 
     Parameters
     ----------
-    surf : str, Path, GiftiImage, trimesh.Trimesh, lapy.TriaMesh, or dict
+    surf : str, Path, GiftiImage, lapy.TriaMesh, or dict
         Surface mesh specified as a file path (string or Path) to a VTK (.vtk), GIFTI (.gii), or
         FreeSurfer file (.white, .pial, .inflated, .orig, .sphere, .smoothwm, .qsphere, .fsaverage),
-        an instance of `nibabel.GiftiImage`, `trimesh.Trimesh`, or `lapy.TriaMesh`, or a dictionary
+        an instance of `nibabel.GiftiImage` or `lapy.TriaMesh`, or a dictionary
         with `'vertices'` and `'faces'` keys, referencing arrays of shapes (n_verts, 3) and
         (n_faces, 3), respectively.
 
     Returns
     -------
-    trimesh.Trimesh
+    lapy.TriaMesh
         Surface mesh with vertices and faces.
 
     Raises
@@ -102,11 +100,8 @@ def read_surf(
     ValueError
         If `surf` is a path-like string to a file that does not exist.
     """
-    if isinstance(surf, Trimesh):
+    if isinstance(surf, TriaMesh):
         return surf
-    elif isinstance(surf, TriaMesh):
-        vertices=surf.v
-        faces=surf.t
     elif isinstance(surf, GiftiImage):
         vertices=surf.darrays[0].data
         faces=surf.darrays[1].data
@@ -121,108 +116,66 @@ def read_surf(
             raise ValueError(f'File not found: {surf_str}')
         # Handle different file types
         if surf_str.endswith('.vtk'):
-            surf_lapy = TriaMesh.read_vtk(surf_str)
-            vertices=surf_lapy.v
-            faces=surf_lapy.t
+            return TriaMesh.read_vtk(surf_str)
+        elif surf_str.endswith(fs_extensions):
+            return TriaMesh.read_fssurf(surf_str)
         elif surf_str.endswith('.gii'):
             surf_data = cast(GiftiImage, load(surf_str)).darrays
             vertices=surf_data[0].data
             faces=surf_data[1].data
-        elif surf_str.endswith(fs_extensions):
-            vertices, faces = read_geometry(
-                surf_str, read_metadata=False, read_stamp=False
-                ) # will only return two outputs now # type: ignore
         else:
             raise ValueError(
                 '`surf` must be a path-like string to a valid VTK (.vtk), GIFTI (.gii), or '
-                f'FreeSurfer file {fs_extensions}, an instance of `trimesh.Trimesh` or '
+                f'FreeSurfer file {fs_extensions}, an instance of `nibabel.GiftiImage` or '
                 '`lapy.TriaMesh`, or a dictionary of `faces` and `vertices`.'
                 )
         
-    return Trimesh(vertices=vertices, faces=faces, process=False)
+    return TriaMesh(v=vertices, t=faces)
 
-def mask_vol(
-    vol: TetMesh,
+def mask_geometry(
+    geometry: Union[TriaMesh, TetMesh],
     mask: ArrayLike
-) -> TetMesh:
+) -> Union[TriaMesh, TetMesh]:
     """
-    Remove specified vertices and corresponding tetrahedra from the volume mesh. Returns a
-    `lapy.TetMesh` object.
+    Remove specified vertices and corresponding elements from a triangular surface or tetrahedral
+    volume mesh. Returns a `lapy.TriaMesh` or `lapy.TetMesh` object.
 
     Parameters
     ----------
-    vol : lapy.TetMesh
-        The input volume mesh.
+    geometry : lapy.TriaMesh or lapy.TetMesh
+        The input surface or volume mesh.
     mask : array-like
         A boolean array indicating which vertices to keep (`True`) or remove (`False`).
 
     Returns
     -------
-    lapy.TetMesh
-        The masked volume mesh.
+    lapy.TriaMesh or lapy.TetMesh
+        The masked surface or volume mesh.
 
     Raises
     ------
     ValueError
-        If `mask` does not have a length matching the number of vertices in `vol`.
+        If `mask` does not have a length matching the number of vertices in `geometry`.
     """
+    # Format / validate arguments
     mask = np.asarray_chkfinite(mask, dtype=bool)
+    if mask.shape != (geometry.v.shape[0],):
+        raise ValueError(f"`mask` must have shape (n_verts,) = ({geometry.v.shape[0]},).")
 
-    if mask.shape != (vol.v.shape[0],):
-        raise ValueError(f"`mask` must have shape (n_verts,) = ({(vol.v.shape[0],)},).")
-    
     # Remove vertices not in mask
-    vol.v = vol.v[mask]
+    v_masked = geometry.v[mask]
 
-    # Update vertex indices of tetrahedra (-1 for removed vertices)
-    v_map = np.zeros(mask.shape[0]) - 1
+    # Update vertex indices of elements (-1 represents removed vertices)
+    v_map = np.full(len(mask), -1, dtype=int)
     v_map[mask] = np.arange(np.sum(mask))
-    vol.t = v_map[vol.t]
+    t_remapped = v_map[geometry.t]
     
-    # Keep only tetrahedra where all vertices are in the mask
-    tet_mask = np.all(vol.t != -1, axis=1)
-    vol.t = vol.t[tet_mask]
+    # Keep only elements where all vertices are in the mask
+    elem_mask = np.all(t_remapped != -1, axis=1)
+    t_masked = t_remapped[elem_mask]
 
-    return vol
-
-def mask_surf(
-    surf: Trimesh,
-    mask: ArrayLike
-) -> Trimesh:
-    """
-    Remove specified vertices and corresponding faces from the surface mesh. Returns a 
-    `trimesh.Trimesh` object.
-
-    Parameters
-    ----------
-    surf : trimesh.Trimesh
-        The input surface mesh.
-    mask : array-like
-        A boolean array indicating which vertices to keep (`True`) or remove (`False`).
-
-    Returns
-    -------
-    trimesh.Trimesh
-        The masked surface mesh.
-
-    Raises
-    ------
-    ValueError
-        If `mask` does not have a length matching the number of vertices in `surf`.
-
-    Notes
-    -----
-    In `Trimesh.submesh`, `repair=False` is used to avoid an unnecessary dependency on 
-    `networkx`. Mesh validation is handled separately in `check_surf` in `EigenSolver`.
-    """
-    mask = np.asarray_chkfinite(mask, dtype=bool)
-
-    if mask.shape != (surf.vertices.shape[0],):
-        raise ValueError(f"`mask` must have shape (n_verts,) = ({surf.vertices.shape[0]},).")
-    
-    # Keep only faces where all vertices are in the mask
-    face_mask = np.all(mask[surf.faces], axis=1)
-    return surf.submesh([face_mask], repair=False)[0] #type: ignore; submesh returns list by default
+    # Create a new TriaMesh or TetMesh with the masked vertices and elements
+    return geometry.__class__(v=v_masked, t=t_masked)
 
 def check_vol(
     vol: TetMesh
@@ -247,11 +200,11 @@ def check_vol(
                          'tetrahedron).')
 
     # Check that surface boundary of volume is contiguous
-    vol_surf = vol.boundary_tria()
-    vol_surf.orient_()
-
     try:
-        check_surf(Trimesh(vertices=vol_surf.v, faces=vol_surf.t))
+        vol_boundary = vol.boundary_tria()
+        vol_boundary.orient_()
+        vol_boundary.rm_free_vertices_()
+        check_surf(vol_boundary)
     except ValueError as e:
         # Adjust error message to specify that the issue is with the surface boundary of the volume
         first_word, rest = str(e).split(' ', 1)
@@ -260,14 +213,14 @@ def check_vol(
             ) from e
 
 def check_surf(
-    surf: Trimesh
+    surf: TriaMesh
 ) -> None:
     """
     Check if the surface mesh is contiguous with no unreferenced vertices.
     
     Parameters
     ----------
-    surf : trimesh.Trimesh
+    surf : lapy.TriaMesh
         The surface mesh to check.
 
     Raises
@@ -278,14 +231,14 @@ def check_surf(
         If the surface mesh is not contiguous.
     """
     # Check for unreferenced vertices
-    referenced = np.zeros(len(surf.vertices), dtype=bool)
-    referenced[surf.faces] = True
+    referenced = np.zeros(len(surf.v), dtype=bool)
+    referenced[surf.t] = True
     if not np.all(referenced):
         raise ValueError(f'Surface mesh contains {np.sum(~referenced)} unreferenced '
                          'vertices (i.e., not part of any face).')
 
     # Ensure surface is contiguous
-    n_components = surf.body_count
+    n_components = surf.connected_components()[0]
     if n_components != 1:
         raise ValueError(f'Surface mesh is not contiguous: {n_components} connected components '
                          'found.')
@@ -321,8 +274,7 @@ def fetch_vol(
 
     try:
         with as_file(data_dir / file_name) as fpath:
-            vol = read_vol(fpath)
-            return vol
+            return read_vol(fpath)
     except Exception as e:
         raise ValueError(
             f"Volume data not found. Please see {data_dir}/included_data.csv or "
@@ -336,7 +288,7 @@ def fetch_surf(
     hemi: str = 'L',
     surf_type: str = 'midthickness',
     template: str = 'fsLR'
-) -> Tuple[Trimesh, NDArray]:
+) -> Tuple[TriaMesh, NDArray]:
     """
     Load a cortical triangular surface mesh and medial wall mask from neuromodes data directory. For
     a list of available surfaces, see
@@ -360,7 +312,7 @@ def fetch_surf(
     
     Returns
     -------
-    surf : trimesh.Trimesh
+    surf : lapy.TriaMesh
         The loaded surface mesh.
     medmask : np.ndarray
         The medial wall mask as a boolean array.
@@ -451,7 +403,7 @@ def _check_mesh_dict(
     Raises
     ------
     ValueError
-        If the dictionary does not have keys 'vertices' and either 'faces' or 'tetras'.
+        If the dictionary does not have two keys: 'vertices' and either 'faces' or 'tetras'.
     ValueError
         If the 'vertices' key does not reference an array of shape (n_verts, 3).
     ValueError
@@ -459,8 +411,10 @@ def _check_mesh_dict(
         the 'tetras' key (for volumes) does not reference an array of shape (n_tets, 4).
     """
     # Check for required keys
-    if 'vertices' not in mesh_dict or ('faces' not in mesh_dict and 'tetras' not in mesh_dict):
-        raise ValueError("Mesh dictionary must contain keys 'vertices' and either 'faces' or "
+    if ('vertices' not in mesh_dict
+        or ('faces' not in mesh_dict and 'tetras' not in mesh_dict)
+        or len(mesh_dict) != 2):
+        raise ValueError("Mesh dictionary must contain two keys: 'vertices' and either 'faces' or "
                          "'tetras' for surface and volumes meshes, respectively.")
     
     # Check shapes of vertices
