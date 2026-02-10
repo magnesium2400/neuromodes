@@ -229,7 +229,7 @@ def project_tetmesh_data(
         new_shape = np.append(new_shape, n_maps)
     new_data = np.zeros(new_shape)
 
-    # perform interpolation of eigenmodes from tetrahedral surface space to volume space
+    # perform interpolation of data from tetrahedral mesh space to volume space
     for map in range(0, n_maps):
         interpolated_data = griddata(tetmesh.v, data[:,map], np.transpose(points2[0:3,:]), method='linear')
         for ind in range(0, len(interpolated_data)):

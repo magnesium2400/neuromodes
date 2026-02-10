@@ -76,6 +76,8 @@ def test_fetch_surf():
                 assert medmask.dtype == bool
                 assert medmask.shape == (surf.v.shape[0],)
 
+                check_surf(surf)  # Should not raise
+
 def test_fetch_invalid_surf():
     with raises(ValueError, match="Surface data not found"):
         fetch_surf(surf_type='makessense')
@@ -197,12 +199,14 @@ def test_vol_boundary_not_contiguous():
         check_vol(vol)
 
 def test_fetch_vol():
-    # Check that we can load everything
+    # Check that we can load and validate everything
     for hemi in ['L', 'R']:
         for structure in ['thalamus', 'hippocampus', 'striatum']:
             vol = fetch_vol(structure=structure, hemi=hemi)
             assert isinstance(vol, TetMesh)
             assert vol.v.shape[0] > 0
+
+            check_vol(vol)  # Should not raise
 
 def test_fetch_invalid_vol():
     with raises(ValueError, match="Volume data not found."):

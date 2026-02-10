@@ -199,7 +199,7 @@ def check_vol(
         raise ValueError('Volume mesh contains unreferenced vertices (i.e., not part of any '
                          'tetrahedron).')
 
-    # Check that surface boundary of volume is contiguous
+    # Validate surface boundary of the volume mesh
     try:
         vol_boundary = vol.boundary_tria()
         vol_boundary.orient_()
@@ -229,8 +229,10 @@ def check_surf(
         If the surface mesh contains unreferenced vertices.
     ValueError
         If the surface mesh is not contiguous.
+    ValueError
+        If the surface mesh is not manifold (i.e., contains edges belonging to more than two faces).
     """
-    # Check for unreferenced vertices
+    # Ensure surface has no unreferenced vertices
     referenced = np.zeros(len(surf.v), dtype=bool)
     referenced[surf.t] = True
     if not np.all(referenced):
@@ -242,6 +244,11 @@ def check_surf(
     if n_components != 1:
         raise ValueError(f'Surface mesh is not contiguous: {n_components} connected components '
                          'found.')
+
+    # Ensure surface is manifold
+    if not surf.is_manifold():
+        raise ValueError('Surface mesh is not manifold: contains edges belonging to more than two '
+                         'faces.')
 
 def fetch_vol(
     structure: str,

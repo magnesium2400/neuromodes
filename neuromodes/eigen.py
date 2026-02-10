@@ -5,17 +5,16 @@ Module for computing geometric eigenmodes of brain structures from surface and v
 from __future__ import annotations
 from typing import Union, Tuple, TYPE_CHECKING
 from warnings import warn
-from lapy import Solver, TriaMesh
+from lapy import Solver
 from lapy.shapedna import normalize_ev
 import numpy as np
 from scipy.sparse import csc_matrix, spmatrix
 from scipy.sparse.linalg import LinearOperator, eigsh, splu
-from neuromodes.io import (is_vol, is_surf, read_vol, read_surf, mask_geometry, check_vol,
-                           check_surf)
+from neuromodes.io import is_vol, is_surf, read_vol, read_surf, mask_geometry, check_vol, check_surf
 
 if TYPE_CHECKING:
     from pathlib import Path
-    from lapy import TetMesh
+    from lapy import TriaMesh, TetMesh
     from nibabel import GiftiImage
     from numpy.typing import NDArray, ArrayLike
 
@@ -56,10 +55,6 @@ class EigenSolver(Solver):
         If `geometry` is not a valid surface or volume mesh.
     ValueError
         If `hetero` length does not match the number of vertices (masked or unmasked).
-    ValueError
-        If `scaling` is not 'sigmoid' or 'exponential' (raised by `scale_hetero`).
-    ValueError
-        If `hetero` is constant (raised by `scale_hetero`).
 
     References
     ----------
