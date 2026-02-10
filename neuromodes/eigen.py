@@ -479,7 +479,7 @@ class EigenSolver(Solver):
     ) -> NDArray:
         """
         This is a wrapper for `neuromodes.basis.decompose`, see its documentation for details: 
-        https://neuromodes.readthedocs.io/en/latest/generated/nsbtools.basis.decompose.html
+        https://neuromodes.readthedocs.io/en/latest/generated/neuromodes.basis.decompose.html
 
         Note that `emodes`, `mass`, and `checks` are passed automatically by the `EigenSolver`
         instance.
@@ -503,7 +503,7 @@ class EigenSolver(Solver):
     ) -> Tuple[NDArray, NDArray, list[NDArray]]:
         """
         This is a wrapper for `neuromodes.basis.reconstruct`, see its documentation for details:
-        https://neuromodes.readthedocs.io/en/latest/generated/nsbtools.basis.reconstruct.html
+        https://neuromodes.readthedocs.io/en/latest/generated/neuromodes.basis.reconstruct.html
 
         Note that `emodes`, `mass`, and `checks` are passed automatically by the `EigenSolver`
         instance.
@@ -528,7 +528,7 @@ class EigenSolver(Solver):
         """
         This is a wrapper for `neuromodes.basis.reconstruct_timeseries`, see its documentation for
         details:
-        https://neuromodes.readthedocs.io/en/latest/generated/nsbtools.basis.reconstruct_timeseries.html
+        https://neuromodes.readthedocs.io/en/latest/generated/neuromodes.basis.reconstruct_timeseries.html
 
         Note that `emodes`, `mass`, and `checks` are passed automatically by the `EigenSolver`
         instance.
@@ -552,7 +552,7 @@ class EigenSolver(Solver):
         """
         This is a wrapper for `neuromodes.connectome.model_connectome`, see its documentation for
         details:
-        https://neuromodes.readthedocs.io/en/latest/generated/nsbtools.connectome.model_connectome.html
+        https://neuromodes.readthedocs.io/en/latest/generated/neuromodes.connectome.model_connectome.html
 
         Note that `emodes`, `evals`, and `checks` are passed automatically by the `EigenSolver`
         instance.
@@ -574,7 +574,7 @@ class EigenSolver(Solver):
     ) -> NDArray:
         """
         This is a wrapper for `neuromodes.waves.simulate_waves`, see its documentation for details:
-        https://neuromodes.readthedocs.io/en/latest/generated/nsbtools.waves.simulate_waves.html
+        https://neuromodes.readthedocs.io/en/latest/generated/neuromodes.waves.simulate_waves.html
 
         Note that `emodes`, `evals`, `mass`, `scaled_hetero`, and `checks` are passed automatically
         by the `EigenSolver` instance.

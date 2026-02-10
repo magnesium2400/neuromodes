@@ -31,7 +31,8 @@ def model_connectome(
     k : int, optional
         Number of eigenmodes to use. Default is `108`.
     checks : bool, optional
-        Whether to verify shapes of `emodes` and `evals` before computation. Default is `True`.
+        Whether to verify types and shapes of `emodes` and `evals` before computation. Default is
+        `True`.
 
     Returns
     -------

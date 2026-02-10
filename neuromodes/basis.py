@@ -42,8 +42,8 @@ def decompose(
         `'project'`. If vectors are orthonormal in Euclidean space, leave as `None`. See
         `eigen.is_orthonormal_basis` for more details. Default is `None`.
     checks : bool, optional
-        Whether to verify shapes and orthonormality of `emodes` and `mass` before decomposition.
-        Default is `True`.
+        Whether to verify types, shapes, and orthonormality of `emodes` and `mass` before
+        decomposition. Default is `True`.
 
     Returns
     -------
@@ -155,8 +155,8 @@ def reconstruct(
         `scipy.spatial.distance.cdist`, or `None` if no scoring is required. Default is
         `'correlation'`.
     checks : bool, optional
-        Whether to verify shapes and orthonormality of `emodes` and `mass` before reconstruction.
-        Default is `True`.
+        Whether to verify types, shapes, and orthonormality of `emodes` and `mass` before
+        reconstruction. Default is `True`.
     **cdist_kwargs
         Additional keyword arguments to pass to `scipy.spatial.distance.cdist`.
 
@@ -268,8 +268,8 @@ def reconstruct_timeseries(
         `scipy.spatial.distance.cdist`, or `None` if no scoring is required. Default is
         `'correlation'`.
     checks : bool, optional
-        Whether to verify shapes and orthonormality of `emodes` and `mass` before reconstruction.
-        Default is `True`.
+        Whether to verify types, shapes, and orthonormality of `emodes` and `mass` before
+        reconstruction. Default is `True`.
     **cdist_kwargs
         Additional keyword arguments to pass to `scipy.spatial.distance.cdist`.
 

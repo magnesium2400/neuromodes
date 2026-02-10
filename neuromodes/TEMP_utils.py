@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 import numpy as np
-import tetgen
+
 import plotly.graph_objs as go
 from lapy import TetMesh
 from matplotlib import colormaps
@@ -11,7 +11,6 @@ from nibabel import Nifti1Image, load
 from scipy.interpolate import griddata
 from scipy import sparse
 from trimesh.voxel.ops import matrix_to_marching_cubes
-import gmsh
 from nibabel.affines import apply_affine
 
 if TYPE_CHECKING:
@@ -36,6 +35,7 @@ def make_thin_vol(surface_mesh, scaling=0.99, **kwargs):
     tet_mesh : lapy.TetMesh
         Tetrahedral mesh of the shell volume.
     """
+    import tetgen
     # Create inner mesh
     inner_mesh = surface_mesh.copy()
     inner_mesh.apply_scale(scaling)
@@ -56,7 +56,7 @@ def make_thin_vol(surface_mesh, scaling=0.99, **kwargs):
     
     return TetMesh(v=vol_vertices, t=vol_tets)
 
-def plot_mesh_data(geometry, data, cmap='seismic_r', cnorm=True, width=700, height=700):
+def plot_mesh_data(geometry, data, cmap='seismic_r', cnorm=False, width=700, height=700):
     """
     Plot a colored mesh surface with overlaid edges.
     
@@ -274,6 +274,8 @@ def make_vol_mesh(
     Tetrahedral meshing using Gmsh's python API and marching cubes algorithm.
     Returns a lapy.TetMesh object.
     """
+    import gmsh
+
     # Get ROI from NIFTI
     if isinstance(nifti, (str, Path)):
         nifti = load(nifti)
