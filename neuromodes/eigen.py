@@ -6,11 +6,11 @@ from __future__ import annotations
 from typing import Union, Tuple, TYPE_CHECKING
 from warnings import warn
 from lapy import Solver
-from lapy.shapedna import normalize_ev
 import numpy as np
 from scipy.sparse import csc_matrix, spmatrix
 from scipy.sparse.linalg import LinearOperator, eigsh, splu
-from neuromodes.io import is_vol, is_surf, read_vol, read_surf, mask_geometry, check_vol, check_surf
+from neuromodes.io import (is_vol, is_surf, read_vol, read_surf, mask_mesh, normalize_vol,
+                           check_vol, check_surf)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -71,6 +71,7 @@ class EigenSolver(Solver):
         self,
         geometry: Union[str, Path, GiftiImage, TriaMesh, TetMesh, dict],
         mask: Union[ArrayLike, None] = None,
+        normalize: bool = False,
         hetero: Union[ArrayLike, None] = None,
         alpha: Union[float, None] = None, # default to 1.0 if hetero given (and remains None)
         scaling: Union[str, None] = None  # default to "sigmoid" if hetero given (and remains None)
@@ -90,13 +91,17 @@ class EigenSolver(Solver):
         # Optionally remove vertices/elements from mesh (e.g., medial wall)
         if mask is not None:
             mask = np.asarray(mask, dtype=bool)
-            geometry = mask_geometry(geometry, mask)
+            geometry = mask_mesh(geometry, mask)
         
-        # Validate mesh
+        # Validate mesh and optionally normalize
         if is_vol(geometry):
             check_vol(geometry)
+            if normalize:
+                geometry = normalize_vol(geometry)
         else:
             check_surf(geometry)
+            if normalize:
+                geometry.normalize_()
 
         # Hetero inputs
         if hetero is None:
@@ -116,9 +121,7 @@ class EigenSolver(Solver):
                 err_str = f"the number of vertices in the provided mesh ({geometry.v.shape[0]})"
                 if mask is not None:
                     err_str += f" or the masked mesh ({mask.sum()})"
-                raise ValueError(
-                    f"`hetero` must be a 1D array with length matching {err_str}."
-                )
+                raise ValueError(f"`hetero` must be a 1D array with length matching {err_str}.")
 
             # Scale the heterogeneity map
             hetero = scale_hetero(hetero, alpha=alpha, scaling=scaling)
@@ -212,7 +215,6 @@ class EigenSolver(Solver):
         n_modes: int, 
         standardize: bool = True,
         fix_mode1: bool = True,
-        norm_evals: bool = False,
         atol: float = 1e-3,
         rtol: float = 1e-5,
         sigma: Union[float, None] = -0.01,
@@ -235,9 +237,6 @@ class EigenSolver(Solver):
             If `True`, sets the first eigenmode to a constant value and the first eigenvalue to
             zero, as is expected analytically. Default is `True`. See the `is_orthonormal_basis`
             function for details.
-        norm_evals : bool, optional
-            If `True`, rescales eigenvalues to reflect geometry having unit surface area or volume,
-            via `lapy.shapedna.normalize_ev`. Default is `False`.
         atol : float, optional
             Absolute tolerance for mass-orthonormality validation. Default is `1e-3`.
         rtol : float, optional
@@ -269,7 +268,7 @@ class EigenSolver(Solver):
             If computed eigenvalues or eigenmodes contain NaNs.
         """
         # Validate arguments
-        if not isinstance(n_modes, int) or n_modes <= 0 or n_modes >= self.n_verts:
+        if n_modes != int(n_modes) or n_modes <= 0 or n_modes >= self.n_verts:
             raise ValueError("`n_modes` must be a positive integer less than the number of vertices"
                              f" ({self.n_verts}).")
 
@@ -312,9 +311,6 @@ class EigenSolver(Solver):
             warn(f"Computed eigenmodes are not mass-orthonormal (atol={atol}, rtol={rtol}).")
 
         # Post-process
-        if norm_evals:
-            evals = normalize_ev(self.geometry, evals)
-
         if fix_mode1:
             # Value given by mass-orthonormality condition
             emodes[:, 0] = self.mass.sum()**(-0.5)

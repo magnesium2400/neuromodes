@@ -1,6 +1,5 @@
 import numpy as np
 import pytest
-from scipy.sparse import vstack, hstack, csc_matrix
 from neuromodes.basis import (decompose, reconstruct, reconstruct_timeseries, calc_norm_power,
                               calc_vec_fc)
 from neuromodes.eigen import EigenSolver
@@ -81,7 +80,7 @@ def test_decompose_nans(solver_32k):
          fetch_map('myelinmap')[solver_32k.mask]),
         axis=1
     )
-    beta = solver_32k.decompose(data)
+    beta = solver_32k.decompose(data, method='regress')
 
     # Append data with NaNs and Infs (+100 vertices)
     extraverts = 100
@@ -97,27 +96,11 @@ def test_decompose_nans(solver_32k):
         ).reshape((extraverts, solver_32k.n_modes))
     modes_noise = np.concatenate([solver_32k.emodes, noise], axis=0)
 
-    noise = np.random.default_rng(1).standard_normal(
-        extraverts * solver_32k.n_verts
-        ).reshape((extraverts, solver_32k.n_verts))
-    mass_noise = vstack([solver_32k.mass, csc_matrix(noise)])
-    noise = np.random.default_rng(2).standard_normal(
-        extraverts * (solver_32k.n_verts + extraverts)
-        ).reshape((solver_32k.n_verts + extraverts, extraverts))
-    mass_noise = hstack([mass_noise, csc_matrix(noise)])
-
     # emodes/mass get masked according to the nans/infs in data, leading to original beta values
-    with pytest.warns(UserWarning, match="`data`, `mass`, and `emodes`"):
-        beta_masked = decompose(data_naninfs, modes_noise, mass=mass_noise, checks=False)
+    with pytest.warns(UserWarning, match="`data` and `emodes`"):
+        beta_masked = decompose(data_naninfs, modes_noise, method='regress', checks=False)
     assert np.allclose(beta, beta_masked, atol=1e-4), \
         'Beta values for project method are not close when data contains NaNs/Infs'
-    
-    # Check for regress method as well
-    beta_regress = solver_32k.decompose(data, method='regress')
-    with pytest.warns(UserWarning, match="`data` and `emodes`"):
-        beta_regress_masked = decompose(data_naninfs, modes_noise, method='regress', checks=False)
-    assert np.allclose(beta_regress, beta_regress_masked, atol=1e-4), \
-        'Beta values for regress method are not close when data contains NaNs/Infs'
 
 # TODO: more complicated version of above test, where three maps have two unique patterns of NaNs/Infs
 

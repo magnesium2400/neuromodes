@@ -1,8 +1,9 @@
 from pathlib import Path
+from lapy.shapedna import normalize_ev
 import numpy as np
 import pytest
 from neuromodes.eigen import EigenSolver, is_orthonormal_basis, scale_hetero
-from neuromodes.io import fetch_vol, fetch_surf, fetch_map, mask_geometry
+from neuromodes.io import fetch_vol, fetch_surf, fetch_map, mask_mesh
 
 def test_vol_modes():
     for structure in ['thalamus', 'hippocampus', 'striatum']:
@@ -28,7 +29,7 @@ def test_init_params(surf_medmask_hetero):
     
 def test_premasked_surf(surf_medmask_hetero):
     surf, medmask, hetero = surf_medmask_hetero
-    masked_surf = mask_geometry(surf, medmask)
+    masked_surf = mask_mesh(surf, medmask)
     _ = EigenSolver(masked_surf, hetero=hetero[medmask])
 
 def test_no_medmask(surf_medmask_hetero):
@@ -243,6 +244,30 @@ def test_n_modes_consistency(solver):
     emode_set_larger_n_modes = solver.solve(100, seed=0).emodes[:, :16]
     assert np.allclose(emode_set, emode_set_larger_n_modes, atol=1e-4), \
         'Modes differ when solving for different n_modes.'
+    
+def test_normalized_surf(surf_medmask_hetero, solver):
+    surf, medmask, hetero = surf_medmask_hetero
+
+    # Use LaPy to normalize evals
+    evals_lapy = normalize_ev(solver.geometry, solver.evals)
+
+    # Normalize mesh and check that downstream evals match
+    evals_norm = EigenSolver(surf, mask=medmask, hetero=hetero, normalize=True).solve(16, seed=0).evals
+
+    assert np.allclose(evals_lapy, evals_norm, atol=1e-20), \
+    'Evals from LaPy normalization do not match evals from EigenSolver normalization.'
+
+def test_normalized_vol():
+    # Above test but for volumes
+    hippo = fetch_vol('hippocampus')
+    hetero = np.random.default_rng(0).standard_normal(hippo.v.shape[0])
+
+    volser = EigenSolver(hippo, hetero=hetero).solve(16, seed=0)
+    evals_lapy = normalize_ev(volser.geometry, volser.evals)
+    evals_norm = EigenSolver(hippo, hetero=hetero, normalize=True).solve(16, seed=0).evals
+
+    assert np.allclose(evals_lapy, evals_norm, atol=1e-20), \
+    'Evals from LaPy normalization do not match evals from EigenSolver normalization.'
 
 def test_constant_mode1(solver):
     emode1 = solver.emodes[:, 0]

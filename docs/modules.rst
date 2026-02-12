@@ -126,8 +126,8 @@ API Reference
    neuromodes.io.is_surf
    neuromodes.io.read_vol
    neuromodes.io.read_surf
-   neuromodes.io.mask_vol
-   neuromodes.io.mask_surf
+   neuromodes.io.mask_mesh
+   neuromodes.io.normalize_vol
    neuromodes.io.check_vol
    neuromodes.io.check_surf
    neuromodes.io.fetch_vol

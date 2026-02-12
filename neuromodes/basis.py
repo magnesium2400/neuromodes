@@ -58,6 +58,8 @@ def decompose(
         If `method='project'` and `emodes` columns do not form an orthonormal basis set.
     ValueError
         If `method` is not 'project' or 'regress'.
+    ValueError
+        If `data` contains NaNs or Infs and `method='project'`.
     """
     # Format / validate inputs
     data = np.asarray(data)
@@ -89,9 +91,11 @@ def decompose(
     # Handle NaNs and Infs by masking out afflicted vertices
     data_finite = np.isfinite(data)
     if not data_finite.all():
-        mass_msg = ", `mass`," if mass is not None else ""
+        if method == 'project':
+            raise ValueError("`data` contains NaNs and/or Infs; decomposition must use "
+                             "`method='regress'` to handle these values.")
         warn("`data` contains NaNs and/or Infs; these will be disregarded during decomposition by "
-             f"masking corresponding vertices from `data`{mass_msg} and `emodes`.")
+             "masking corresponding vertices from `data` and `emodes`.")
         
         # Decompose separarely for each NaN/Inf pattern
         masks, mask_indices = np.unique(data_finite, axis=1, return_inverse=True)
@@ -101,13 +105,12 @@ def decompose(
             # Get indices of maps with this NaN/Inf pattern
             map_indices = np.where(mask_indices == i)[0]
 
-            # Remove verts with NaNs/Inf in this group from data, emodes, mass
+            # Remove verts with NaNs/Inf in this group from data and emodes
             data_masked = data[mask, :][:, map_indices]
             emodes_masked = emodes[mask, :]
-            mass_masked = mass[mask, :][:, mask] if mass is not None else None
 
             # Calculate beta coefficients for subset of data
-            beta[:, map_indices] = _calc_beta(data_masked, emodes_masked, method, mass_masked)
+            beta[:, map_indices] = _calc_beta(data_masked, emodes_masked, method, mass=None)
         
         return beta
 
@@ -192,7 +195,7 @@ def reconstruct(
         mode_counts = np.arange(n_modes) + 1
     else:
         mode_counts = np.asarray(mode_counts)
-        if (mode_counts.ndim != 1 or not np.issubdtype(mode_counts.dtype, np.integer)
+        if (mode_counts.ndim != 1 or (mode_counts != mode_counts.astype(int)).any()
             or mode_counts.min() < 1 or mode_counts.max() > n_modes):
             raise ValueError("`mode_counts` must be a 1D array-like of integers within the range "
                              f"[1, {n_modes}].")

@@ -6,7 +6,7 @@ from lapy import TriaMesh, TetMesh
 import numpy as np
 from pytest import raises
 from neuromodes.io import (
-    read_vol, read_surf, mask_geometry, check_vol, check_surf, fetch_vol, fetch_surf,
+    read_vol, read_surf, mask_mesh, check_vol, check_surf, fetch_vol, fetch_surf,
     fetch_map, _set_cache, _check_mesh_dict
     )
 
@@ -32,7 +32,7 @@ def test_mask_surf():
 
     mask = np.array([True, True, True, True, False, False])
 
-    masked_vol = mask_geometry(vol, mask)
+    masked_vol = mask_mesh(vol, mask)
 
     # Only the first tetrahedron should remain
     assert masked_vol.v.shape[0] == 4
@@ -147,7 +147,7 @@ def test_mask_vol():
 
     mask = np.array([True, True, True, True, False, False])
 
-    masked_vol = mask_geometry(vol, mask)
+    masked_vol = mask_mesh(vol, mask)
 
     # Only the first tetrahedron should remain
     assert masked_vol.v.shape[0] == 4
@@ -195,7 +195,7 @@ def test_vol_boundary_not_contiguous():
     
     # check_vol should raise ValueError due to multiple components
     with raises(ValueError,
-                match="Surface boundary of the volume mesh is not contiguous: 2 connected"):
+                match="Volume mesh is not contiguous: 2 connected"):
         check_vol(vol)
 
 def test_fetch_vol():

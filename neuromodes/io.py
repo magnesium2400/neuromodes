@@ -132,7 +132,7 @@ def read_surf(
         
     return TriaMesh(v=vertices, t=faces)
 
-def mask_geometry(
+def mask_mesh(
     geometry: Union[TriaMesh, TetMesh],
     mask: ArrayLike
 ) -> Union[TriaMesh, TetMesh]:
@@ -177,6 +177,30 @@ def mask_geometry(
     # Create a new TriaMesh or TetMesh with the masked vertices and elements
     return geometry.__class__(v=v_masked, t=t_masked)
 
+def normalize_vol(
+    geometry: TetMesh
+) -> TetMesh:
+    """
+    Translate the mesh centroid to the origin and rescale to unit volume.
+
+    Parameters
+    ----------
+    geometry : lapy.TetMesh
+        The input volume mesh.
+
+    Returns
+    -------
+    lapy.TetMesh
+        The normalized volume mesh.
+    """
+    # Translate centroid to origin
+    geometry.v -= geometry.v.mean(axis=0)
+
+    # Rescale to unit volume
+    geometry.v /= geometry.boundary_tria().volume() ** (1/3)
+
+    return geometry
+
 def check_vol(
     vol: TetMesh
 ) -> None:
@@ -200,17 +224,10 @@ def check_vol(
                          'tetrahedron).')
 
     # Validate surface boundary of the volume mesh
-    try:
-        vol_boundary = vol.boundary_tria()
-        vol_boundary.orient_()
-        vol_boundary.rm_free_vertices_()
-        check_surf(vol_boundary)
-    except ValueError as e:
-        # Adjust error message to specify that the issue is with the surface boundary of the volume
-        first_word, rest = str(e).split(' ', 1)
-        raise ValueError(
-            f'{first_word} boundary of the volume {rest}.'
-            ) from e
+    vol_boundary = vol.boundary_tria()
+    vol_boundary.rm_free_vertices_()
+    vol_boundary.orient_()
+    check_surf(vol_boundary)
 
 def check_surf(
     surf: TriaMesh

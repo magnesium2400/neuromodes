@@ -64,6 +64,8 @@ def model_connectome(
         cortical connectomes. BioRxiv. https://doi.org/10.1101/2025.09.17.676944
     """
     # Format / validate arguments
+    r = float(r)
+
     if checks:
         emodes = np.asarray_chkfinite(emodes)
         evals = np.asarray_chkfinite(evals)
@@ -74,9 +76,9 @@ def model_connectome(
             raise ValueError(f"`evals` must have shape (n_modes,) = {(emodes.shape[1],)}, matching "
                              "the number of columns in `emodes`.")
     n_modes = emodes.shape[1]
-    if not isinstance(r, (int, float)) or r <= 0:
+    if r <= 0:
         raise ValueError("Parameter `r` must be a positive number.")
-    if not isinstance(k, int) or k <= 0 or k > n_modes:
+    if k != int(k) or k <= 0 or k > n_modes:
         raise ValueError(f"Parameter `k` must be an integer in the range [1, n_modes = {n_modes}].")
 
     # Compute the Geometric Eigenmode Model
