@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 
 import plotly.graph_objs as go
-from lapy import TetMesh
+from lapy import TriaMesh, TetMesh
 from matplotlib import colormaps
 from typing import Union, TYPE_CHECKING
 from nibabel import Nifti1Image, load
@@ -56,24 +56,28 @@ def make_thin_vol(surface_mesh, scaling=0.99, **kwargs):
     
     return TetMesh(v=vol_vertices, t=vol_tets)
 
-def plot_mesh_data(geometry, data, cmap='seismic_r', cnorm=False, width=700, height=700):
+def plot_mesh_data(geometry, data, cmap='seismic_r', cnorm=False, width=700, height=700, cmap_center=None, plot_edges=False):
     """
     Plot a colored mesh surface with overlaid edges.
     
     Parameters
     ----------
-    geometry : lapy.TriaMesh
+    geometry : lapy.TriaMesh or lapy.TetMesh
         The surface mesh geometry.
     data : ndarray
         Data values (n_vertices,).
     cmap : str, optional
         Matplotlib colormap name (default: 'seismic_r').
     cnorm : bool, optional
-        If data is 2D, whether to normalize color scale across frames (default: True).
+        If data is 2D, whether to normalize color scale across frames (default: False).
     width : int, optional
         Figure width in pixels (default: 700).
     height : int, optional
         Figure height in pixels (default: 700).
+    cmap_center : float or None, optional
+        Center value for symmetric color scaling. If None, uses min/max. If float, color range is symmetric around this value.
+    plot_edges : bool, optional
+        If True, overlay mesh edges. Default: False.
     """
     # Make colormap for plotly
     cmap_obj = colormaps.get_cmap(cmap)
@@ -82,6 +86,13 @@ def plot_mesh_data(geometry, data, cmap='seismic_r', cnorm=False, width=700, hei
         [i / (256 - 1), f"rgb({int(r*255)},{int(g*255)},{int(b*255)})"]
         for i, (r, g, b, _) in enumerate(cmap_obj(vals))
     ]
+
+    if isinstance(geometry, TetMesh):
+        geometry = geometry.boundary_tria()
+        vkeep, _ = geometry.rm_free_vertices_()
+        data = data[vkeep]
+    elif not isinstance(geometry, TriaMesh):
+        raise ValueError("plot_mesh_data currently only supports surface meshes and closed volumes.")
 
     x, y, z = geometry.v.T
     i, j, k = geometry.t.T
@@ -101,43 +112,113 @@ def plot_mesh_data(geometry, data, cmap='seismic_r', cnorm=False, width=700, hei
         edge_z.extend([z[idx_i], z[idx_j], None])
 
     is_animated = data.ndim == 2
+    epsilon = 1e-8
     if is_animated:
         n_vertices, n_frames = data.shape
         if n_vertices != len(x):
             raise ValueError("data shape[0] must match number of vertices.")
-        cmin, cmax = (np.nanmin(data), np.nanmax(data)) if cnorm else (np.nanmin(data[:, 0]), np.nanmax(data[:, 0]))
-
-        # Base frame (first timepoint)
-        base_mesh = go.Mesh3d(
-            x=x, y=y, z=z, i=i, j=j, k=k,
-            intensity=data[:, 0],
-            colorscale=colorscale,
-            cmin=cmin, cmax=cmax,
-            flatshading=False,
-            showscale=False,
-        )
-
-
-        frames = [
-            go.Frame(
-                data=[
-                    go.Mesh3d(
-                        x=x, y=y, z=z, i=i, j=j, k=k,
-                        intensity=data[:, t],
-                        colorscale=colorscale,
-                        cmin=(cmin if cnorm else np.nanmin(data[:, t])), cmax=(cmax if cnorm else np.nanmax(data[:, t])),
-                        flatshading=False,
-                        showscale=False,
-                    )
-                ],
-                name=str(t),
+        if cnorm:
+            # Global symmetric color range
+            dmin, dmax = np.nanmin(data), np.nanmax(data)
+            if cmap_center is not None:
+                if dmin == dmax:
+                    # All values are constant; symmetric range around center
+                    dmax_abs = abs(dmin - cmap_center)
+                    # If center is 0, range is -abs(constant) to +abs(constant)
+                    cmin, cmax = cmap_center - dmax_abs, cmap_center + dmax_abs
+                    # If constant is 0, fallback to small epsilon
+                    if cmin == cmax:
+                        cmin -= epsilon
+                        cmax += epsilon
+                else:
+                    dmax_abs = max(abs(dmin - cmap_center), abs(dmax - cmap_center))
+                    cmin, cmax = cmap_center - dmax_abs, cmap_center + dmax_abs
+            else:
+                cmin, cmax = dmin, dmax
+                if cmin == cmax:
+                    cmin -= epsilon
+                    cmax += epsilon
+            # Base frame
+            base_mesh = go.Mesh3d(
+                x=x, y=y, z=z, i=i, j=j, k=k,
+                intensity=data[:, 0],
+                colorscale=colorscale,
+                cmin=cmin, cmax=cmax,
+                flatshading=False,
+                showscale=False,
             )
-            for t in range(n_frames)
-        ]
-
+            frames = [
+                go.Frame(
+                    data=[
+                        go.Mesh3d(
+                            x=x, y=y, z=z, i=i, j=j, k=k,
+                            intensity=data[:, t],
+                            colorscale=colorscale,
+                            cmin=cmin, cmax=cmax,
+                            flatshading=False,
+                            showscale=False,
+                        )
+                    ],
+                    name=str(t),
+                )
+                for t in range(n_frames)
+            ]
+        else:
+            # Per-frame symmetric color range
+            dmin0, dmax0 = np.nanmin(data[:, 0]), np.nanmax(data[:, 0])
+            if cmap_center is not None:
+                dmax_abs0 = max(abs(dmin0 - cmap_center), abs(dmax0 - cmap_center))
+                cmin0, cmax0 = cmap_center - dmax_abs0, cmap_center + dmax_abs0
+            else:
+                cmin0, cmax0 = dmin0, dmax0
+            if cmin0 == cmax0:
+                cmin0 -= epsilon
+                cmax0 += epsilon
+            base_mesh = go.Mesh3d(
+                x=x, y=y, z=z, i=i, j=j, k=k,
+                intensity=data[:, 0],
+                colorscale=colorscale,
+                cmin=cmin0, cmax=cmax0,
+                flatshading=False,
+                showscale=False,
+            )
+            frames = []
+            for t in range(n_frames):
+                dmin_t, dmax_t = np.nanmin(data[:, t]), np.nanmax(data[:, t])
+                if cmap_center is not None:
+                    dmax_abs_t = max(abs(dmin_t - cmap_center), abs(dmax_t - cmap_center))
+                    cmin_t, cmax_t = cmap_center - dmax_abs_t, cmap_center + dmax_abs_t
+                else:
+                    cmin_t, cmax_t = dmin_t, dmax_t
+                if cmin_t == cmax_t:
+                    cmin_t -= epsilon
+                    cmax_t += epsilon
+                frames.append(
+                    go.Frame(
+                        data=[
+                            go.Mesh3d(
+                                x=x, y=y, z=z, i=i, j=j, k=k,
+                                intensity=data[:, t],
+                                colorscale=colorscale,
+                                cmin=cmin_t, cmax=cmax_t,
+                                flatshading=False,
+                                showscale=False,
+                            )
+                        ],
+                        name=str(t),
+                    )
+                )
         fig = go.Figure(data=[base_mesh], frames=frames)
     else:
-        cmin, cmax = np.nanmin(data), np.nanmax(data)
+        dmin, dmax = np.nanmin(data), np.nanmax(data)
+        if cmap_center is not None:
+            dmax_abs = max(abs(dmin - cmap_center), abs(dmax - cmap_center))
+            cmin, cmax = cmap_center - dmax_abs, cmap_center + dmax_abs
+        else:
+            cmin, cmax = dmin, dmax
+        if cmin == cmax:
+            cmin -= epsilon
+            cmax += epsilon
         fig = go.Figure(data=[
             go.Mesh3d(
                 x=x, y=y, z=z, i=i, j=j, k=k,
@@ -149,14 +230,15 @@ def plot_mesh_data(geometry, data, cmap='seismic_r', cnorm=False, width=700, hei
             )
         ])
 
-    # Add static edge overlay
-    fig.add_trace(go.Scatter3d(
-        x=edge_x, y=edge_y, z=edge_z,
-        mode='lines',
-        line=dict(color='black', width=1),
-        showlegend=False,
-        hoverinfo='skip',
-    ))
+    # Add static edge overlay if requested
+    if plot_edges:
+        fig.add_trace(go.Scatter3d(
+            x=edge_x, y=edge_y, z=edge_z,
+            mode='lines',
+            line=dict(color='black', width=1),
+            showlegend=False,
+            hoverinfo='skip',
+        ))
 
     # Layout + optional animation controls
     layout_kwargs = dict(

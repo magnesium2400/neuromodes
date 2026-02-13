@@ -6,9 +6,12 @@ from neuromodes.eigen import EigenSolver, is_orthonormal_basis, scale_hetero
 from neuromodes.io import fetch_vol, fetch_surf, fetch_map, mask_mesh
 
 def test_vol_modes():
-    for structure in ['thalamus', 'hippocampus', 'striatum']:
-        for hemi in ['L', 'R']:
-            vol = fetch_vol(structure=structure, hemi=hemi)
+    for hemi in ['L', 'R']:
+        for structure in ['thalamus', 'hippocampus', 'striatum', 'cortex']:
+            if structure == 'cortex':
+                vol = fetch_vol(structure=structure, species='mouse', template='AMBA', hemi=hemi)
+            else:
+                vol = fetch_vol(structure=structure, hemi=hemi)
             solver = EigenSolver(vol).solve(10, seed=0)
 
             assert solver.emodes.shape == (vol.v.shape[0], 10), (

@@ -6,8 +6,8 @@ from lapy import TriaMesh, TetMesh
 import numpy as np
 from pytest import raises
 from neuromodes.io import (
-    read_vol, read_surf, mask_mesh, check_vol, check_surf, fetch_vol, fetch_surf,
-    fetch_map, _set_cache, _check_mesh_dict
+    is_vol, read_vol, read_surf, mask_mesh, check_vol, check_surf, fetch_vol, fetch_surf,
+    fetch_map, _set_cache
     )
 
 def test_mask_surf():
@@ -64,7 +64,7 @@ def test_fetch_surf():
         for species in ['human', 'macaque', 'marmoset']:
             for density in ['4k', '32k']:
                 if species != 'human' and density == '4k':
-                    with raises(ValueError, match="Surface data not found"):
+                    with raises(ValueError, match="Surface data .* not found"):
                         fetch_surf(species=species, hemi=hemi, density=density)
                     continue
 
@@ -79,7 +79,7 @@ def test_fetch_surf():
                 check_surf(surf)  # Should not raise
 
 def test_fetch_invalid_surf():
-    with raises(ValueError, match="Surface data not found"):
+    with raises(ValueError, match="Surface data .* not found"):
         fetch_surf(surf_type='makessense')
 
 def test_fetch_gradient():
@@ -195,7 +195,7 @@ def test_vol_boundary_not_contiguous():
     
     # check_vol should raise ValueError due to multiple components
     with raises(ValueError,
-                match="Volume mesh is not contiguous: 2 connected"):
+                match="Surface mesh is not contiguous: 2 connected"):
         check_vol(vol)
 
 def test_fetch_vol():
@@ -203,13 +203,13 @@ def test_fetch_vol():
     for hemi in ['L', 'R']:
         for structure in ['thalamus', 'hippocampus', 'striatum']:
             vol = fetch_vol(structure=structure, hemi=hemi)
-            assert isinstance(vol, TetMesh)
-            assert vol.v.shape[0] > 0
-
             check_vol(vol)  # Should not raise
+        
+        mus = fetch_vol('cortex', species='mouse', template='AMBA')
+        check_vol(mus)
 
 def test_fetch_invalid_vol():
-    with raises(ValueError, match="Volume data not found."):
+    with raises(ValueError, match="Volume data .* not found."):
         fetch_vol('chillybin')
 
 def test_read_vol_dict():
@@ -230,7 +230,7 @@ def test_read_vol_dict():
 
     vol_data = {
         'vertices': verts,
-        'tetras': tets
+        'faces': tets
     }
 
     vol = read_vol(vol_data)
@@ -251,31 +251,34 @@ def test_read_vol_invalid():
     with raises(ValueError, match="Volume data not found: .*fossilised_lunch.tetra.vtk"):
         read_vol(invalid_path)
 
-def test_check_mesh_dict():
+# TODO: also test dict reading by just converting other formats to dict
+def test_mesh_dict():
     # Volume case
     vol = {
         'vertices': [[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]],
-        'tetras': [[0, 1, 2, 3]]
+        'faces': [[0, 1, 2, 3]]
     }
-
-    _check_mesh_dict(vol)  # Should not raise
+    assert is_vol(vol), "is_vol should return True for a valid volume dictionary"
+    vol_tetmesh = read_vol(vol)
+    assert vol_tetmesh.t.shape == (1, 4), \
+        "read_vol should return a TetMesh with the correct tetrahedral connectivity"
+    check_vol(vol_tetmesh)
 
     # Missing tetras
     vol_invalid = {
         'vertices': vol['vertices']
     }
-    with raises(ValueError, match="Mesh dictionary must contain two keys:"):
-        _check_mesh_dict(vol_invalid)
+    with raises(ValueError, match="Received an invalid dictionary for `geometry`."):
+        is_vol(vol_invalid)
 
     # Wrong shape
     vol_invalid = {
         'vertices': vol['vertices'],
-        'tetras': [[0, 1, 2]]  # Should have 4 indices for tetras
+        'faces': [[0, 1, 2]]  # Should have 4 indices for tetras
     }
 
-    with raises(ValueError, match="Mesh dictionary key 'tetras' must reference an array-like with "
-                r"shape \(n_tetras, 4\), received \(1, 3\)."):
-        _check_mesh_dict(vol_invalid)
+    with raises(IndexError):
+        read_vol(vol_invalid)  # LaPy should raise as this can't become a TetMesh
 
     # Surface case
     surf = {
@@ -283,23 +286,26 @@ def test_check_mesh_dict():
         'faces': [[0, 1, 2], [0, 2, 3]]
     }
 
-    _check_mesh_dict(surf)  # Should not raise
+    assert not is_vol(surf)
+    surf_triamesh = read_surf(surf)
+    assert surf_triamesh.t.shape == (2, 3), \
+        "read_surf should return a TriaMesh with the correct triangular connectivity"
+    check_surf(surf_triamesh)
 
     # Missing faces
     surf_invalid = {
         'vertices': surf['vertices']
     }
-    with raises(ValueError, match="Mesh dictionary must contain two keys:"):
-        _check_mesh_dict(surf_invalid)
+    with raises(ValueError, match="Received an invalid dictionary for `geometry`."):
+        is_vol(surf_invalid)
 
     # Wrong shape
-    surf_invalid = {
+    geom_invalid = {
         'vertices': surf['vertices'],
-        'faces': [[0, 1], [0, 2]]  # Should have 3 indices for faces
+        'faces': [[0, 1], [0, 2]]  # Should have 3 or 4 indices for faces
     }
-    with raises(ValueError, match="Mesh dictionary key 'faces' must reference an array-like with "
-                r"shape \(n_faces, 3\), received \(2, 2\)."):
-        _check_mesh_dict(surf_invalid)
+    with raises(ValueError, match="Received an invalid dictionary for `geometry`."):
+        is_vol(geom_invalid)
 
 def test_caching():
     # Get CACHE_DIR

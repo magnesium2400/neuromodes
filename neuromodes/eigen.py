@@ -9,8 +9,8 @@ from lapy import Solver
 import numpy as np
 from scipy.sparse import csc_matrix, spmatrix
 from scipy.sparse.linalg import LinearOperator, eigsh, splu
-from neuromodes.io import (is_vol, is_surf, read_vol, read_surf, mask_mesh, normalize_vol,
-                           check_vol, check_surf)
+from neuromodes.io import (is_vol, read_vol, read_surf, mask_mesh, normalize_vol, check_vol,
+                           check_surf)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -52,8 +52,6 @@ class EigenSolver(Solver):
     Raises
     ------
     ValueError
-        If `geometry` is not a valid surface or volume mesh.
-    ValueError
         If `hetero` length does not match the number of vertices (masked or unmasked).
 
     References
@@ -76,32 +74,26 @@ class EigenSolver(Solver):
         alpha: Union[float, None] = None, # default to 1.0 if hetero given (and remains None)
         scaling: Union[str, None] = None  # default to "sigmoid" if hetero given (and remains None)
     ):
-        # Read in mesh
-        if is_vol(geometry):
-            geometry = read_vol(geometry)
-        elif is_surf(geometry):
-            geometry = read_surf(geometry)
-        else:
-            raise ValueError(
-                '`geometry` must be a path-like string to a valid surface or volume mesh, a '
-                '`nibabel.GiftiImage`, `lapy.TriaMesh`, or `lapy.TetMesh` instance, or a dictionary'
-                ' with keys `vertices` and either `faces` (for surfaces) or `tetras` (for volumes).'
-            )
+        # Read in surface or volume mesh
+        geometry = read_vol(geometry) if is_vol(geometry) else read_surf(geometry)
 
-        # Optionally remove vertices/elements from mesh (e.g., medial wall)
+        # Optionally mask
         if mask is not None:
             mask = np.asarray(mask, dtype=bool)
             geometry = mask_mesh(geometry, mask)
+
+        # Optionally normalize
+        if normalize:
+            if is_vol(geometry):
+                geometry = normalize_vol(geometry)
+            else:
+                geometry.normalize_()
         
-        # Validate mesh and optionally normalize
+        # Validate mesh
         if is_vol(geometry):
             check_vol(geometry)
-            if normalize:
-                geometry = normalize_vol(geometry)
         else:
             check_surf(geometry)
-            if normalize:
-                geometry.normalize_()
 
         # Hetero inputs
         if hetero is None:
