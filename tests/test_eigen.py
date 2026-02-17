@@ -3,7 +3,8 @@ from lapy.shapedna import normalize_ev
 import numpy as np
 import pytest
 from neuromodes.eigen import EigenSolver, is_orthonormal_basis, scale_hetero
-from neuromodes.io import fetch_vol, fetch_surf, fetch_map, mask_mesh
+from neuromodes.io import fetch_vol, fetch_surf, fetch_map
+from neuromodes.mesh import mask_mesh
 
 def test_vol_modes():
     for hemi in ['L', 'R']:

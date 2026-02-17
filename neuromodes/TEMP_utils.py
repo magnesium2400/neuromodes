@@ -5,7 +5,7 @@ import numpy as np
 from pathlib import Path
 import gmsh
 from skimage.measure import marching_cubes
-from neuromodes.io import check_surf
+from neuromodes.mesh import check_surf
 from scipy.ndimage import map_coordinates
 
 import plotly.graph_objs as go

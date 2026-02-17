@@ -9,8 +9,8 @@ from lapy import Solver
 import numpy as np
 from scipy.sparse import csc_matrix, spmatrix
 from scipy.sparse.linalg import LinearOperator, eigsh, splu
-from neuromodes.io import (is_vol, read_vol, read_surf, mask_mesh, normalize_vol, check_vol,
-                           check_surf)
+from neuromodes.io import read_vol, read_surf
+from neuromodes.mesh import is_vol, mask_mesh, normalize_vol, check_vol, check_surf
 
 if TYPE_CHECKING:
     from pathlib import Path

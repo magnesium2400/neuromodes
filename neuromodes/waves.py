@@ -689,7 +689,7 @@ def _simulate_waves_fem(
             if seed is None:
                 warn("`cache_input` is ignored when `seed` is None.")
             else:
-                from neuromodes.io import _set_cache
+                from neuromodes.mesh import _set_cache
 
                 memory = _set_cache()
                 gen_input = memory.cache(_gen_noise)
