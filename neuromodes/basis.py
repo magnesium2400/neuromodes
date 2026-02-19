@@ -12,6 +12,7 @@ from scipy.spatial.distance import cdist
 from neuromodes.eigen import is_orthonormal_basis
 
 if TYPE_CHECKING:
+    from numpy import floating
     from numpy.typing import NDArray, ArrayLike
     from scipy.spatial.distance import _MetricCallback, _MetricKind 
 
@@ -21,7 +22,7 @@ def decompose(
     method: str = 'project',
     mass: Union[spmatrix, ArrayLike, None] = None,
     checks: bool = True,
-) -> NDArray:
+) -> NDArray[floating]:
     """
     Calculate the decomposition of the given data onto a basis set.
 
@@ -63,24 +64,23 @@ def decompose(
     """
     # Format / validate inputs
     data = np.asarray(data)
-
+    if not isinstance(mass, (spmatrix, type(None))):
+        mass = np.asarray(mass)
     if method not in ['project', 'regress']:
         raise ValueError(f"Invalid `method` '{method}'; must be 'project' or 'regress'.")
     if checks:
         emodes = np.asarray(emodes)  # chkfinite in is_orthonormal_basis
-        if method == 'project':
-            if not isinstance(mass, (spmatrix, type(None))):
-                mass = np.asarray(mass)  # chkfinite in is_orthonormal_basis
-            if not is_orthonormal_basis(emodes, mass):
-                err_str = "in Euclidean space" if mass is None else "with the provided mass matrix"
-                raise ValueError(
-                    f"The columns of `emodes` do not form an orthonormal basis set {err_str}. "
-                    "Either provide a suitable `mass` matrix such that `emodes.T @ mass @ emodes = "
-                    "I`, use `method='regress'`, or set `checks=False`."
-                )
+        if method == 'project' and not is_orthonormal_basis(emodes, mass):
+            err_str = "in Euclidean space" if mass is None else "with the provided mass matrix"
+            raise ValueError(
+                f"The columns of `emodes` do not form an orthonormal basis set {err_str}. Either "
+                "provide a suitable `mass` matrix such that `emodes.T @ mass @ emodes = I`, use "
+                "`method='regress'`, or set `checks=False`."
+            )
         elif mass is not None:  # method == 'regress'
             warn("`mass` is ignored when `method='regress'`.")
             mass = None
+    emodes = np.asarray(emodes)  # placate Pyright
     n_verts, n_modes = emodes.shape
     if data.ndim == 1:
         data = data[:, np.newaxis]
@@ -126,7 +126,7 @@ def reconstruct(
     metric: Union[_MetricCallback, _MetricKind, None] = 'correlation',
     checks: bool = True,
     **cdist_kwargs
-) -> Tuple[NDArray, NDArray, list[NDArray]]:
+) -> Tuple[NDArray[floating], NDArray[floating], list[NDArray[floating]]]:
     """
     Calculate and score the reconstruction of the given independent data using the provided
     orthogonal vectors (e.g., geometric eigenmodes).
@@ -188,11 +188,12 @@ def reconstruct(
         data = data[:, np.newaxis]
     n_maps = data.shape[1]
 
-    emodes = np.asarray(emodes) # chkfinite in decompose
+    emodes = np.asarray(emodes)
     n_verts, n_modes = emodes.shape
 
     if mode_counts is None:
         mode_counts = np.arange(n_modes) + 1
+        mode_counts = np.asarray(mode_counts) # placate Pyright
     else:
         mode_counts = np.asarray(mode_counts)
         if (mode_counts.ndim != 1 or (mode_counts != mode_counts.astype(int)).any()
@@ -240,7 +241,8 @@ def reconstruct_timeseries(
     metric: Union[_MetricCallback, _MetricKind, None] = 'correlation',
     checks: bool = True,
     **cdist_kwargs
-) -> Tuple[NDArray, NDArray, NDArray, NDArray, list[NDArray]]:
+) -> Tuple[NDArray[floating], NDArray[floating], NDArray[floating], NDArray[floating],
+           list[NDArray[floating]]]:
     """
     Calculate and score the reconstruction of the given timeseries data using the provided
     orthogonal vectors (e.g., geometric eigenmodes).
@@ -342,7 +344,7 @@ def reconstruct_timeseries(
 
 def calc_norm_power(
     beta: ArrayLike
-) -> NDArray:
+) -> NDArray[floating]:
     """
     Transform beta coefficients from a decomposition into normalised power.
 
@@ -381,6 +383,7 @@ def calc_vec_fc(
         The Fisher-z-transformed vectorized functional connectivity array of shape (n_edges,), where
         n_edges = n_verts*(n_verts-1)/2.
     """
+    timeseries = np.asarray(timeseries) # placate Pyright
     fc = np.corrcoef(timeseries)
     vec_fc = fc[np.triu_indices_from(fc, k=1)]
     return np.arctanh(vec_fc)

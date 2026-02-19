@@ -15,7 +15,7 @@ from neuromodes.mesh import is_vol, mask_mesh, normalize_vol, check_vol, check_s
 if TYPE_CHECKING:
     from pathlib import Path
     from lapy import TriaMesh, TetMesh
-    from nibabel import GiftiImage
+    from nibabel.gifti.gifti import GiftiImage
     from numpy.typing import NDArray, ArrayLike
 
 class EigenSolver(Solver):

@@ -4,7 +4,7 @@ surfaces.
 """
 
 from __future__ import annotations
-from typing import Union, TYPE_CHECKING
+from typing import cast, Union, TYPE_CHECKING
 from warnings import warn
 import numpy as np
 from scipy.integrate import solve_ivp
@@ -143,12 +143,11 @@ def simulate_waves(
     # Format / validate arguments
     r = float(r)
     gamma = float(gamma)
+    emodes = np.asarray(emodes) # placate Pyright; chkfinite in decompose
+    evals = np.asarray(evals) # placate Pyright
     
     if checks:
-        emodes = np.asarray(emodes) # chkfinite in decompose
         evals = np.asarray_chkfinite(evals)
-        if emodes.ndim != 2 or emodes.shape[0] < emodes.shape[1]:
-            raise ValueError("`emodes` must have shape (n_verts, n_modes), where n_verts ≥ n_modes.")
         if evals.shape != (emodes.shape[1],):
             raise ValueError(f"`evals` must have shape (n_modes,) = {(emodes.shape[1],)}, matching "
                              "the number of columns in `emodes`.")
@@ -201,24 +200,27 @@ def simulate_waves(
         else:
             gen_input = _gen_noise
         
-        ext_input = gen_input((emodes.shape[0], nt), seed)
+        ext_input = np.asarray(gen_input((emodes.shape[0], nt), seed))
 
     # Eigendecompose external input to get modal coefficients over time
     input_coeffs = decompose(ext_input, emodes, method=decomp_method, mass=mass, checks=checks)
 
+    if pde_method == 'fourier':
+        _model_wave = _model_wave_fourier
+        _model_balloon = _model_balloon_fourier
+    else:
+        _model_wave = _model_wave_ode
+        _model_balloon = _model_balloon_ode
+
     # Compute activity timeseries for each mode
-    mode_coeffs = (_model_wave_fourier(input_coeffs, dt, r, gamma, evals)
-                   if pde_method == "fourier" else
-                   _model_wave_ode(input_coeffs, dt, r, gamma, evals))
+    mode_coeffs = _model_wave(input_coeffs, dt, r, gamma, evals)
 
     if bold_out:
         # Get parameters for Balloon-Windkessel model
         all_balloon_params = get_balloon_params(**balloon_params)
 
         # Apply model to each mode's activity timeseries
-        mode_coeffs = (_model_balloon_fourier(mode_coeffs, dt, all_balloon_params)
-                       if pde_method == "fourier" else
-                       _model_balloon_ode(mode_coeffs, dt, all_balloon_params))
+        mode_coeffs = _model_balloon(mode_coeffs, dt, all_balloon_params)
 
     # Transform timeseries from modal coefficients back to vertex space
     return emodes @ mode_coeffs
@@ -623,8 +625,8 @@ def _model_balloon_ode(
 def _simulate_waves_fem(
     mass: spmatrix,
     stiffness: spmatrix,
-    nt: int = None,
-    input: ArrayLike = None,
+    nt: Union[int, None] = None,
+    input: Union[ArrayLike, None] = None,
     dt: float = 1e-4,
     r: float = 17.4,
     gamma: float = 116.0,
@@ -632,7 +634,7 @@ def _simulate_waves_fem(
     scaled_hetero: Union[ArrayLike, None] = None,
     n_jobs: int = 1,
     verbose: int = 0,
-    seed: int = None,
+    seed: Union[int, None] = None,
     cache_input: bool = False
 ) -> NDArray:
     """
@@ -682,6 +684,7 @@ def _simulate_waves_fem(
         if cache_input:
             warn("`cache_input` is ignored when `input` is provided.")
         nt = input.shape[1]
+        nt = cast(int, nt)  # placate Pyright
     else:
         if nt is None:
             raise ValueError("`nt` must be provided when `input` is `None`.")
@@ -689,14 +692,14 @@ def _simulate_waves_fem(
             if seed is None:
                 warn("`cache_input` is ignored when `seed` is None.")
             else:
-                from neuromodes.mesh import _set_cache
+                from neuromodes.io import _set_cache
 
                 memory = _set_cache()
                 gen_input = memory.cache(_gen_noise)
         else:
             gen_input = _gen_noise
         
-        input = gen_input((n_verts, nt), seed)
+        input = np.asarray(gen_input((n_verts, nt), seed))
 
     # Pad input with zeros on negative side to ensure causality (system is only driven for t >= 0)
     # This is required for the correct Green's function solution of the damped wave equation.
@@ -707,27 +710,23 @@ def _simulate_waves_fem(
     omega = 2 * np.pi * np.fft.fftshift(np.fft.fftfreq(2 * nt, dt))
 
     # Treat noise input as a continuous field
-    mass_input_padded_freqs = mass @ input_padded_freqs
+    mass_input_padded_freqs = mass @ input_padded_freqs # type: ignore (placate Pyright)
 
     # Compute temporal component of NFT operator for each frequency
     temporal = -omega**2 / gamma**2 - 2j * omega / gamma + 1
 
     # Compute activity at each frequency
-    phi_freqs = np.column_stack(
-
-        # Parallelise over frequencies
-        Parallel(n_jobs=n_jobs, verbose=verbose)(
-            delayed(_solve_fem_freq)(
-
+    phi_freqs = Parallel(n_jobs=n_jobs, verbose=verbose)(
+        delayed(_solve_fem_freq)(
                 # Construct frequency-specific operator for wave equation
                 operator=temporal[k] * mass + r**2 * stiffness,
 
                 # Solve for this frequency's input
                 input=mass_input_padded_freqs[:, k]
-
                 ) for k in range(2 * nt)
-            )
-        )
+                )
+    phi_freqs = cast(list[NDArray], phi_freqs)  # placate Pyright
+    phi_freqs = np.stack(phi_freqs, axis=1)
 
     # Inverse transform to time domain, implemented as forward FFT for causality
     phi = np.real(np.fft.fft(np.fft.ifftshift(phi_freqs, axes=1), axis=1))

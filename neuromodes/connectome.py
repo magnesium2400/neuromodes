@@ -65,6 +65,8 @@ def model_connectome(
     """
     # Format / validate arguments
     r = float(r)
+    emodes = np.asarray(emodes) # placate Pyright
+    evals = np.asarray(evals) # placate Pyright
 
     if checks:
         emodes = np.asarray_chkfinite(emodes)
