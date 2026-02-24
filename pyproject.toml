@@ -1,27 +1,31 @@
 [project]
-name = "nsbtools"
+name = "neuromodes"
 version = "0.1.0"
-description = "Neuroimaging tools developed by the Neural Systems and Behaviour lab"
-readme = "README.md"
-requires-python = ">=3.9, <3.13"
+description = "Eigenmode-based brain mapping and modelling toolbox developed by the Neural Systems and Behaviour Lab"
+readme = "README.rst"
+requires-python = ">=3.9"
+keywords = ["python", "modelling", "neuroimaging", "eigenmodes", "brain-mapping"]
+
 dependencies = [
-    "brainspace>=0.1.20",
-    "joblib>=1.4.2",
-    "lapy>=1.1.0",
-    "matplotlib>=3.7.5",
+    "lapy @ git+https://github.com/Deep-MI/LaPy.git@main",
     "nibabel>=5.2.1",
     "numpy>=1.24.4",
     "scipy>=1.10.1",
-    "surfplot>=0.2.0",
     "trimesh>=4.8.1",
 ]
 
 [project.optional-dependencies]
 testing = [
+    "joblib>=1.5.3",
     "pytest>=8.4.2",
 ]
 tutorials = [
     "ipykernel>=6.31.0",
+    "matplotlib>=3.9.4",
+    "nsbutils @ git+https://github.com/NSBLab/nsbutils.git@dev",
+]
+cache = [
+    "joblib>=1.5.3",
 ]
 
 [build-system]
@@ -29,12 +33,15 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["nsbtools"]
+packages = ["neuromodes", "neuromodes.data"]
 
 [tool.setuptools.package-data]
-"nsbtools.data" = ["*"]
+"neuromodes.data" = ["*"]
 
 [tool.pytest.ini_options]
 python_functions = ["test_"]
 python_files = ["test_*.py",]
 testpaths = ["tests",]
+
+[project.urls]
+"Homepage" = "https://neuromodes.readthedocs.io"

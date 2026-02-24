@@ -1,45 +1,75 @@
-.. image:: https://github.com/izachp/nsbtools/raw/main/docs/_static/logo.png
-   :alt: Design by Gabriella Chan
+.. image:: https://github.com/NSBLab/neuromodes/raw/main/docs/_static/logo.png
+  :alt: Design by Gabriella Chan
 
-Eigenmode-based neuroimaging tools developed by the `Neural Systems and Behaviour Lab <https://www.monash.edu/medicine/psych/alex-fornito-lab>`_.
+**NOTE: neuromodes is currently under active development. Breaking changes to function naming and behaviour may occur prior to a stable release.**
+
+Eigenmode-based brain mapping and modelling toolbox developed by the `Neural Systems and Behaviour Lab <https://www.monash.edu/medicine/psych/alex-fornito-lab>`_. Documentation can be found `here <https://neuromodes.readthedocs.io/en/latest/>`_.
 
 Features
 --------
-- Compute geometric eigenmodes from cortical surface meshes
-- Decompose and reconstruct cortical maps using an orthogonal basis set
-- Simulate neural and BOLD activity using neural field theory
-- Generate structural connectomes using the method from `Normand et al. (2025) <https://doi.org/10.1101/2025.09.17.676944>`_
-- Incorporate spatial heterogeneity into all of the above via cortical maps
-- Visualise matrices and cortical maps
-- Access triangular surface meshes for human, macaque, and marmoset cortices
+.. image:: https://github.com/NSBLab/neuromodes/raw/main/docs/_static/overview.png
 
-All human cortical surface meshes provided were obtained from the `neuromaps <https://neuromaps-main.readthedocs.io/en/stable/index.html>`_ package, which also provides a diverse set of cortical maps that can be used for our `EigenSolver`'s `hetero` parameter.
-
-To compare cortical maps while accounting for spatial autocorrelation, we recommend using the `eigenstrapping <https://eigenstrapping.readthedocs.io/en/stable/index.html>`_ package, which implements a rigorous null model based on geometric eigenmodes.
+- ``eigen``: Compute geometric eigenmodes from cortical surface meshes, optionally incorporating spatial heterogeneity
+- ``basis``: Decompose and reconstruct cortical maps and timeseries using the geometric eigenmodes, or another basis set
+- ``waves``: Simulate neural activity and BOLD signals using the wave propagation model from `Pang et al. (2023) <https://doi.org/10.1038/s41586-023-06098-1>`_
+- ``connectome``: Generate models of structural connectomes using the Geometric Eigenmode Model from `Normand et al. (2025) <https://doi.org/10.1101/2025.09.17.676944>`_
+- ``io``: Access triangular surface meshes for human, macaque, and marmoset cortices
+- ``nulls`` *(under development)*: Generate null models of cortical maps that preserve spatial autocorrelation, using the Eigenstrapping method from `Koussis et al. (2025) <https://doi.org/10.1162/IMAG.a.71>`_
+- ``morphometry`` *(under development)*: Quantify multiscale anatomical differences using Mode-Based Morphometry from `Cao et al. (2024) <https://doi.org/10.1002/hbm.26640>`_
+- ``parcellation`` *(under development)*: Create parcellations with any number of regions using the hierarchical bipartitioning method from `Pang et al. (2025) <https://doi.org/10.1101/2025.01.30.635820>`_
 
 Installation
 ------------
-``nsbtools`` works with Python 3.9 to 3.12. It can be installed by cloning the repository and installing from the local directory:
+``neuromodes`` works with Python 3.9+, and can be pip-installed into your environment via:
 
-::
+.. code-block:: bash
 
-  git clone https://github.com/NSBLab/nsbtools
-  cd nsbtools
-  pip install .
+  pip install git+https://github.com/NSBLab/neuromodes.git
 
-Tests can be run with ``pytest``:
+This will clone ``main``, our most stable branch. To try out any newer features under development, clone from our ``dev`` branch instead via:
 
-::
+.. code-block:: bash
 
-  cd nsbtools
-  pip install pytest
+  pip install git+https://github.com/NSBLab/neuromodes.git@dev.
+
+Alternatively, ``neuromodes`` can be added as a dependency to your ``pyproject.toml`` with `UV <https://docs.astral.sh/uv/>`_ via:
+
+.. code-block:: bash
+
+  uv add git+https://github.com/NSBLab/neuromodes.git.  # add '@dev' to clone from dev branch
+|
+If you wish to run the tutorials, please instead install our extra ``tutorials`` dependencies via:
+
+.. code-block:: bash
+
+  pip install "neuromodes[tutorials] @ git+https://github.com/NSBLab/neuromodes.git"
+
+or
+
+.. code-block:: bash
+
+  uv add "neuromodes[tutorials] @ git+https://github.com/NSBLab/neuromodes.git"
+|
+If you encounter any problems, please consider `opening an issue <https://github.com/NSBLab/neuromodes/issues>`_. Meanwhile, try switching to the exact environment used for development via UV:
+
+.. code-block:: bash
+
+  git clone https://github.com/NSBLab/neuromodes
+  cd neuromodes
+  uv venv --python 3.13.3
+  uv sync --frozen
+|
+Tests can be run with ``pytest`` from the repository root:
+
+.. code-block:: bash
+
+  cd neuromodes
+  pip install pytest  # or `uv sync --extra testing`
   pytest tests
-
-Alternatively, ``nsbtools`` can be installed via `UV <https://docs.astral.sh/uv/>`_ by running ``uv sync`` from the repository's root or ``uv add <path/to/nsbtools>`` from another project's directory.
 
 Citing
 ------
-If you use ``nsbtools`` in your work, please cite the following three papers:
+If you use ``neuromodes`` in your work, please cite the following three papers:
 
 J.C. Pang, K.M. Aquino, M. Oldehinkel, P.A. Robinson, B.D. Fulcher, M. Breakspear, A. Fornito, Geometric constraints on human brain function, Nature, 618, 566–574 (2023) (DOI: 10.1038/s41586-023-06098-1)
 
@@ -47,9 +77,15 @@ M\. Reuter, F-E. Wolter, N. Peinecke, Laplace-Beltrami spectra as 'Shape-DNA' of
 
 C\. Wachinger, P. Golland, W. Kremen, B. Fischl, M. Reuter, BrainPrint: a discriminative characterization of brain morphology, Neuroimage, 109, 232-248 (2015). (DOI: 10.1016/j.neuroimage.2015.01.032)
 
-Additionally, if you use the ``generate_connectome`` function, please also cite:
+If you use the ``hetero`` parameter in ``EigenSolver``, please also cite:
+
+V\. Barnes, J. Cruddas, T. Cao, I.Z. Pope, T. Xu, T. Funck, N. Palomero-Gallagher, J.C. Pang, A. Fornito, Regional heterogeneity shapes macroscopic wave dynamics of the human and non-human primate cortex, BioRxiv (2026) (DOI: 10.64898/2026.01.22.701178)
+
+If you use the ``model_connectome`` function, please also cite:
 
 F\. Normand, M. Gajwani, T. Cao, J. Cruddas, A. Sangchooli, S. Oldham, A. Holmes, P.A. Robinson, J.C. Pang, A. Fornito, Geometric constraints on the architecture of mammalian cortical connectomes, BioRxiv (2025) (DOI: 10.1101/2025.09.17.676944)
+
+Citations for cortical surface meshes and maps can be found in `neuromodes/data/included_data.csv <https://github.com/NSBLab/neuromodes/blob/main/neuromodes/data/included_data.csv>`_
 
 License information
 -------------------

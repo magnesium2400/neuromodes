@@ -1,11 +1,9 @@
 from pathlib import Path
-import pytest
-import numpy as np
 from lapy import TriaMesh
-
-from nsbtools.io import fetch_surf, mask_surf
-from nsbtools.eigen import EigenSolver
-from nsbtools.validation import is_mass_orthonormal_modes
+import numpy as np
+import pytest
+from neuromodes.eigen import EigenSolver, is_orthonormal_basis, scale_hetero
+from neuromodes.io import fetch_surf, fetch_map, mask_surf
 
 @pytest.fixture
 def surf_medmask_hetero():
@@ -36,7 +34,7 @@ def test_no_medmask(surf_medmask_hetero):
 def test_invalid_mask_shape(surf_medmask_hetero):
     surf, _, _ = surf_medmask_hetero
     bad_mask = np.ones(10)
-    with pytest.raises(ValueError, match=r"`mask` \(10\) must match .* mesh \(4002\)."):
+    with pytest.raises(ValueError, match=r"`mask` must have shape \(4002,\)"):
         EigenSolver(surf, mask=bad_mask)
 
 def test_no_hetero(surf_medmask_hetero):
@@ -57,33 +55,32 @@ def test_no_hetero(surf_medmask_hetero):
         
 def test_no_hetero_alpha_scaling(surf_medmask_hetero):
     surf, medmask, _ = surf_medmask_hetero
-    with pytest.warns(UserWarning, match="`alpha` is ignored.*"):
+    with pytest.warns(UserWarning, match="`alpha` is ignored"):
         EigenSolver(surf, mask=medmask, hetero=None, alpha=0.5)
-    with pytest.warns(UserWarning, match="`scaling` is ignored.*"):
+    with pytest.warns(UserWarning, match="`scaling` is ignored"):
         EigenSolver(surf, mask=medmask, hetero=None, scaling='exponential')
 
 def test_invalid_hetero_shape(surf_medmask_hetero):
     surf, _, _ = surf_medmask_hetero
     bad_hetero = np.ones(10)
-    with pytest.raises(ValueError, match=r"`hetero` \(10\) must match .* mesh \(4002\)."):
+    with pytest.raises(ValueError, match=r"vertices in the surface mesh \(4002\)."):
         EigenSolver(surf, hetero=bad_hetero)
 
 def test_nan_inf_hetero(surf_medmask_hetero):
     surf, _, hetero = surf_medmask_hetero
     hetero[0] = np.nan
-    with pytest.raises(ValueError, match="`hetero` must not contain NaNs or Infs."):
+    with pytest.raises(ValueError, match="array must not contain infs or NaNs"):
         EigenSolver(surf, hetero=hetero)
 
     hetero[0] = np.inf
-    with pytest.raises(ValueError, match="`hetero` must not contain NaNs or Infs."):
+    with pytest.raises(ValueError, match="array must not contain infs or NaNs"):
         EigenSolver(surf, hetero=hetero)
 
 def test_constant_hetero(surf_medmask_hetero):
     surf, _, hetero = surf_medmask_hetero
     hetero[:] = 2.0
-    with pytest.warns(RuntimeWarning, match="Precision loss occurred in moment calculation.*"):
-        with pytest.raises(ValueError, match="z-scored `hetero` must not contain NaNs.*"):
-            EigenSolver(surf, hetero=hetero)
+    with pytest.warns(UserWarning, match="Provided `hetero` is constant"):
+        EigenSolver(surf, hetero=hetero)
 
 def test_nan_inf_hetero_medmask(surf_medmask_hetero):
     # Inject NaN/Inf at a cortical vertex (should raise error)
@@ -91,10 +88,10 @@ def test_nan_inf_hetero_medmask(surf_medmask_hetero):
     cortical_vertex = np.where(medmask)[0][0]
     print(cortical_vertex)
     hetero[cortical_vertex] = np.nan
-    with pytest.raises(ValueError, match="`hetero` must not contain NaNs or Infs."):
+    with pytest.raises(ValueError, match="array must not contain infs or NaNs"):
         EigenSolver(surf, hetero=hetero)
     hetero[cortical_vertex] = np.inf
-    with pytest.raises(ValueError, match="`hetero` must not contain NaNs or Infs."):
+    with pytest.raises(ValueError, match="array must not contain infs or NaNs"):
         EigenSolver(surf, hetero=hetero)
 
 def test_nan_inf_hetero_medmask_ignored(surf_medmask_hetero):
@@ -107,10 +104,11 @@ def test_nan_inf_hetero_medmask_ignored(surf_medmask_hetero):
     hetero[medial_vertex] = np.inf  
     EigenSolver(surf, mask=medmask, hetero=hetero)
 
-def test_init_invalid_scaling(surf_medmask_hetero):
-    surf, medmask, hetero = surf_medmask_hetero
-    with pytest.raises(ValueError, match="Invalid scaling 'plantasia'.*"):
-        EigenSolver(surf, mask=medmask, hetero=hetero, scaling='plantasia')
+def test_real_heteromaps(surf_medmask_hetero):
+    mesh, medmask = fetch_surf() # 32k density to match real maps
+    for map in ['fcgradient1', 'myelinmap', 'ndi', 'odi', 'thickness']:
+        hetero = fetch_map(map)
+        EigenSolver(mesh, mask=medmask, hetero=hetero) # just test that it initializes without error
 
 @pytest.fixture
 def presolver(surf_medmask_hetero):
@@ -176,23 +174,23 @@ def test_vector_seeded_modes(presolver):
 
 def test_invalid_vector_seed(presolver):
     with pytest.raises(ValueError,
-                       match=r"of shape \((3636,)\)."):
+                       match=r"of shape \(n_verts,\) = \(3636,\)."):
         presolver.solve(16, seed=np.ones(10))
 
 @pytest.fixture
 def solver(presolver):
-    presolver.solve(n_modes=16)
+    presolver.solve(n_modes=16, seed=0)
     return presolver
 
 def test_nonstandard_modes(solver):
     emodes = solver.emodes
-    emodes_nonstd = solver.solve(solver.n_modes, standardize=False).emodes
+    emodes_nonstd = solver.solve(solver.n_modes, standardize=False, seed=0).emodes
     
     assert not np.all(emodes_nonstd[0, :] >= 0), \
         'Non-standardized first vertex should have both positive and negative values.'
     assert np.all(emodes[0, :] >= 0), 'Standardized first vertex has negative values.'
-    assert np.allclose(abs(emodes), abs(emodes_nonstd),
-                       atol=1e-6), 'Non-standardized modes do not match standardized modes.'
+    assert (abs(emodes) == abs(emodes_nonstd)).all(), \
+    'Non-standardized modes do not match standardized modes.'
 
 def test_solve_lumped_mass(solver, surf_medmask_hetero):
     emodes = solver.emodes
@@ -238,16 +236,36 @@ def test_check_orthonorm(solver):
     emodes = solver.emodes
 
     # Check that modes are not orthonormal in Euclidean space
-    assert not is_mass_orthonormal_modes(emodes)
+    assert not is_orthonormal_basis(emodes)
 
     emodes[:, 0] += 0.1 # Destroy mass-orthonormality by changing first mode's value
 
-    assert not is_mass_orthonormal_modes(emodes, solver.mass)
+    assert not is_orthonormal_basis(emodes, solver.mass)
 
 def test_check_euclidean_orthonorm():
     # Create orthonormal vectors in Euclidean space
     vecs = np.eye(5)
 
-    assert is_mass_orthonormal_modes(vecs)
-    assert is_mass_orthonormal_modes(vecs, mass=np.eye(5))
-    assert not is_mass_orthonormal_modes(vecs, mass=np.zeros((5, 5)))
+    assert is_orthonormal_basis(vecs)
+    assert is_orthonormal_basis(vecs, mass=np.eye(5))
+    assert not is_orthonormal_basis(vecs, mass=np.zeros((5, 5)))
+
+def test_scale_hetero(surf_medmask_hetero):
+    _, _, hetero = surf_medmask_hetero
+
+    # Check that sigmoid-scaled hetero has mean ~1 and be within (0, 2)
+    hetero_sig = scale_hetero(hetero)
+    assert np.isclose(np.mean(hetero_sig), 1.0, atol=1e-3)
+    assert np.all((hetero_sig > 0) & (hetero_sig < 2))
+
+    # Check that exponential-scaled hetero is all positive
+    hetero_exp = scale_hetero(hetero, scaling='exponential')
+    assert np.all(hetero_exp > 0)
+
+def test_invalid_scale_hetero(surf_medmask_hetero):
+    _, _, hetero = surf_medmask_hetero
+
+    with pytest.raises(ValueError, match="Invalid scaling 'plantasia'"):
+        scale_hetero(hetero, scaling='plantasia')
+
+    

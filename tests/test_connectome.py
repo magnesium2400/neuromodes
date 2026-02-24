@@ -1,6 +1,6 @@
-from nsbtools.connectome import model_connectome
 import numpy as np
 import pytest
+from neuromodes.connectome import model_connectome
 
 @pytest.fixture
 def emodes():

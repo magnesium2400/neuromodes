@@ -1,10 +1,9 @@
-import pytest
 import numpy as np
-from scipy.spatial.distance import squareform
-
-from nsbtools.io import fetch_surf, fetch_map
-from nsbtools.eigen import EigenSolver
-from nsbtools.basis import decompose, reconstruct, reconstruct_timeseries, calc_norm_power
+import pytest
+from neuromodes.basis import (
+    decompose, reconstruct, reconstruct_timeseries, calc_norm_power, calc_vec_fc)
+from neuromodes.eigen import EigenSolver
+from neuromodes.io import fetch_surf, fetch_map
 
 @pytest.fixture
 def surf_medmask_hetero():
@@ -21,7 +20,7 @@ def presolver(surf_medmask_hetero):
 
 @pytest.fixture
 def solver(presolver):
-    presolver.solve(n_modes=10)
+    presolver.solve(n_modes=10, seed=0)
     return presolver
 
 def test_decompose_eigenmodes(solver):
@@ -38,7 +37,7 @@ def test_decompose_eigenmodes(solver):
 
 def test_decompose_invalid_data_shape(solver):
 
-    with pytest.raises(ValueError, match=r".*`data` \(4002\) must match .* `emodes` \(3636\)."):
+    with pytest.raises(ValueError, match=r"`emodes` \(3636\)."):
         decompose(np.ones(4002), solver.emodes, mass=solver.mass)
 
 def test_decompose_nan_inf_mode(solver):
@@ -46,21 +45,22 @@ def test_decompose_nan_inf_mode(solver):
     data = np.ones(solver.n_verts)
 
     emodes[0,0] = np.nan
-    with pytest.raises(ValueError, match="`emodes` contains NaNs or Infs."):
+    with pytest.raises(ValueError, match="array must not contain infs or NaNs"):
         decompose(data, emodes, mass=solver.mass)
 
     emodes[0,0] = np.inf
-    with pytest.raises(ValueError, match="`emodes` contains NaNs or Infs."):
+    with pytest.raises(ValueError, match="array must not contain infs or NaNs"):
         decompose(data, emodes, mass=solver.mass)
 
 def test_decompose_massless(solver):
 
-    with pytest.raises(ValueError, match=r"Mass matrix must be provided when method is 'project' .*"):
+    with pytest.raises(ValueError, match="do not form an orthonormal basis set in Euclidean space"):
         decompose(np.ones(solver.n_verts), solver.emodes)
 
 def test_decompose_invalid_method(solver):
 
-    with pytest.raises(ValueError, match="Invalid decomposition method 'fornitonian'.*"):
+    with pytest.raises(ValueError,
+                       match="Invalid `method` 'fornitonian'; must be 'project' or 'regress'."):
         decompose(np.ones(solver.n_verts), solver.emodes, method='fornitonian')
 
 @pytest.fixture
@@ -103,8 +103,8 @@ def test_reconstruct_mode_superposition(solver, gen_eigenmap):
 def test_reconstruct_regress_method(solver, gen_eigenmap):
     eigenmaps, _ = gen_eigenmap
 
-    _, correlation_error, _ = reconstruct(eigenmaps, solver.emodes, method='regress', metric='correlation')
-    _, euclidean_error, _ = reconstruct(eigenmaps, solver.emodes, method='regress', metric='euclidean')
+    _, correlation_error, _ = reconstruct(eigenmaps, solver.emodes, method='regress', check_ortho=False, metric='correlation')
+    _, euclidean_error, _ = reconstruct(eigenmaps, solver.emodes, method='regress', check_ortho=False, metric='euclidean')
 
     # Errors should strictly decrease when adding modes
     assert np.all(np.diff(correlation_error[1:,:], axis=0) < 0), \
@@ -118,25 +118,45 @@ def test_reconstruct_regress_method(solver, gen_eigenmap):
 # z-transforming the matrix, this results in a RuntimeWarning (due to division by 0) and an output
 # which has inf values. This also creates another warning when using the 'correlation' metric due to
 # the prescence of inf values. These behaviours are reasonable, and should be flagged for the user,
-# but we can filter these warnings for this test.
+# but we can filter these warnings for this test. Due to precision errors, some reconstructed FC
+# matrices may have a correlation of 1 which leads to NaN values in the correlation_error output. 
+# This is also reasonable. This can be mitigated by using more timepoints in gen_eigenmap, but for
+# computaional efficiency we only use 3 timepoints.
 @pytest.mark.filterwarnings("ignore:divide by zero encountered in arctanh:RuntimeWarning")
 @pytest.mark.filterwarnings("ignore:invalid value encountered in subtract:RuntimeWarning")
 def test_reconstruct_mode_superposition_timeseries(solver, gen_eigenmap):
     eigenmaps, _ = gen_eigenmap
 
-    eigen_ts = eigenmaps.astype(np.float32) # Prevent memory allocation error
-    fc = np.arctanh(squareform(np.corrcoef(eigen_ts),checks=False))
+    eigen_ts = eigenmaps.astype(np.float64) # Prevent memory allocation error
+    fc = calc_vec_fc(eigen_ts)
 
     # Treat eigenmaps as timepoints of activity
-    fc_recon, correlation_error, _, _, _ = reconstruct_timeseries(eigen_ts, solver.emodes, mass=solver.mass, 
-                                                 method='regress', metric='correlation')
+    fc_recon, correlation_error, recon, recon_error, beta = reconstruct_timeseries(
+        eigen_ts, solver.emodes, method='regress', check_ortho=False, metric='correlation')
+    
+    # check shapes
+    assert fc_recon.shape == (solver.n_verts*(solver.n_verts-1)/2, solver.n_modes), \
+        'fc_recon has incorrect shape.'
+    assert correlation_error.shape == (solver.n_modes,), \
+        'fc_recon_error has incorrect shape.'
+    assert recon.shape == (solver.n_verts, solver.n_modes, eigen_ts.shape[1]), \
+        'recon has incorrect shape.'
+    assert recon_error.shape == (solver.n_modes, eigen_ts.shape[1]), \
+        'recon_error has incorrect shape.'
+    assert beta[0].shape == (1, eigen_ts.shape[1]), \
+        'beta[0] has incorrect shape.'
+    assert beta[-1].shape == (solver.n_modes, eigen_ts.shape[1]), \
+        'beta[-1] has incorrect shape.'
 
-    _, euclidean_error, _, _, _ = reconstruct_timeseries(eigen_ts, solver.emodes, mass=solver.mass, 
-                            method='regress', metric='euclidean')
+    # Use another metric for fc recon error
+    _, euclidean_error, _, _, _ = reconstruct_timeseries(
+        eigen_ts, solver.emodes, method='regress', check_ortho=False, metric='euclidean')
     mse = euclidean_error / fc.size  # Convert to MSE
     
-    assert np.allclose(np.tanh(fc_recon[:,-1]), np.tanh(fc), atol=1e-5), 'Reconstructed FC does not match original.'
-    assert correlation_error[-1] < 1e-6, 'FC reconstruction error is not close to 0 when using all modes.'
+    assert np.allclose(np.tanh(fc_recon[:,-1]), np.tanh(fc), atol=1e-5), \
+        'Reconstructed FC does not match original.'
+    assert correlation_error[-1] < 1e-6, \
+        'FC reconstruction error is not close to 0 when using all modes.'
     assert mse[-1] < 1e-6, 'MSE is not close to 0 when using all modes.'
 
 def test_reconstruct_real_map_32k():
@@ -153,19 +173,18 @@ def test_reconstruct_real_map_32k():
     _, recon_score, _ = reconstruct(map, emodes, mass=solver.mass)
 
     # Correlation error should strictly decrease from 1, but not reach 0
-    assert np.all(np.diff(recon_score) < 0), \
-        r'Reconstruction error does not strictly decrease.'
+    assert np.all(np.diff(recon_score) < 0), 'Reconstruction error does not strictly decrease.'
     assert not np.isclose(recon_score[-1], 0, atol=1e-6), \
-        r'Reconstruction error is unexpectedly close to 0 for only 10 modes.'
+        'Reconstruction error is unexpectedly close to 0 for only 10 modes.'
 
 def test_reconstruct_invalid_map_shape(solver):
 
-    with pytest.raises(ValueError, match=r".*`data` \(4002\) must match .* `emodes` \(3636\)."):
+    with pytest.raises(ValueError, match=r"`emodes` \(3636\)."):
         reconstruct(np.ones(4002), solver.emodes, mass=solver.mass)
 
 def test_reconstruct_massless(solver):
 
-    with pytest.raises(ValueError, match=r"Mass matrix must be provided when method is 'project' .*"):
+    with pytest.raises(ValueError, match="do not form an orthonormal basis set in Euclidean space"):
         reconstruct(np.ones(solver.n_verts), solver.emodes)
 
 def test_calc_norm_power():
@@ -178,4 +197,5 @@ def test_calc_norm_power():
     assert np.all(norm_power >= 0), 'Normalized powers contain negative values.'
 
     # Check that columns sum to 1
-    assert np.allclose(np.sum(norm_power, axis=0), 1, atol=1e-8), 'Normalized powers do not sum to 1.'
+    assert np.allclose(np.sum(norm_power, axis=0), 1, atol=1e-8), \
+        'Normalized powers do not sum to 1.'

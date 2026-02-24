@@ -1,6 +1,6 @@
 .. _api_ref:
 
-.. currentmodule:: nsbtools
+.. currentmodule:: neuromodes
 
 API Reference
 =============
@@ -10,14 +10,14 @@ API Reference
 
 .. _ref_eigen:
 
-:mod:`nsbtools.eigen` - Eigenmode analyses on cortical surfaces
+:mod:`neuromodes.eigen` - Compute eigenmodes on cortical surface meshes
 ---------------------------------------------------------------
 
-.. automodule:: nsbtools.eigen
+.. automodule:: neuromodes.eigen
    :no-members:
    :no-inherited-members:
 
-.. currentmodule:: nsbtools.eigen
+.. currentmodule:: neuromodes.eigen
 
 .. autosummary::
    :template: class.rst
@@ -34,76 +34,96 @@ API Reference
    :template: function.rst
    :toctree: generated/
 
-   nsbtools.eigen.EigenSolver.compute_lbo
-   nsbtools.eigen.EigenSolver.solve
-   nsbtools.eigen.EigenSolver.decompose
-   nsbtools.eigen.EigenSolver.reconstruct
-   nsbtools.eigen.EigenSolver.generate_connectome
-   nsbtools.eigen.EigenSolver.simulate_waves
+   neuromodes.eigen.EigenSolver.compute_lbo
+   neuromodes.eigen.EigenSolver.solve
+   neuromodes.eigen.EigenSolver.decompose
+   neuromodes.eigen.EigenSolver.reconstruct
+   neuromodes.eigen.EigenSolver.reconstruct_timeseries
+   neuromodes.eigen.EigenSolver.simulate_waves
+   neuromodes.eigen.EigenSolver.model_connectome
 
 .. autosummary::
    :template: function.rst
    :toctree: generated/
 
-   is_valid_hetero
-   scale_hetero
-   is_mass_orthonormal_modes
-   standardize_modes
-   calc_norm_power
-   decompose
-   reconstruct
+   neuromodes.eigen.scale_hetero
+   neuromodes.eigen.standardize_modes
+   neuromodes.eigen.is_orthonormal_basis
+
+.. _ref_basis:
+
+:mod:`neuromodes.basis` - Decompose and reconstruct cortical maps
+---------------------------------------------------------------
+
+.. automodule:: neuromodes.basis
+   :no-members:
+   :no-inherited-members:
+
+.. currentmodule:: neuromodes.basis
+
+.. autosummary::
+   :template: function.rst
+   :toctree: generated/
+
+   neuromodes.basis.decompose
+   neuromodes.basis.reconstruct
+   neuromodes.basis.reconstruct_timeseries
+   neuromodes.basis.calc_norm_power
+   neuromodes.basis.calc_vec_fc
 
 .. _ref_waves:
 
-:mod:`nsbtools.waves` - Run the simple wave model
+:mod:`neuromodes.waves` - Simulate activity via wave propagation
 ---------------------------------------------------------------
 
-.. automodule:: nsbtools.waves
+.. automodule:: neuromodes.waves
    :no-members:
    :no-inherited-members:
 
-.. currentmodule:: nsbtools.waves
+.. currentmodule:: neuromodes.waves
 
 .. autosummary::
    :template: function.rst
    :toctree: generated/
 
-   nsbtools.waves.simulate_waves
+   neuromodes.waves.simulate_waves
+   neuromodes.waves.calc_wave_speed
+   neuromodes.waves.get_balloon_params
 
 .. _ref_connectome:
 
-:mod:`nsbtools.connectome` - Generative network modelling
+:mod:`neuromodes.connectome` - Generative modelling of the structural connectome
 ---------------------------------------------------------------
 
-.. automodule:: nsbtools.connectome
+.. automodule:: neuromodes.connectome
    :no-members:
    :no-inherited-members:
 
-.. currentmodule:: nsbtools.connectome
+.. currentmodule:: neuromodes.connectome
 
 .. autosummary::
    :template: function.rst
    :toctree: generated/
 
-   nsbtools.connectome.generate_connectome
+   neuromodes.connectome.model_connectome
 
 .. _ref_io:
 
-:mod:`nsbtools.io` - IO functions for cortical surface meshes and maps
+:mod:`neuromodes.io` - IO functions for cortical surface meshes and maps
 ---------------------------------------------------------------
 
-.. automodule:: nsbtools.io
+.. automodule:: neuromodes.io
    :no-members:
    :no-inherited-members:
 
-.. currentmodule:: nsbtools.io
+.. currentmodule:: neuromodes.io
 
 .. autosummary::
    :template: function.rst
    :toctree: generated/
 
-   nsbtools.io.read_surf
-   nsbtools.io.mask_surf
-   nsbtools.io.check_surf
-   nsbtools.io.fetch_surf
-   nsbtools.io.fetch_map
+   neuromodes.io.read_surf
+   neuromodes.io.mask_surf
+   neuromodes.io.check_surf
+   neuromodes.io.fetch_surf
+   neuromodes.io.fetch_map

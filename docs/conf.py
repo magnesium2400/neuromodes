@@ -4,7 +4,7 @@ import sys
 sys.path.insert(0, os.path.abspath(".."))
 
 # -- Project information -----------------------------------------------------
-project = "nsbtools"
+project = "neuromodes"
 copyright = "2025, Monash University"
 author = "Neural Systems and Behaviour Lab"
 
@@ -15,8 +15,23 @@ extensions = [
     "sphinx.ext.autodoc",
     "sphinx.ext.autosummary",
     "sphinx.ext.intersphinx",
-    "myst_nb"
+    "myst_nb",
+    "sphinx.ext.mathjax"
 ]
+
+myst_enable_extensions = [
+    "dollarmath",
+    "amsmath",
+]
+
+mathjax3_config = {
+    "tex": {
+        "inlineMath": [["$", "$"], ["\\(", "\\)"]],
+        "displayMath": [["$$", "$$"], ["\\[", "\\]"]],
+        "tags": "ams",
+        "useLabelIds": True,
+    }
+}
 
 nb_execution_mode = 'off'
 
