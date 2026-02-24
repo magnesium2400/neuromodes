@@ -16,7 +16,7 @@ def solver():
 
 def test_unusual_wave_speed(solver):
     with pytest.warns(UserWarning, match=r'range of 0-150 m/s \(calculated 23.3-160.4 m/s\).'):
-        solver.simulate_waves(r=1000, nt=100)
+        solver.simulate_waves(r=1000, nt=10)
 
 def test_unusual_wave_speed_no_hetero(solver):
     with pytest.warns(UserWarning, match=r'range of 0-115 m/s \(calculated 116.0 m/s\).'):
@@ -27,27 +27,15 @@ def test_unusual_wave_speed_no_hetero(solver):
             r=1000,
             speed_limits=(0, 115),
             nt=100
-        )
+            )
 
 def test_single_speed_limit(solver):
     with pytest.raises(ValueError, match="`speed_limits` must be a tuple"):
-        simulate_waves(
-            solver.emodes,
-            solver.evals,
-            mass=solver.mass,
-            r=18.0,
-            speed_limits=150,
-        )
+        solver.simulate_waves(nt=10, r=18.0, speed_limits=150)
 
 def test_reversed_speed_limits(solver):
     with pytest.raises(ValueError, match="`speed_limits` must be a tuple"):
-        simulate_waves(
-            solver.emodes,
-            solver.evals,
-            mass=solver.mass,
-            r=18.0,
-            speed_limits=(150, 0),
-        )
+        solver.simulate_waves(nt=10, r=18.0, speed_limits=(150, 0))
 
 def test_simulate_waves_impulse(solver):
 
@@ -61,23 +49,8 @@ def test_simulate_waves_impulse(solver):
     ext_input = np.zeros((solver.n_verts, nt))
     ext_input[:, i_start:i_stop] = impulse[:, np.newaxis]
 
-    fourier_ts = simulate_waves(
-        solver.emodes,
-        solver.evals,
-        ext_input=ext_input,
-        mass=solver.mass,
-        dt=dt,
-        checks=False
-    )
-    ode_ts = simulate_waves(
-        solver.emodes,
-        solver.evals,
-        ext_input=ext_input,
-        mass=solver.mass,
-        dt=dt,
-        pde_method='ode',
-        checks=False
-    )
+    fourier_ts = solver.simulate_waves(ext_input=ext_input, dt=dt)
+    ode_ts = solver.simulate_waves(ext_input=ext_input, dt=dt, pde_method='ode')
 
     # Check output shapes
     assert fourier_ts.shape == (solver.n_verts, nt), 'Fourier output shape is incorrect.'
@@ -102,26 +75,8 @@ def test_simulate_waves_methods(solver):
     seed = 0
 
     # Check that Fourier and ODE methods produce similar neural activity at selected timepoints
-
-    fourier_ts = simulate_waves(
-        solver.emodes,
-        solver.evals,
-        mass=solver.mass,
-        nt=nt,
-        dt=dt,
-        seed=seed,
-        checks=False
-    )
-    ode_ts = simulate_waves(
-        solver.emodes,
-        solver.evals,
-        mass=solver.mass,
-        nt=nt,
-        dt=dt,
-        seed=seed,
-        pde_method='ode',
-        checks=False
-    )
+    fourier_ts = solver.simulate_waves(nt=nt, dt=dt, seed=seed)
+    ode_ts = solver.simulate_waves(nt=nt, dt=dt, seed=seed, pde_method='ode')
 
     for t in range(50, nt):
         assert np.corrcoef(fourier_ts[:, t], ode_ts[:, t])[0, 1] > 0.85, \
@@ -134,28 +89,10 @@ def test_simulate_waves_methods_bold(solver):
     seed = 0
 
     # Check that Fourier and ODE methods produce similar BOLD signal at selected timepoints
-
-    bold_fourier = simulate_waves(
-        solver.emodes,
-        solver.evals,
-        mass=solver.mass,
-        nt=nt,
-        dt=dt,
-        bold_out=True,
-        seed=seed,
-        checks=False
-    )
-    bold_ode = simulate_waves(
-        solver.emodes,
-        solver.evals,
-        mass=solver.mass,
-        nt=nt,
-        dt=dt,
-        bold_out=True,
-        seed=seed,
-        pde_method='ode',
-        checks=False
-    )
+    activity_fourier = solver.simulate_waves(nt=nt, dt=dt, seed=seed)
+    activity_ode = solver.simulate_waves(nt=nt, dt=dt, seed=seed, pde_method='ode')
+    bold_fourier = solver.bold_transform(activity_fourier, dt=dt)
+    bold_ode = solver.bold_transform(activity_ode, dt=dt, pde_method='ode')
 
     # Methods converge to r=.98 by t=500, but this takes too long to run, so just anchor the test
     # to a lower value to catch if the alignment ever drops
@@ -163,42 +100,15 @@ def test_simulate_waves_methods_bold(solver):
         assert np.corrcoef(bold_fourier[:, t], bold_ode[:, t])[0, 1] > 0.6, \
             f'Fourier and ODE BOLD solutions are not correlated at r>.6 at t={t}.'
 
-def test_simulate_waves_seed_bold_reproducibility_fourier(solver):
+def test_simulate_waves_reproducibility_fourier(solver):
     
     nt = 100
     dt = 1e-1
     seed = 36
 
-    ts1 = simulate_waves(
-        solver.emodes,
-        solver.evals,
-        mass=solver.mass,
-        nt=nt,
-        dt=dt,
-        seed=seed,
-        bold_out=True,
-        checks=False
-    )
-    ts2 = simulate_waves(
-        solver.emodes,
-        solver.evals,
-        mass=solver.mass,
-        nt=nt,
-        dt=dt,
-        seed=seed,
-        bold_out=True,
-        checks=False
-    )
-    ts3 = simulate_waves(
-        solver.emodes,
-        solver.evals,
-        mass=solver.mass,
-        nt=nt,
-        dt=dt,
-        seed=seed+1,
-        bold_out=True,
-        checks=False
-    )
+    ts1 = solver.simulate_waves(nt=nt, dt=dt, seed=seed)    
+    ts2 = solver.simulate_waves(nt=nt, dt=dt, seed=seed)
+    ts3 = solver.simulate_waves(nt=nt, dt=dt, seed=seed+1)
 
     assert np.allclose(ts1, ts2), "Simulations with the same seed do not match."
     assert not np.allclose(ts1, ts3), "Simulations with different seeds match unexpectedly."
@@ -206,22 +116,12 @@ def test_simulate_waves_seed_bold_reproducibility_fourier(solver):
 def test_simulate_waves_invalid_input_shape(solver):
 
     with pytest.raises(ValueError, match=r"n_verts is the number of rows in `emodes` \(3636\)."):
-        simulate_waves(
-            solver.emodes,
-            solver.evals,
-            ext_input=np.ones((4002, 1000)),
-            mass=solver.mass
-        )
+        solver.simulate_waves(ext_input=np.ones((4002, 1000)))
 
 def test_simulate_waves_invalid_pde_method(solver):
 
     with pytest.raises(ValueError, match="Invalid PDE method 'zote'"):
-        simulate_waves(
-            solver.emodes,
-            solver.evals,
-            mass=solver.mass,
-            pde_method='zote'
-        )
+        solver.simulate_waves(pde_method='zote')
 
 @pytest.mark.filterwarnings("ignore:overflow encountered in scalar power:RuntimeWarning")
 @pytest.mark.filterwarnings("ignore:invalid value encountered in dot:RuntimeWarning")
@@ -230,18 +130,11 @@ def test_simulate_waves_ode_balloon_overflow(solver):
 
     # Large `dt` can cause overflow errors in the `dqdt` expression for the ODE balloon model, so
     # test that our error is raised
+    dt = 1
 
     with pytest.raises(RuntimeError, match="message: Required step size is less than spacing"):
-        simulate_waves(
-            solver.emodes,
-            solver.evals,
-            mass=solver.mass,
-            dt=1,
-            nt=10,
-            pde_method='ode',
-            bold_out=True,
-            checks=False
-        )
+        activity = solver.simulate_waves(dt=dt, nt=10, pde_method='ode')
+        solver.bold_transform(activity, pde_method='ode', dt=dt)
 
 def test_simulate_waves_cached(solver):
     # Get CACHE_DIR
@@ -251,15 +144,7 @@ def test_simulate_waves_cached(solver):
     try:
         with TemporaryDirectory() as temp_cache_dir:
             os.environ["CACHE_DIR"] = temp_cache_dir
-            _ = simulate_waves(
-                solver.emodes,
-                solver.evals,
-                mass=solver.mass,
-                nt=10,
-                cache_input=True,
-                checks=False,
-                seed=0
-            )
+            _ = solver.simulate_waves(nt=10, cache_input=True, seed=0)
 
             # Check that the temp_cache_dir/neuromodes/waves subdirectory exists
             cache_dir_waves = os.path.join(
@@ -279,28 +164,11 @@ def test_simulate_waves_balloon_param(solver):
     nt = 100
     dt = 1e-2
 
-    ts_default = simulate_waves(
-        solver.emodes,
-        solver.evals,
-        mass=solver.mass,
-        nt=nt,
-        dt=dt,
-        bold_out=True,
-        checks=False
-    )
+    activity = solver.simulate_waves(nt=nt, dt=dt)
+    bold_default = solver.bold_transform(activity, dt=dt)
+    bold_custom = solver.bold_transform(activity, dt=dt, rho=0.5)
 
-    ts_custom = simulate_waves(
-        solver.emodes,
-        solver.evals,
-        mass=solver.mass,
-        nt=nt,
-        dt=dt,
-        bold_out=True,
-        rho = 0.5,
-        checks=False
-    )
-
-    assert not np.allclose(ts_default, ts_custom), \
+    assert not np.allclose(bold_default, bold_custom), \
         "BOLD signals with different balloon model parameters match unexpectedly."
     
 def test_get_balloon_params():

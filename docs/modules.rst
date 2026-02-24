@@ -87,6 +87,7 @@ API Reference
    :toctree: generated/
 
    neuromodes.waves.simulate_waves
+   neuromodes.waves.bold_transform
    neuromodes.waves.calc_wave_speed
    neuromodes.waves.get_balloon_params
 
@@ -107,9 +108,31 @@ API Reference
 
    neuromodes.connectome.model_connectome
 
+.. _ref_mesh:
+
+:mod:`neuromodes.mesh` - Create, mask, and validate meshes of brain structures
+---------------------------------------------------------------
+
+.. automodule:: neuromodes.mesh
+   :no-members:
+   :no-inherited-members:
+
+.. currentmodule:: neuromodes.mesh
+
+.. autosummary::
+   :template: function.rst
+   :toctree: generated/
+
+   neuromodes.mesh.is_vol
+   neuromodes.mesh.mask_mesh
+   neuromodes.mesh.unmask_data
+   neuromodes.mesh.normalize_vol
+   neuromodes.mesh.check_vol
+   neuromodes.mesh.check_surf
+
 .. _ref_io:
 
-:mod:`neuromodes.io` - IO functions for cortical surface meshes and maps
+:mod:`neuromodes.io` - IO functions for loading cortical meshes and maps
 ---------------------------------------------------------------
 
 .. automodule:: neuromodes.io
@@ -122,14 +145,8 @@ API Reference
    :template: function.rst
    :toctree: generated/
 
-   neuromodes.io.is_vol
-   neuromodes.io.is_surf
    neuromodes.io.read_vol
    neuromodes.io.read_surf
-   neuromodes.io.mask_mesh
-   neuromodes.io.normalize_vol
-   neuromodes.io.check_vol
-   neuromodes.io.check_surf
    neuromodes.io.fetch_vol
    neuromodes.io.fetch_surf
    neuromodes.io.fetch_map

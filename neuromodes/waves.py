@@ -4,7 +4,7 @@ surfaces.
 """
 
 from __future__ import annotations
-from typing import cast, Union, TYPE_CHECKING
+from typing import Union, TYPE_CHECKING
 from warnings import warn
 import numpy as np
 from scipy.integrate import solve_ivp
@@ -19,7 +19,6 @@ def simulate_waves(
     evals: ArrayLike,
     nt: Union[int, None] = None,
     ext_input: Union[ArrayLike, None] = None,
-    bold_out: bool = False,
     dt: float = 1e-4,
     r: float = 17.4,
     gamma: float = 116.0,
@@ -31,12 +30,9 @@ def simulate_waves(
     checks: bool = True,
     seed: Union[int, None] = None,
     cache_input: bool = False,
-    **balloon_params
 ) -> NDArray:
     """
-    Simulate neural activity or BOLD signals on the surface mesh using the eigenmode decomposition.
-    The simulation uses a Neural Field Theory wave model [1-3] and optionally the Balloon-Windkessel
-    model [4,5] for BOLD signal generation.
+    Simulate neural activity using a Neural Field Theory wave model [1-3].
 
     Parameters
     ----------
@@ -48,9 +44,6 @@ def simulate_waves(
     nt : int, optional
         Number of time points to simulate under white noise input. Note that either `nt` or
         `ext_input` must be provided. Default is `None`.
-    bold_out : bool, optional
-        If `True`, simulate BOLD signal using the balloon model. If `False`, simulate neural
-        activity. Default is `False`.
     ext_input : array-like, optional
         External input array of shape (n_verts, n_timepoints). If `None`, white noise input is
         generated to simulate `nt` time points. Default is `None`.
@@ -61,8 +54,7 @@ def simulate_waves(
     gamma : float, optional
         Damping rate of wave propagation in seconds^-1. Default is `116.0`.
     pde_method : str, optional
-        Method for solving the wave and balloon PDEs. Either `'fourier'` or `'ode'`. Default is
-        `'fourier'`.
+        Method for solving the wave PDEs. Either `'fourier'` or `'ode'`. Default is `'fourier'`.
     decomp_method : str, optional
         The method used to eigendecompose `ext_input`, either `'project'` to project data into a
         mass-orthonormal space or `'regress'` for least-squares fitting. Note that the beta values
@@ -90,9 +82,6 @@ def simulate_waves(
         `emodes`. Inputs are cached in the directory specified by the `CACHE_DIR` environment
         variable. If not set, the user's home directory is chosen. This requires the `joblib`
         package to be installed. Default is `False`.
-    **balloon_params
-        Optional balloon model parameters to override defaults (e.g., `rho`, `k1`). See
-        `get_balloon_params()` for available parameters. Only used when `bold_out=True`.
 
     Returns
     -------
@@ -134,17 +123,10 @@ def simulate_waves(
         the human and non-human primate cortex. bioRxiv. https://doi.org/10.64898/2026.01.22.701178
     ..  [3] Robinson, P. A., et al. (1997). Propagation and stability of waves of electrical
         activity in the cerebral cortex. Physical Review E. https://doi.org/10.1103/physreve.56.826
-    ..  [4] Buxton, R. B., et al. (1998). Dynamics of blood flow and oxygenation changes during
-        brain activation: The balloon model. Magnetic Resonance in Med.
-        https://doi.org/10.1002/mrm.1910390602
-    ..  [5] Stephan, K. E., et al. (2007). Comparing hemodynamic models with DCM. NeuroImage.
-        https://doi.org/10.1016/j.neuroimage.2007.07.040
     """
     # Format / validate arguments
     r = float(r)
     gamma = float(gamma)
-    emodes = np.asarray(emodes) # placate Pyright; chkfinite in decompose
-    evals = np.asarray(evals) # placate Pyright
     
     if checks:
         evals = np.asarray_chkfinite(evals)
@@ -172,8 +154,6 @@ def simulate_waves(
                  f"outside the range of {speed_limits[0]}-{speed_limits[1]} m/s (calculated "
                  f"{calc_str} m/s). Consider changing these parameters to ensure physiologically "
                  "plausible wave speeds, or adjust `speed_limits`.")
-    if len(balloon_params) > 0 and not bold_out:
-        warn("Balloon model parameters will be ignored as `bold_out` is `False`.")
     if pde_method not in ['fourier', 'ode']:
         raise ValueError(f"Invalid PDE method '{pde_method}'; must be 'fourier' or 'ode'.")
 
@@ -205,25 +185,93 @@ def simulate_waves(
     # Eigendecompose external input to get modal coefficients over time
     input_coeffs = decompose(ext_input, emodes, method=decomp_method, mass=mass, checks=checks)
 
-    if pde_method == 'fourier':
-        _model_wave = _model_wave_fourier
-        _model_balloon = _model_balloon_fourier
-    else:
-        _model_wave = _model_wave_ode
-        _model_balloon = _model_balloon_ode
-
     # Compute activity timeseries for each mode
-    mode_coeffs = _model_wave(input_coeffs, dt, r, gamma, evals)
-
-    if bold_out:
-        # Get parameters for Balloon-Windkessel model
-        all_balloon_params = get_balloon_params(**balloon_params)
-
-        # Apply model to each mode's activity timeseries
-        mode_coeffs = _model_balloon(mode_coeffs, dt, all_balloon_params)
+    _model_wave = _model_wave_fourier if pde_method == 'fourier' else _model_wave_ode
+    activity_coeffs = _model_wave(input_coeffs, dt, r, gamma, evals)
 
     # Transform timeseries from modal coefficients back to vertex space
-    return emodes @ mode_coeffs
+    return emodes @ activity_coeffs
+
+def bold_transform(
+    activity: ArrayLike,
+    emodes: ArrayLike,
+    dt: float,
+    pde_method: str = "fourier",
+    decomp_method: str = "project",
+    mass: Union[spmatrix, ArrayLike, None] = None,
+    checks: bool = True,
+    **balloon_params
+) -> NDArray:
+    """
+    Transform simulated activity to blood oxygen level-dependent (BOLD) signal using the
+    Balloon-Windkessel model [1,2].
+    
+    Parameters
+    ----------
+    activity : array-like
+        Simulated neural activity in vertex space of shape (n_verts, n_timepoints).
+    emodes : array-like
+        The eigenmodes array of shape (n_verts, n_modes), where n_verts is the number of vertices
+        and n_modes is the number of eigenmodes.
+    dt : float, optional
+        Time step for simulation in seconds.
+    pde_method : str, optional
+        Method for solving the balloon PDEs. Either `'fourier'` or `'ode'`. Default is `'fourier'`.
+    decomp_method : str, optional
+        The method used to eigendecompose `activity`, either `'project'` to project data into a
+        mass-orthonormal space or `'regress'` for least-squares fitting. Note that the beta values
+        from `'regress'` tend towards those from `'project'` when more modes are provided. Default
+        is `'project'`.
+    mass : array-like, optional
+        The mass matrix of shape (n_verts, n_verts) used for the decomposition when method is
+        `'project'`. If using `EigenSolver`, provide its `self.mass`. Default is `None`.
+    checks : bool, optional
+        Whether to perform checks on the input arrays. Default is `True`.
+    balloon_params
+        Optional balloon model parameters to override defaults (e.g., `rho`, `k1`). See
+        `get_balloon_params()` for available parameters.
+
+    Returns
+    -------
+    ndarray
+        Simulated BOLD signal in vertex space of shape (n_verts, n_timepoints).
+
+    Raises
+    ------
+    ValueError
+        If `dt` is not positive.
+    ValueError
+        If `pde_method` is not `'fourier'` or `'ode'`.
+
+    References
+    ----------
+    ..  [1] Buxton, R. B., et al. (1998). Dynamics of blood flow and oxygenation changes during
+        brain activation: The balloon model. Magnetic Resonance in Med.
+        https://doi.org/10.1002/mrm.1910390602
+    ..  [2] Stephan, K. E., et al. (2007). Comparing hemodynamic models with DCM. NeuroImage.
+        https://doi.org/10.1016/j.neuroimage.2007.07.040
+    """
+    # Format / validate arguments
+    activity = np.asarray(activity)  # chkfinite in decompose
+    emodes = np.asarray(emodes)  # chkfinite in decompose
+
+    if dt <= 0:
+        raise ValueError("`dt` must be positive.")
+    if pde_method not in ['fourier', 'ode']:
+        raise ValueError(f"Invalid PDE method '{pde_method}'; must be 'fourier' or 'ode'.")
+    
+    # Get parameters for Balloon-Windkessel model
+    all_balloon_params = get_balloon_params(**balloon_params)
+
+    # Eigendecompose activity to get modal coefficients over time
+    activity_coeffs = decompose(activity, emodes, method=decomp_method, mass=mass, checks=checks)
+
+    # Apply model to each mode's activity timeseries
+    _model_balloon = _model_balloon_fourier if pde_method == 'fourier' else _model_balloon_ode
+    bold_coeffs = _model_balloon(activity_coeffs, dt, all_balloon_params)
+
+    # Transform timeseries from modal coefficients back to vertex space
+    return emodes @ bold_coeffs
 
 def calc_wave_speed(
     r: float,
@@ -684,7 +732,6 @@ def _simulate_waves_fem(
         if cache_input:
             warn("`cache_input` is ignored when `input` is provided.")
         nt = input.shape[1]
-        nt = cast(int, nt)  # placate Pyright
     else:
         if nt is None:
             raise ValueError("`nt` must be provided when `input` is `None`.")
@@ -710,7 +757,7 @@ def _simulate_waves_fem(
     omega = 2 * np.pi * np.fft.fftshift(np.fft.fftfreq(2 * nt, dt))
 
     # Treat noise input as a continuous field
-    mass_input_padded_freqs = mass @ input_padded_freqs # type: ignore (placate Pyright)
+    mass_input_padded_freqs = mass @ input_padded_freqs
 
     # Compute temporal component of NFT operator for each frequency
     temporal = -omega**2 / gamma**2 - 2j * omega / gamma + 1
@@ -725,7 +772,6 @@ def _simulate_waves_fem(
                 input=mass_input_padded_freqs[:, k]
                 ) for k in range(2 * nt)
                 )
-    phi_freqs = cast(list[NDArray], phi_freqs)  # placate Pyright
     phi_freqs = np.stack(phi_freqs, axis=1)
 
     # Inverse transform to time domain, implemented as forward FFT for causality

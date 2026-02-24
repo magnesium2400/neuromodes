@@ -118,6 +118,58 @@ def mask_mesh(
     # Create a new TriaMesh or TetMesh with the masked vertices and elements
     return geometry.__class__(v=v_masked, t=t_masked)
 
+def unmask_data(
+    data: ArrayLike,
+    mask: ArrayLike,
+    fill_val: float = np.nan
+) -> NDArray:
+    """
+    Unmasks data by inserting it into a full array with the same length as the medial wall mask.
+
+    Parameters
+    ----------
+    data : numpy.ndarray
+        The data to be unmasked, which should have the same number of rows as the number of True
+        values in `mask`. Can be 1D or 2D (n_masked_verts, n_maps).
+    mask : numpy.ndarray
+        A boolean array where True indicates the positions of the data in the full array.
+    fill_val : float, optional
+        The value to fill in the positions outside the mask. Default is np.nan.
+
+    Returns
+    -------
+    numpy.ndarray
+        The unmasked data, with the same shape as the medial mask.
+
+    Raises
+    ------
+    ValueError
+        If `mask` is not a 1D boolean array.
+    ValueError
+        If `data` does not have shape (n_masked_verts,) or (n_masked_verts, n_maps), where
+        n_masked_verts is the number of True values in `mask`.
+    """
+    # Format / validate arguments
+    data = np.asarray(data)
+    mask = np.asarray_chkfinite(mask, dtype=bool)
+    if mask.ndim != 1:
+        raise ValueError("`mask` must be a 1D boolean array.")
+    if data.ndim not in [1, 2] or data.shape[0] != np.sum(mask):
+        raise ValueError(
+            "`data` must have shape (n_masked_verts,) or (n_masked_verts, n_maps), where "
+            f"n_masked_verts is the number of True values in `mask` ({np.sum(mask)})."
+            )
+    n_verts = len(mask)
+    out_shape = (n_verts, data.shape[1]) if data.ndim == 2 else (n_verts,)
+
+    # Initialise array of fill values
+    data_unmasked = np.full(out_shape, fill_val)
+
+    # Overwrite rows with data where mask is True
+    data_unmasked[mask] = data
+
+    return data_unmasked
+
 def normalize_vol(
     geometry: TetMesh
 ) -> TetMesh:
@@ -254,48 +306,3 @@ def check_surf(
     if not surf.is_manifold():
         raise ValueError('Surface mesh is not manifold: contains edges belonging to more than two '
                          'faces.')
-
-def unmask(
-    data: ArrayLike,
-    mask: ArrayLike,
-    fill_val: float = np.nan
-) -> NDArray:
-    """
-    Unmasks data by inserting it into a full array with the same length as the medial wall mask.
-
-
-    Parameters
-    ----------
-    data : numpy.ndarray
-        The data to be unmasked, which should have the same number of rows as the number of True
-        values in `mask`. Can be 1D or 2D (n_masked_verts, n_maps).
-    mask : numpy.ndarray
-        A boolean array where True indicates the positions of the data in the full array.
-    fill_val : float, optional
-        The value to fill in the positions outside the mask. Default is np.nan.
-
-    Returns
-    -------
-    numpy.ndarray
-        The unmasked data, with the same shape as the medial mask.
-    """
-    # Format / validate arguments
-    data = np.asarray(data)
-    mask = np.asarray_chkfinite(mask, dtype=bool)
-    if mask.ndim != 1:
-        raise ValueError("`mask` must be a 1D boolean array.")
-    if data.ndim not in [1, 2] or data.shape[0] != np.sum(mask):
-        raise ValueError(
-            "`data` must have shape (n_masked_verts,) or (n_masked_verts, n_maps), where "
-            f"n_masked_verts is the number of True values in `mask` ({np.sum(mask)})."
-            )
-    n_verts = len(mask)
-    out_shape = (n_verts, data.shape[1]) if data.ndim == 2 else (n_verts,)
-
-    # Initialise array of fill values
-    data_unmasked = np.full(out_shape, fill_val)
-
-    # Overwrite rows with data where mask is True
-    data_unmasked[mask] = data
-
-    return data_unmasked

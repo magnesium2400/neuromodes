@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from pathlib import Path
     from lapy import TriaMesh, TetMesh
     from nibabel.gifti.gifti import GiftiImage
+    from numpy import floating
     from numpy.typing import NDArray, ArrayLike
 
 class EigenSolver(Solver):
@@ -466,7 +467,7 @@ class EigenSolver(Solver):
         self,
         data: ArrayLike,
         **kwargs
-    ) -> NDArray:
+    ) -> NDArray[floating]:
         """
         This is a wrapper for `neuromodes.basis.decompose`, see its documentation for details: 
         https://neuromodes.readthedocs.io/en/latest/generated/neuromodes.basis.decompose.html
@@ -490,7 +491,7 @@ class EigenSolver(Solver):
         self,
         data: ArrayLike,
         **kwargs
-    ) -> Tuple[NDArray, NDArray, list[NDArray]]:
+    ) -> Tuple[NDArray[floating], NDArray[floating], list[NDArray[floating]]]:
         """
         This is a wrapper for `neuromodes.basis.reconstruct`, see its documentation for details:
         https://neuromodes.readthedocs.io/en/latest/generated/neuromodes.basis.reconstruct.html
@@ -514,7 +515,8 @@ class EigenSolver(Solver):
         self,
         data: ArrayLike,
         **kwargs
-    ) -> Tuple[NDArray, NDArray, NDArray, NDArray, list[NDArray]]:
+    ) -> Tuple[NDArray[floating], NDArray[floating], NDArray[floating], NDArray[floating],
+               list[NDArray[floating]]]:
         """
         This is a wrapper for `neuromodes.basis.reconstruct_timeseries`, see its documentation for
         details:
@@ -538,7 +540,7 @@ class EigenSolver(Solver):
     def model_connectome(
         self,
         **kwargs
-    ) -> NDArray:
+    ) -> NDArray[floating]:
         """
         This is a wrapper for `neuromodes.connectome.model_connectome`, see its documentation for
         details:
@@ -561,7 +563,7 @@ class EigenSolver(Solver):
     def simulate_waves(
         self,
         **kwargs
-    ) -> NDArray:
+    ) -> NDArray[floating]:
         """
         This is a wrapper for `neuromodes.waves.simulate_waves`, see its documentation for details:
         https://neuromodes.readthedocs.io/en/latest/generated/neuromodes.waves.simulate_waves.html
@@ -581,12 +583,36 @@ class EigenSolver(Solver):
             checks=False,
             **kwargs
         )
+    
+    def bold_transform(
+        self,
+        activity: ArrayLike,
+        **kwargs
+    ) -> NDArray[floating]:
+        """
+        This is a wrapper for `neuromodes.waves.bold_transform`, see its documentation for details:
+        https://neuromodes.readthedocs.io/en/latest/generated/neuromodes.waves.bold_transform.html
+
+        Note that `emodes`, `mass`, and `checks` are passed automatically by the `EigenSolver`
+        instance.
+        """
+        from neuromodes.waves import bold_transform
+
+        self._check_for_emodes()
+
+        return bold_transform(
+            activity,
+            emodes=self.emodes,
+            mass=self.mass,
+            checks=False,
+            **kwargs
+        )
 
 def scale_hetero(
     hetero: ArrayLike,
     alpha: float = 1.0,
     scaling: str = "sigmoid"
-) -> NDArray:
+) -> NDArray[floating]:
     """
     Scales a heterogeneity map using specified normalization and scaling functions.
     
@@ -637,7 +663,7 @@ def scale_hetero(
 
 def standardize_modes(
     emodes: ArrayLike
-) -> NDArray:
+) -> NDArray[floating]:
     """
     Flips the modes' signs such that the first element of each eigenmode has positive amplitude. 
     Note that the sign of each mode is arbitrary--standardisation is only helpful to compare sets of

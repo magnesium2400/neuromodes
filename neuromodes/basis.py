@@ -77,10 +77,9 @@ def decompose(
                 "provide a suitable `mass` matrix such that `emodes.T @ mass @ emodes = I`, use "
                 "`method='regress'`, or set `checks=False`."
             )
-        elif mass is not None:  # method == 'regress'
+        elif method == 'regress' and mass is not None:
             warn("`mass` is ignored when `method='regress'`.")
             mass = None
-    emodes = np.asarray(emodes)  # placate Pyright
     n_verts, n_modes = emodes.shape
     if data.ndim == 1:
         data = data[:, np.newaxis]
@@ -110,7 +109,7 @@ def decompose(
             emodes_masked = emodes[mask, :]
 
             # Calculate beta coefficients for subset of data
-            beta[:, map_indices] = _calc_beta(data_masked, emodes_masked, method, mass=None)
+            beta[:, map_indices] = _calc_beta(data_masked, emodes_masked, method, mass=mass)
         
         return beta
 
@@ -193,7 +192,6 @@ def reconstruct(
 
     if mode_counts is None:
         mode_counts = np.arange(n_modes) + 1
-        mode_counts = np.asarray(mode_counts) # placate Pyright
     else:
         mode_counts = np.asarray(mode_counts)
         if (mode_counts.ndim != 1 or (mode_counts != mode_counts.astype(int)).any()
@@ -368,7 +366,7 @@ def calc_norm_power(
 
 def calc_vec_fc(
     timeseries: ArrayLike
-) -> NDArray:
+) -> NDArray[floating]:
     """
     Compute Fisher-z-transformed vectorized functional connectivity from timeseries data.
     
@@ -383,17 +381,16 @@ def calc_vec_fc(
         The Fisher-z-transformed vectorized functional connectivity array of shape (n_edges,), where
         n_edges = n_verts*(n_verts-1)/2.
     """
-    timeseries = np.asarray(timeseries) # placate Pyright
     fc = np.corrcoef(timeseries)
     vec_fc = fc[np.triu_indices_from(fc, k=1)]
     return np.arctanh(vec_fc)
 
 def _calc_beta(
-    data: NDArray,
-    emodes: NDArray,
+    data: NDArray[floating],
+    emodes: NDArray[floating],
     method: str,
-    mass: Union[spmatrix, NDArray, None],
-) -> NDArray:
+    mass: Union[spmatrix, NDArray[floating], None],
+) -> NDArray[floating]:
     """Helper function to perform decomposition after validating arguments and masking NaNs/Infs."""
     if method == 'project':
         if mass is None:

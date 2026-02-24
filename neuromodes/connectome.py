@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
+    from numpy import floating
     from numpy.typing import NDArray, ArrayLike
 
 def model_connectome(
@@ -15,7 +16,7 @@ def model_connectome(
     r: float = 9.53,
     k: int = 108,
     checks: bool = True
-) -> NDArray:
+) -> NDArray[floating]:
     """
     Generate a vertex-wise structural connectivity matrix using the Geometric Eigenmode Model [1].
 
@@ -65,8 +66,6 @@ def model_connectome(
     """
     # Format / validate arguments
     r = float(r)
-    emodes = np.asarray(emodes) # placate Pyright
-    evals = np.asarray(evals) # placate Pyright
 
     if checks:
         emodes = np.asarray_chkfinite(emodes)
