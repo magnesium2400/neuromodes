@@ -1,5 +1,5 @@
 """
-Module for loading surface and volume meshes and maps, as well as setting up caching.
+Module for loading surface meshes and maps, as well as setting up caching.
 """
 
 from __future__ import annotations
@@ -8,7 +8,7 @@ from os import getenv
 from pathlib import Path
 from typing import Union, Tuple, cast, TYPE_CHECKING
 from joblib import Memory
-from lapy import TriaMesh, TetMesh
+from lapy import TriaMesh
 from nibabel.gifti.gifti import GiftiImage
 from nibabel.loadsave import load
 
@@ -17,45 +17,6 @@ if TYPE_CHECKING:
 
 fs_extensions = ('.white', '.pial', '.inflated', '.orig', '.sphere', '.smoothwm', '.qsphere',
                  '.fsaverage')
-
-def read_vol(
-    vol: Union[str, Path, TetMesh, dict]
-) -> TetMesh:
-    """
-    Load and validate a tetrahedral volume mesh.
-
-    Parameters
-    ----------
-    vol : str, Path, TetMesh, or dict
-        Volume mesh specified as a file path (string or Path) to a VTK (.tetra.vtk) file, an
-        instance of `lapy.TetMesh`, or a dictionary with `'vertices'` and `'faces'` keys,
-        referencing arrays of shape (n_verts, 3) and (n_tetras, 4), respectively.
-
-    Returns
-    -------
-    lapy.TetMesh
-        Validated volume mesh with vertices and tetrahedra.
-
-    Raises
-    ------
-    ValueError
-        If `vol` is not a path-like string to a valid VTK (`.tetra.vtk`) file, an instance of
-        `lapy.TetMesh`, or a dictionary with `'vertices'` and `'faces'` keys.
-    """
-    if isinstance(vol, TetMesh):
-        return vol
-    elif isinstance(vol, dict):
-        return TetMesh(v=vol['vertices'], t=vol['faces'])
-    else:
-        vol_str = str(vol)
-        if not Path(vol_str).is_file():
-            raise ValueError(f"Volume data not found: {vol_str}")
-        if vol_str.endswith('.tetra.vtk'):
-            # Load with lapy
-            return TetMesh.read_vtk(str(vol))
-    raise ValueError("`vol` must be a path-like string to a valid VTK (.tetra.vtk) file, an "
-                    "instance of `lapy.TetMesh`, or a dictionary with 'vertices' and 'faces' "
-                    "keys.")
 
 def read_surf(
     surf: Union[str, Path, GiftiImage, TriaMesh, dict]
@@ -114,49 +75,6 @@ def read_surf(
                 )
         
     return TriaMesh(v=vertices, t=faces)
-
-def fetch_vol(
-    structure: str,
-    species: str = 'human',
-    hemi: str = 'L',
-    template: str = 'MNI152',
-) -> TetMesh:
-    """
-    Load a tetrahedral volume mesh from neuromodes data directory. For a list of available volumes,
-    see https://github.com/NSBLab/neuromodes/tree/main/neuromodes/data/included_data.csv.
-
-    Parameters
-    ----------
-    structure : str
-        Brain structure to load. Options include `'thalamus'`, `'striatum'`, and `'hippocampus'`.
-    species : str, optional
-        Species of the volume mesh. Currently only supports `'human'`. Default is `'human'`.
-    hemi : str, optional
-        Hemisphere of the volume mesh. Options are `'L'` and `'R'`. Default is `'L'`.
-    template : str, optional
-        Template of the volume mesh. Currently only supports `'MNI152'`. Default is `'MNI152'`.
-
-    Returns
-    -------
-    lapy.TetMesh
-        The loaded volume mesh.
-    """
-    data_dir = files('neuromodes.data')
-    file_name = f'sp-{species}_tpl-{template}_hemi-{hemi}_{structure}.tetra.vtk'
-
-    # TODO: make this infinitely less ugly after cleaning up all file names
-    if structure == 'cortex' and species == 'mouse' and template == 'AMBA':
-        file_name = f'sp-{species}_tpl-{template}_res-200um_hemi-{hemi}_315.tetra.vtk'
-
-    try:
-        with as_file(data_dir / file_name) as fpath:
-            return read_vol(fpath)
-    except Exception:
-        raise ValueError(
-            f"Volume data {file_name} not found. Please see {data_dir}/included_data.csv or "
-            "https://github.com/NSBLab/neuromodes/tree/main/neuromodes/data/included_data.csv for a"
-            " list of available volumes."
-            )
 
 def fetch_surf(
     species: str = 'human',

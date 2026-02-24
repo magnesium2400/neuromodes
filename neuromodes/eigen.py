@@ -1,5 +1,5 @@
 """
-Module for computing geometric eigenmodes of brain structures from surface and volume meshes.
+Module for computing geometric eigenmodes of brain structures from surface meshes.
 """
 
 from __future__ import annotations
@@ -7,14 +7,14 @@ from typing import Union, Tuple, TYPE_CHECKING
 from warnings import warn
 from lapy import Solver
 import numpy as np
-from scipy.sparse import csc_matrix, spmatrix
+from scipy.sparse import spmatrix
 from scipy.sparse.linalg import LinearOperator, eigsh, splu
-from neuromodes.io import read_vol, read_surf
-from neuromodes.mesh import is_vol, mask_mesh, normalize_vol, check_vol, check_surf
+from neuromodes.io import read_surf
+from neuromodes.mesh import mask_mesh, check_surf
 
 if TYPE_CHECKING:
     from pathlib import Path
-    from lapy import TriaMesh, TetMesh
+    from lapy import TriaMesh
     from nibabel.gifti.gifti import GiftiImage
     from numpy import floating
     from numpy.typing import NDArray, ArrayLike
@@ -30,13 +30,12 @@ class EigenSolver(Solver):
 
     Parameters
     ----------
-    geometry : str, pathlib.Path, lapy.TriaMesh, lapy.TetMesh, or dict
-        The surface or volume mesh of a brain structure. Can be:
-        - A path to one of the following file formats: `.gii`, `.vtk`, `.tetra.vtk`, `.white`,
-        `.pial`, `.inflated`, `.orig`, `.sphere`, `.smoothwm`, `.qsphere`, `.fsaverage`
-        - A supported mesh object (`GiftiImage`, `lapy.TriaMesh`, or `lapy.TetMesh`)
-        - A dictionary with keys `'vertices'` and either `'faces'` (for surfaces) or `'tetras'`
-        (for volumes).
+    geometry : str, pathlib.Path, lapy.TriaMesh, or dict
+        The surface mesh of a brain structure. Can be:
+        - A path to one of the following file formats: `.gii`, `.vtk`, `.white`, `.pial`,
+        `.inflated`, `.orig`, `.sphere`, `.smoothwm`, `.qsphere`, `.fsaverage`
+        - An instance of `GiftiImage`, `lapy.TriaMesh`
+        - A dictionary with keys `'vertices'` and `'faces'`
     mask : array-like, optional
         A boolean mask to exclude certain vertices (e.g., medial wall) from the mesh. Default is
         `None`.
@@ -68,15 +67,15 @@ class EigenSolver(Solver):
     """
     def __init__(
         self,
-        geometry: Union[str, Path, GiftiImage, TriaMesh, TetMesh, dict],
+        geometry: Union[str, Path, GiftiImage, TriaMesh, dict],
         mask: Union[ArrayLike, None] = None,
         normalize: bool = False,
         hetero: Union[ArrayLike, None] = None,
         alpha: Union[float, None] = None, # default to 1.0 if hetero given (and remains None)
         scaling: Union[str, None] = None  # default to "sigmoid" if hetero given (and remains None)
     ):
-        # Read in surface or volume mesh
-        geometry = read_vol(geometry) if is_vol(geometry) else read_surf(geometry)
+        # Read in surface mesh
+        geometry = read_surf(geometry)
 
         # Optionally mask
         if mask is not None:
@@ -85,16 +84,10 @@ class EigenSolver(Solver):
 
         # Optionally normalize
         if normalize:
-            if is_vol(geometry):
-                normalize_vol(geometry)
-            else:
-                geometry.normalize_()  # LaPy method
+            geometry.normalize_()  # LaPy method
         
         # Validate mesh
-        if is_vol(geometry):
-            check_vol(geometry)
-        else:
-            check_surf(geometry)
+        check_surf(geometry)
 
         # Hetero inputs
         if hetero is None:
@@ -131,12 +124,8 @@ class EigenSolver(Solver):
     def __str__(self) -> str:
         """String representation of the EigenSolver object."""
         # Prepare mesh info
-        if is_vol(self.geometry):
-            geom_type = "Volume"
-            elem_type = "tetrahedra"
-        else:
-            geom_type = "Surface"
-            elem_type = "triangles"
+        geom_type = "Surface"
+        elem_type = "triangles"
 
         # Construct output
         str_out = (
@@ -174,30 +163,22 @@ class EigenSolver(Solver):
         EigenSolver
             The EigenSolver instance.
         """
-        if is_vol(self.geometry):
-            if self.hetero is None:
-                # Compute FEM matrices under homogeneous LBO
-                stiffness, mass = self._fem_tetra(self.geometry, lump)
-            else:
-                # Isotropic volumetric FEM (LaPy has no Solver._fem_tetra_aniso yet)
-                stiffness, mass = self._fem_tetra_hetero(lump)
-        else:  # Surface
-            if self.hetero is None:
-                stiffness, mass = self._fem_tria(self.geometry, lump)
-            else:
-                # Get principal curvatures to define direction of anisotropy
-                # Note: change of basis into (u1, u2) is not strictly needed for our isotropic
-                # diffusion tensor, but _fem_tria_aniso performs it
-                u1, u2, _, _ = self.geometry.curvature_tria()
+        if self.hetero is None:
+            stiffness, mass = self._fem_tria(self.geometry, lump)
+        else:
+            # Get principal curvatures to define direction of anisotropy
+            # Note: change of basis into (u1, u2) is not strictly needed for our isotropic
+            # diffusion tensor, but _fem_tria_aniso performs it
+            u1, u2, _, _ = self.geometry.curvature_tria()
 
-                # Map hetero from vertices to triangles by averaging
-                hetero_tria = self.geometry.map_vfunc_to_tfunc(self.hetero)
+            # Map hetero from vertices to triangles by averaging
+            hetero_tria = self.geometry.map_vfunc_to_tfunc(self.hetero)
 
-                # Construct symmetric (isotropic) diffusion tensor
-                hetero_mat = np.stack((hetero_tria, hetero_tria), axis=1)
+            # Construct symmetric (isotropic) diffusion tensor
+            hetero_mat = np.stack((hetero_tria, hetero_tria), axis=1)
 
-                # Compute FEM matrices under heterogeneous LBO
-                stiffness, mass = self._fem_tria_aniso(self.geometry, u1, u2, hetero_mat, lump)
+            # Compute FEM matrices under heterogeneous LBO
+            stiffness, mass = self._fem_tria_aniso(self.geometry, u1, u2, hetero_mat, lump)
                 
         # Assign attributes and return instance to allow chaining
         self.stiffness = stiffness
@@ -319,145 +300,6 @@ class EigenSolver(Solver):
         self.evals = evals
         self.emodes = emodes
         return self
-    
-    def _fem_tetra_hetero(
-        self,
-        lump: bool = False
-    ) -> Tuple[spmatrix, spmatrix]:
-        """
-        This method is a copy of `lapy.solver.Solver._fem_tetra`, modified to incorporate
-        heterogeneity. For a `hetero` of ones, output is identical to LaPy's `_fem_tetra` method.
-        """        
-        # Compute vertex coordinates and a difference vector for each triangle:
-        t1 = self.geometry.t[:, 0]
-        t2 = self.geometry.t[:, 1]
-        t3 = self.geometry.t[:, 2]
-        t4 = self.geometry.t[:, 3]
-        v1 = self.geometry.v[t1, :]
-        v2 = self.geometry.v[t2, :]
-        v3 = self.geometry.v[t3, :]
-        v4 = self.geometry.v[t4, :]
-        e1 = v2 - v1
-        e2 = v3 - v2
-        e3 = v1 - v3
-        e4 = v4 - v1
-        e5 = v4 - v2
-        e6 = v4 - v3
-        # Compute cross product and 6 * vol for each triangle:
-        cr = np.cross(e1, e3)
-        vol = np.abs(np.sum(e4 * cr, axis=1))
-        # zero vol will cause division by zero below, so set to small value:
-        vol_mean = 0.0001 * np.mean(vol)
-        vol[vol == 0] = vol_mean
-        # compute dot products of edge vectors
-        e11 = np.sum(e1 * e1, axis=1)
-        e22 = np.sum(e2 * e2, axis=1)
-        e33 = np.sum(e3 * e3, axis=1)
-        e44 = np.sum(e4 * e4, axis=1)
-        e55 = np.sum(e5 * e5, axis=1)
-        e66 = np.sum(e6 * e6, axis=1)
-        e12 = np.sum(e1 * e2, axis=1)
-        e13 = np.sum(e1 * e3, axis=1)
-        e14 = np.sum(e1 * e4, axis=1)
-        e15 = np.sum(e1 * e5, axis=1)
-        e23 = np.sum(e2 * e3, axis=1)
-        e25 = np.sum(e2 * e5, axis=1)
-        e26 = np.sum(e2 * e6, axis=1)
-        e34 = np.sum(e3 * e4, axis=1)
-        e36 = np.sum(e3 * e6, axis=1)
-        # compute entries for A (negations occur when one edge direction is flipped)
-        # these can be computed multiple ways
-        # basically for ij, take opposing edge (call it Ek) and two edges from the
-        # starting point of Ek to point i (=El) and to point j (=Em), then these are of
-        # the scheme:   (El * Ek)  (Em * Ek) - (El * Em) (Ek * Ek)
-        # where * is vector dot product
-        a12 = (-e36 * e26 + e23 * e66) / vol
-        a13 = (-e15 * e25 + e12 * e55) / vol
-        a14 = (e23 * e26 - e36 * e22) / vol
-        a23 = (-e14 * e34 + e13 * e44) / vol
-        a24 = (e13 * e34 - e14 * e33) / vol
-        a34 = (-e14 * e13 + e11 * e34) / vol
-        # compute diagonals (from row sum = 0)
-        a11 = -a12 - a13 - a14
-        a22 = -a12 - a23 - a24
-        a33 = -a13 - a23 - a34
-        a44 = -a14 - a24 - a34
-
-        # ----------------------------------- APPLY HETEROGENEITY ---------------------------------
-        hetero_tetras = np.sum(self.hetero[self.geometry.t], axis=1) / 4
-        a12 *= hetero_tetras
-        a13 *= hetero_tetras
-        a14 *= hetero_tetras
-        a23 *= hetero_tetras
-        a24 *= hetero_tetras
-        a34 *= hetero_tetras
-        a11 *= hetero_tetras
-        a22 *= hetero_tetras
-        a33 *= hetero_tetras
-        a44 *= hetero_tetras
-        # -----------------------------------------------------------------------------------------
-
-        # stack columns to assemble data
-        local_a = np.column_stack(
-            (
-                a12,
-                a12,
-                a23,
-                a23,
-                a13,
-                a13,
-                a14,
-                a14,
-                a24,
-                a24,
-                a34,
-                a34,
-                a11,
-                a22,
-                a33,
-                a44,
-            )
-        ).reshape(-1)
-        i = np.column_stack(
-            (t1, t2, t2, t3, t3, t1, t1, t4, t2, t4, t3, t4, t1, t2, t3, t4)
-        ).reshape(-1)
-        j = np.column_stack(
-            (t2, t1, t3, t2, t1, t3, t4, t1, t4, t2, t4, t3, t1, t2, t3, t4)
-        ).reshape(-1)
-        local_a = local_a / 6.0
-        a = csc_matrix((local_a, (i, j)))
-        if not lump:
-            # create b matrix data (account for that vol is 6 times tet volume)
-            bii = vol / 60.0
-            bij = vol / 120.0
-            local_b = np.column_stack(
-                (
-                    bij,
-                    bij,
-                    bij,
-                    bij,
-                    bij,
-                    bij,
-                    bij,
-                    bij,
-                    bij,
-                    bij,
-                    bij,
-                    bij,
-                    bii,
-                    bii,
-                    bii,
-                    bii,
-                )
-            ).reshape(-1)
-            b = csc_matrix((local_b, (i, j)))
-        else:
-            # when lumping put all onto diagonal (volume/4 for each vertex)
-            bii = vol / 24.0
-            local_b = np.column_stack((bii, bii, bii, bii)).reshape(-1)
-            i = np.column_stack((t1, t2, t3, t4)).reshape(-1)
-            b = csc_matrix((local_b, (i, i)))
-        return a, b
     
     def _check_for_emodes(self) -> None:
         if not hasattr(self, 'emodes'):

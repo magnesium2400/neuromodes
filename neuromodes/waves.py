@@ -296,8 +296,7 @@ def calc_wave_speed(
     Returns
     -------
     float or np.ndarray
-        Wave speed across the whole surface, or at each cortical vertex if `scaled_hetero` is
-        provided.
+        Wave speed across the whole cortex, or at each vertex if `scaled_hetero` is provided.
     """
     speed = (r / 1000) * gamma # Convert r to meters
     if scaled_hetero is not None:

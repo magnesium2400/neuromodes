@@ -3,21 +3,8 @@ from lapy.shapedna import normalize_ev
 import numpy as np
 import pytest
 from neuromodes.eigen import EigenSolver, is_orthonormal_basis, scale_hetero
-from neuromodes.io import fetch_vol, fetch_surf, fetch_map
+from neuromodes.io import fetch_surf, fetch_map
 from neuromodes.mesh import mask_mesh
-
-def test_vol_modes():
-    for hemi in ['L', 'R']:
-        for structure in ['thalamus', 'hippocampus', 'striatum', 'cortex']:
-            if structure == 'cortex':
-                vol = fetch_vol(structure=structure, species='mouse', template='AMBA', hemi=hemi)
-            else:
-                vol = fetch_vol(structure=structure, hemi=hemi)
-            solver = EigenSolver(vol).solve(10, seed=0)
-
-            assert solver.emodes.shape == (vol.v.shape[0], 10), (
-                f'emodes has shape {solver.emodes.shape}, should be {(vol.v.shape[0], 10)}.')
-            assert len(solver.evals) == 10, (f'evals has length {len(solver.evals)}, should be 10.')
 
 @pytest.fixture
 def surf_medmask_hetero():
@@ -260,18 +247,6 @@ def test_normalized_surf(surf_medmask_hetero, solver):
 
     # Check that evals match between the two normalization approaches
     assert np.allclose(evals_lapy, solver.evals, atol=1e-20), \
-    'Evals from LaPy normalization do not match evals from EigenSolver normalization.'
-
-def test_normalized_vol():
-    # Above test but for volumes
-    hippo = fetch_vol('hippocampus')
-    hetero = np.random.default_rng(0).standard_normal(hippo.v.shape[0])
-
-    volser = EigenSolver(hippo, hetero=hetero).solve(16, seed=0)
-    evals_lapy = normalize_ev(volser.geometry, volser.evals)
-    volser_norm = EigenSolver(hippo, hetero=hetero, normalize=True).solve(16, seed=0)
-
-    assert np.allclose(evals_lapy, volser_norm.evals, atol=1e-20), \
     'Evals from LaPy normalization do not match evals from EigenSolver normalization.'
 
 def test_constant_mode1(solver):

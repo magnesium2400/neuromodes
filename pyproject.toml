@@ -23,15 +23,6 @@ tutorials = [
     "matplotlib>=3.9.4",
     "nsbutils @ git+https://github.com/NSBLab/nsbutils.git@dev",
 ]
-vol = [
-    "gmsh>=4.15.0",
-    "h5py>=3.14.0",
-    "nbformat>=5.10.4",
-    "nilearn>=0.12.1",
-    "scikit-image>=0.24.0",
-    "tetgen>=0.7.0",
-    "trimesh>=4.11.2",
-]
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
