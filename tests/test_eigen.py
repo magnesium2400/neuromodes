@@ -263,6 +263,20 @@ def test_constant_mode1(solver):
                       atol=1e-6), 'Mean of unfixed first mode is not close to fixed value.'
     assert eval1_unfixed < 1e-6, 'First eigenvalue of unfixed first mode is not close to 0.'
 
+def test_positive_sigma(solver):
+    emodes = solver.emodes
+    evals = solver.evals
+
+    with pytest.warns(UserWarning, match="Mode 1 will not be fixed"):
+        solver.solve(solver.n_modes, sigma=1e-4, seed=0)
+    emodes_pos_sigma = solver.emodes
+    evals_pos_sigma = solver.evals
+
+    assert np.allclose(evals, evals_pos_sigma, atol=1e-4), \
+        'Eigenvalues differ with positive sigma.'
+    assert np.allclose(emodes, emodes_pos_sigma, atol=1e-4), \
+        'Eigenmodes differ with positive sigma.'
+
 def test_check_orthonorm(solver):
     emodes = solver.emodes
 

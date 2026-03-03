@@ -286,11 +286,21 @@ class EigenSolver(Solver):
         if not is_orthonormal_basis(emodes, self.mass, atol=atol, rtol=rtol):
             warn(f"Computed eigenmodes are not mass-orthonormal (atol={atol}, rtol={rtol}).")
 
-        # Post-process
+        ## Post-process
+
+        # Sort modes by ascending eigenvalue (should already be sorted for sigma < 0)
+        sort_idx = np.argsort(evals)
+        evals = evals[sort_idx]
+        emodes = emodes[:, sort_idx]
+
         if fix_mode1:
-            # Value given by mass-orthonormality condition
-            emodes[:, 0] = self.mass.sum()**(-0.5)
-            evals[0] = 0.0
+            if sigma >= 0:
+                warn("Mode 1 will not be fixed to a constant when sigma >= 0, as the constant mode "
+                     "may not be among the computed modes.")
+            else:
+                # Value given by mass-orthonormality condition
+                emodes[:, 0] = self.mass.sum()**(-0.5)
+                evals[0] = 0.0
 
         if standardize:
             emodes = standardize_modes(emodes)
