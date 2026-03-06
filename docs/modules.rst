@@ -40,6 +40,7 @@ API Reference
    neuromodes.eigen.EigenSolver.reconstruct
    neuromodes.eigen.EigenSolver.reconstruct_timeseries
    neuromodes.eigen.EigenSolver.simulate_waves
+   neuromodes.eigen.EigenSolver.bold_transform
    neuromodes.eigen.EigenSolver.model_connectome
 
 .. autosummary::
@@ -123,11 +124,8 @@ API Reference
    :template: function.rst
    :toctree: generated/
 
-   neuromodes.mesh.is_vol
    neuromodes.mesh.mask_mesh
    neuromodes.mesh.unmask_data
-   neuromodes.mesh.normalize_vol
-   neuromodes.mesh.check_vol
    neuromodes.mesh.check_surf
 
 .. _ref_io:
@@ -145,8 +143,6 @@ API Reference
    :template: function.rst
    :toctree: generated/
 
-   neuromodes.io.read_vol
    neuromodes.io.read_surf
-   neuromodes.io.fetch_vol
    neuromodes.io.fetch_surf
    neuromodes.io.fetch_map

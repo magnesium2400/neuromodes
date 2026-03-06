@@ -4,10 +4,10 @@ from tempfile import TemporaryDirectory
 import numpy as np
 from neuromodes.io import fetch_surf
 from neuromodes.eigen import EigenSolver
-from neuromodes.waves import (simulate_waves, calc_wave_speed, get_balloon_params,
-                              _simulate_waves_fem)
+from neuromodes.waves import (simulate_waves, calc_wave_speed, get_balloon_params, _gen_noise,
+                              _simulate_waves_fem, _analytical_fc)
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 def solver():
     rng = np.random.default_rng(0)
     mesh, medmask = fetch_surf(density='4k')
@@ -95,23 +95,37 @@ def test_simulate_waves_methods_bold(solver):
     bold_ode = solver.bold_transform(activity_ode, dt=dt, pde_method='ode')
 
     # Methods converge to r=.98 by t=500, but this takes too long to run, so just anchor the test
-    # to a lower value to catch if the alignment ever drops
+    # to a lower value to catch if the alignment ever drops (TODO: add to validation?)
     for t in range(75, nt):
         assert np.corrcoef(bold_fourier[:, t], bold_ode[:, t])[0, 1] > 0.6, \
             f'Fourier and ODE BOLD solutions are not correlated at r>.6 at t={t}.'
+        
+def test_gen_noise_reproducibility():
+    seed = 0
+    noise1 = _gen_noise(5, 10, seed=seed)
+    noise2 = _gen_noise(5, 20, seed=seed)
+    assert (noise1 == noise2[:, :10]).all(), \
+        "Noise generated with the same seed does not match across different nt."
 
 def test_simulate_waves_reproducibility_fourier(solver):
     
     nt = 100
-    dt = 1e-1
-    seed = 36
+    dt = 1e-2
+    seed = 0
+    
+    # Same seed should be reproducible across different nt
+    ts0 = solver.simulate_waves(nt=nt, dt=dt, seed=seed)
+    ts1 = solver.simulate_waves(nt=2*nt, dt=dt, seed=seed)
 
-    ts1 = solver.simulate_waves(nt=nt, dt=dt, seed=seed)    
-    ts2 = solver.simulate_waves(nt=nt, dt=dt, seed=seed)
-    ts3 = solver.simulate_waves(nt=nt, dt=dt, seed=seed+1)
+    # Different seed should produce different results
+    ts2 = solver.simulate_waves(nt=nt, dt=dt, seed=seed+1)
 
-    assert np.allclose(ts1, ts2), "Simulations with the same seed do not match."
-    assert not np.allclose(ts1, ts3), "Simulations with different seeds match unexpectedly."
+    mse01 = np.mean((ts0 - ts1[:, :nt])**2)
+    mse02 = np.mean((ts0 - ts2)**2)
+    assert mse01 < 1e-5, \
+        f"Simulated timeseries with the same seed do not match (MSE={mse01:.4e})."
+    assert mse02 > 1e-3, \
+        f"Simulated timeseries with different seeds match unexpectedly (MSE={mse02:.4f})."
 
 def test_simulate_waves_invalid_input_shape(solver):
 
@@ -121,7 +135,7 @@ def test_simulate_waves_invalid_input_shape(solver):
 def test_simulate_waves_invalid_pde_method(solver):
 
     with pytest.raises(ValueError, match="Invalid PDE method 'zote'"):
-        solver.simulate_waves(pde_method='zote')
+        solver.simulate_waves(nt=10, pde_method='zote')
 
 @pytest.mark.filterwarnings("ignore:overflow encountered in scalar power:RuntimeWarning")
 @pytest.mark.filterwarnings("ignore:invalid value encountered in dot:RuntimeWarning")
@@ -203,10 +217,19 @@ def test_calc_wave_speed(solver):
 def test_fem_alignment(solver):
     # Check that modal approximation aligns with FEM solution
     nt=50
-    dt=0.01
+    dt=0.1
+    seed=0
 
-    modal_ts = solver.simulate_waves(nt=nt, dt=dt, seed=0)
-    fem_ts = _simulate_waves_fem(solver.mass, solver.stiffness, nt=nt, dt=dt, seed=0)
+    fourier_ts = solver.simulate_waves(nt=nt, dt=dt, seed=seed)
+    fem_ts = _simulate_waves_fem(solver.mass, solver.stiffness, nt=nt, dt=dt, seed=seed)
     for t in range(10, nt):
-        assert np.corrcoef(modal_ts[:, t], fem_ts[:, t])[0, 1] > 0.8, \
+        assert np.corrcoef(fourier_ts[:, t], fem_ts[:, t])[0, 1] > 0.8, \
             f'Modal and FEM solutions are not correlated at r>.8 at t={t}.'
+        
+def test_analytical_fc(solver):
+    sim_ts = solver.simulate_waves(nt=1000, dt=0.1, seed=0)
+    # Check that simulated FC from waves aligns with the analytical FC
+    ana_fc = _analytical_fc(solver.emodes, solver.evals, r=17.4, gamma=116)
+    sim_fc = np.corrcoef(sim_ts)
+    mse = np.mean((ana_fc - sim_fc)**2)
+    assert mse < 0.01, f"Analytical FC does not align with simulated FC (MSE={mse:.4f})."

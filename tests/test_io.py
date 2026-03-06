@@ -1,11 +1,10 @@
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from joblib import Memory
 from lapy import TriaMesh
 import numpy as np
 from pytest import raises
-from neuromodes.io import read_surf, fetch_surf, fetch_map, _set_cache
+from neuromodes.io import read_surf, fetch_surf, fetch_map, _cache_output
 from neuromodes.mesh import check_surf
 
 def test_fetch_surf():
@@ -89,41 +88,46 @@ def test_mesh_dict():
         "read_surf should return a TriaMesh with the correct triangular connectivity"
     check_surf(surf_triamesh)
 
-def test_caching():
-    # Get CACHE_DIR
-    cache_dir = os.getenv("CACHE_DIR")
-
-    # Test with temporary directory
+def test_cache_output_with_temp_dir():
+    # Test with temporary directory and a simple function
     with TemporaryDirectory() as temp_cache_dir:
-        os.environ["CACHE_DIR"] = temp_cache_dir
-        
-        memory = _set_cache()
-        assert isinstance(memory, Memory)
-        assert str(memory.location) == temp_cache_dir
-    
-    # Restore original CACHE_DIR
-    if cache_dir is not None:
-        os.environ["CACHE_DIR"] = cache_dir
-    elif "CACHE_DIR" in os.environ:
-        del os.environ["CACHE_DIR"]
+        def add_one(x):
+            return x + 1
+        cached_func = _cache_output(add_one, cache_dir=temp_cache_dir)
+        assert callable(cached_func)
+        assert cached_func(2) == 3
 
-def test_caching_default_dir(capsys):
+def test_cache_output_default_dir(capsys):
     # Temporarily unset CACHE_DIR
     cache_dir = os.getenv("CACHE_DIR")
     if "CACHE_DIR" in os.environ:
         del os.environ["CACHE_DIR"]
 
     try:
-        # Invoke _set_cache and check default directory
-        memory = _set_cache()
+        def add_two(x):
+            return x + 2
+        cached_func = _cache_output(add_two)
         expected_dir = Path.home() / ".neuromodes_cache"
-
-        assert isinstance(memory, Memory)
-        assert memory.location == expected_dir
+        assert callable(cached_func)
+        assert cached_func(2) == 4
 
         print_log = capsys.readouterr().out
-        assert f"Using default cache directory at {expected_dir}" in print_log
+        assert f"Using cache directory at {expected_dir}" in print_log
     finally:
         # Restore original CACHE_DIR
         if cache_dir is not None:
             os.environ["CACHE_DIR"] = cache_dir
+
+def test_cache_output_caches_result(tmp_path):
+    calls = []
+    def func(x):
+        calls.append(x)
+        return x * 2
+
+    cached_func = _cache_output(func, cache_dir=tmp_path)
+    # First call: should append to calls
+    assert cached_func(5) == 10
+    assert calls == [5]
+    # Second call: should NOT append to calls (uses cache)
+    assert cached_func(5) == 10
+    assert calls == [5]  # No new call, so still [5]

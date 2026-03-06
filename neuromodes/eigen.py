@@ -174,7 +174,7 @@ class EigenSolver(Solver):
             # Map hetero from vertices to triangles by averaging
             hetero_tria = self.geometry.map_vfunc_to_tfunc(self.hetero)
 
-            # Construct symmetric (isotropic) diffusion tensor
+            # Construct isotropic diffusion tensor by using hetero for both u1 and u2 directions
             hetero_mat = np.stack((hetero_tria, hetero_tria), axis=1)
 
             # Compute FEM matrices under heterogeneous LBO
@@ -289,9 +289,10 @@ class EigenSolver(Solver):
         ## Post-process
 
         # Sort modes by ascending eigenvalue (should already be sorted for sigma < 0)
-        sort_idx = np.argsort(evals)
-        evals = evals[sort_idx]
-        emodes = emodes[:, sort_idx]
+        if sigma >= 0:
+            sort_idx = np.argsort(evals)
+            evals = evals[sort_idx]
+            emodes = emodes[:, sort_idx]
 
         if fix_mode1:
             if sigma >= 0:
@@ -332,8 +333,8 @@ class EigenSolver(Solver):
         self._check_for_emodes()
     
         return decompose(
-            data,
-            self.emodes,
+            data=data,
+            emodes=self.emodes,
             mass=self.mass,
             checks=False,
             **kwargs
@@ -356,8 +357,8 @@ class EigenSolver(Solver):
         self._check_for_emodes()
             
         return reconstruct(
-            data,
-            self.emodes,
+            data=data,
+            emodes=self.emodes,
             mass=self.mass,
             checks=False,
             **kwargs
@@ -365,7 +366,7 @@ class EigenSolver(Solver):
     
     def reconstruct_timeseries(
         self,
-        data: ArrayLike,
+        timeseries: ArrayLike,
         **kwargs
     ) -> Tuple[NDArray[floating], NDArray[floating], NDArray[floating], NDArray[floating],
                list[NDArray[floating]]]:
@@ -382,8 +383,8 @@ class EigenSolver(Solver):
         self._check_for_emodes()
             
         return reconstruct_timeseries(
-            data,
-            self.emodes,
+            timeseries=timeseries,
+            emodes=self.emodes,
             mass=self.mass,
             checks=False,
             **kwargs
@@ -454,7 +455,8 @@ class EigenSolver(Solver):
         self._check_for_emodes()
 
         return bold_transform(
-            activity,
+            activity=activity,
+            dt=dt,
             emodes=self.emodes,
             mass=self.mass,
             checks=False,

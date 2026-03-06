@@ -13,6 +13,7 @@ from nibabel.gifti.gifti import GiftiImage
 from nibabel.loadsave import load
 
 if TYPE_CHECKING:
+    from typing import Callable
     from numpy.typing import NDArray
 
 fs_extensions = ('.white', '.pial', '.inflated', '.orig', '.sphere', '.smoothwm', '.qsphere',
@@ -183,28 +184,35 @@ def fetch_map(
             " list of available data files."
         )
 
-def _set_cache():
+def _cache_output(
+    function: Callable,
+    cache_dir: Union[str, Path] = None
+) -> Callable:
     """
-    Set up joblib memory caching based. Uses the directory specified by the `CACHE_DIR` 
-    environment variable, or defaults to `~/.neuromodes_cache` if not set.
+    Set up `joblib` caching outputs of a given function. The cache directory can be specified via
+    the `cache_dir` argument, or by setting the `CACHE_DIR` environment variable. If neither is set,
+    defaults to `~/.neuromodes_cache`.
     
+    Parameters
+    ----------
+    function : callable
+        The function to be cached.
+    cache_dir : str or Path, optional
+        The directory to use for caching. If not provided, uses the `CACHE_DIR` environment
+        variable. If `CACHE_DIR` is not set, defaults to `~/.neuromodes_cache`.
+
     Returns
     -------
-    joblib.Memory
-        Configured joblib Memory object for caching.
-
-    Raises
-    ------
-    ImportError
-        If `joblib` is not installed.
+    callable
+        The cached version of the input function.
     """
-    CACHE_DIR = getenv("CACHE_DIR")
-    if CACHE_DIR is None:
-        CACHE_DIR = Path.home() / ".neuromodes_cache"
-        print(f"Using default cache directory at {CACHE_DIR}. To cache elsewhere, set the CACHE_DIR"
-              " environment variable beforehand.")
-    else:
-        CACHE_DIR = Path(CACHE_DIR)
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    if cache_dir is None:
+        cache_dir = getenv("CACHE_DIR")
+        if cache_dir is None:
+            cache_dir = Path.home() / ".neuromodes_cache"
+        print(f"Using cache directory at {cache_dir}. To cache elsewhere, set `cache_dir`.")  
 
-    return Memory(CACHE_DIR, verbose=0)
+    cache_dir = Path(cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    return Memory(cache_dir, verbose=0).cache(function)

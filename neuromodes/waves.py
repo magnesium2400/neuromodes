@@ -141,6 +141,8 @@ def simulate_waves(
         raise ValueError("`dt` must be positive.")
     if nt is not None and (not isinstance(nt, int) or nt <= 0):
         raise ValueError("`nt` must be `None` or a positive integer.")
+    if nt is None and ext_input is None:
+        raise ValueError("Either `nt` or `ext_input` must be provided.")
     if speed_limits is not None:
         if (not isinstance(speed_limits, tuple) or not len(speed_limits) == 2
             or speed_limits[0] < 0 or speed_limits[0] >= speed_limits[1]):
@@ -167,20 +169,15 @@ def simulate_waves(
             warn("`cache_input` is ignored when `ext_input` is provided.")
         nt = ext_input.shape[1]
     else:
-        if nt is None:
-            raise ValueError("`nt` must be provided when `ext_input` is `None`.")
-        if cache_input:
-            if seed is None:
-                warn("`cache_input` is ignored when `seed` is None.")
-            else:
-                from neuromodes.io import _set_cache
-
-                memory = _set_cache()
-                gen_input = memory.cache(_gen_noise)
+        if cache_input and seed is not None:
+            from neuromodes.io import _cache_output
+            noise_func = _cache_output(_gen_noise)
         else:
-            gen_input = _gen_noise
-        
-        ext_input = np.asarray(gen_input((emodes.shape[0], nt), seed))
+            if cache_input and seed is None:
+                warn("`cache_input` is ignored when `seed` is None.")
+            noise_func = _gen_noise
+
+        ext_input = np.asarray(noise_func(emodes.shape[0], nt, seed=seed))
 
     # Eigendecompose external input to get modal coefficients over time
     input_coeffs = decompose(ext_input, emodes, method=decomp_method, mass=mass, checks=checks)
@@ -304,8 +301,20 @@ def calc_wave_speed(
 
     return speed
 
-def _gen_noise(size, seed):
-    return np.random.default_rng(seed).standard_normal(size=size)
+def _gen_noise(
+    n_verts: int,
+    nt: int,
+    seed: int
+) -> NDArray:
+    """
+    Generate reproducible white noise of shape (n_verts, nt) for a given seed.
+    The output is reproducible across nt: the first k columns of (n_verts, nt2)
+    will always match (n_verts, k) for the same seed and n_verts.
+    """
+    rng = np.random.default_rng(seed)
+    # Generate a 1D array and reshape in column-major (Fortran) order for reproducibility
+    noise = rng.standard_normal(n_verts * nt)
+    return noise.reshape((n_verts, nt), order='F')
 
 def _model_wave_fourier(
     input_coeffs: NDArray,
@@ -558,7 +567,7 @@ def _model_balloon_fourier(
     k3 = params['k3']
     rho = params['rho']
 
-    n_modes, nt = activity_coeffs.shape
+    nt = activity_coeffs.shape[1]
 
     # Calculate balloon model frequency response
     omega = 2 * np.pi * np.fft.fftshift(np.fft.fftfreq(2*nt, d=dt))
@@ -708,6 +717,8 @@ def _simulate_waves_fem(
         raise ValueError("`dt` must be positive.")
     if nt is not None and (not isinstance(nt, int) or nt <= 0):
         raise ValueError("`nt` must be `None` or a positive integer.")
+    if nt is None and input is None:
+        raise ValueError("Either `nt` or `input` must be provided.")
     if speed_limits is not None:
         if (not isinstance(speed_limits, tuple) or not len(speed_limits) == 2
             or speed_limits[0] < 0 or speed_limits[0] >= speed_limits[1]):
@@ -732,20 +743,15 @@ def _simulate_waves_fem(
             warn("`cache_input` is ignored when `input` is provided.")
         nt = input.shape[1]
     else:
-        if nt is None:
-            raise ValueError("`nt` must be provided when `input` is `None`.")
-        if cache_input:
-            if seed is None:
-                warn("`cache_input` is ignored when `seed` is None.")
-            else:
-                from neuromodes.io import _set_cache
-
-                memory = _set_cache()
-                gen_input = memory.cache(_gen_noise)
+        if cache_input and seed is not None:
+            from neuromodes.io import _cache_output
+            noise_func = _cache_output(_gen_noise)
         else:
-            gen_input = _gen_noise
-        
-        input = np.asarray(gen_input((n_verts, nt), seed))
+            if cache_input and seed is None:
+                warn("`cache_input` is ignored when `seed` is None.")
+            noise_func = _gen_noise
+
+        input = np.asarray(noise_func(n_verts, nt, seed=seed))
 
     # Pad input with zeros on negative side to ensure causality (system is only driven for t >= 0)
     # This is required for the correct Green's function solution of the damped wave equation.
@@ -785,3 +791,33 @@ def _solve_fem_freq(
 ) -> NDArray:
     """Helper function for parallel frequency solves."""
     return linalg.splu(operator).solve(input)
+
+def _analytical_fc(
+    emodes: NDArray,
+    evals: NDArray,
+    r: float,
+    gamma: float
+) -> NDArray:
+    """
+    Calculate the analytical FC for the wave model under white noise input.
+
+    Parameters
+    ----------
+    emodes : np.ndarray
+        Eigenmodes of shape (n_verts, n_modes).
+    evals : np.ndarray
+        Eigenvalues corresponding to the modes, with shape (n_modes,).
+    r : float
+        Spatial length scale of wave propagation in millimeters.
+    gamma : float
+        Damping rate of wave propagation in seconds^-1.
+
+    Returns
+    -------
+    np.ndarray
+        Analytical FC matrix of shape (n_verts, n_verts).
+    """
+    mode_vars = 1.0 / (2 * gamma * (1 + r**2 * evals))
+    cov = emodes @ (mode_vars[:, np.newaxis] * emodes.T)
+    diag = np.sqrt(np.diag(cov))
+    return cov / diag[:, np.newaxis] / diag[np.newaxis, :]

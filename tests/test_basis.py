@@ -5,23 +5,11 @@ from neuromodes.basis import (decompose, reconstruct, reconstruct_timeseries, ca
 from neuromodes.eigen import EigenSolver
 from neuromodes.io import fetch_surf, fetch_map
 
-@pytest.fixture
-def surf_medmask_hetero():
-    mesh, medmask = fetch_surf(density='4k')
-    rng = np.random.default_rng(0)
-    hetero = rng.standard_normal(size=len(medmask))
-    return mesh, medmask, hetero
-
-@pytest.fixture
-def presolver(surf_medmask_hetero):
-    surf, medmask, hetero = surf_medmask_hetero
-    presolver = EigenSolver(surf, mask=medmask, hetero=hetero)
-    return presolver
-
-@pytest.fixture
-def solver(presolver):
-    presolver.solve(n_modes=10, seed=0)
-    return presolver
+@pytest.fixture(scope='module')
+def solver():
+    surf, medmask = fetch_surf(density='4k')
+    hetero = np.random.default_rng(0).standard_normal(size=len(medmask))
+    return EigenSolver(surf, mask=medmask, hetero=hetero).solve(n_modes=10, seed=0)
 
 def test_decompose_eigenmodes(solver):
     emodes = solver.emodes
@@ -44,13 +32,15 @@ def test_decompose_nan_inf_mode(solver):
     emodes = solver.emodes
     data = np.ones(solver.n_verts)
 
-    emodes[0,0] = np.nan
-    with pytest.raises(ValueError, match="array must not contain infs or NaNs"):
-        decompose(data, emodes, mass=solver.mass)
+    bad_emodes = emodes.copy()
 
-    emodes[0,0] = np.inf
+    bad_emodes[0,0] = np.nan
     with pytest.raises(ValueError, match="array must not contain infs or NaNs"):
-        decompose(data, emodes, mass=solver.mass)
+        decompose(data, bad_emodes, mass=solver.mass)
+
+    bad_emodes[0,0] = np.inf
+    with pytest.raises(ValueError, match="array must not contain infs or NaNs"):
+        decompose(data, bad_emodes, mass=solver.mass)
 
 def test_decompose_massless(solver):
 
@@ -63,7 +53,7 @@ def test_decompose_invalid_method(solver):
                        match="Invalid `method` 'fornitonian'; must be 'project' or 'regress'."):
         decompose(np.ones(solver.n_verts), solver.emodes, method='fornitonian')
 
-@pytest.fixture
+@pytest.fixture(scope='module')
 def solver_32k():
     # Get modes of fsLR 32k midthickness (data is in 32k)
     mesh, medmask = fetch_surf()
@@ -104,7 +94,7 @@ def test_decompose_nans(solver_32k):
 
 # TODO: more complicated version of above test, where three maps have two unique patterns of NaNs/Infs
 
-@pytest.fixture
+@pytest.fixture(scope='module')
 def gen_eigenmap(solver):
 
     # Use randomly weighted sums of modes to generate maps

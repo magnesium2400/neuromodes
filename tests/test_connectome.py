@@ -2,13 +2,12 @@ import numpy as np
 import pytest
 from neuromodes.connectome import model_connectome
 
-@pytest.fixture
+@pytest.fixture(scope='module')
 def emodes():
     n_modes = 5
     n_verts = 10
-    rng = np.random.RandomState(0)
 
-    return rng.randn(n_verts, n_modes)
+    return np.random.default_rng(0).standard_normal(size=(n_verts, n_modes))
 
 def test_model_connectome_properties(emodes):
     evals = np.linspace(1.0, 10.0, 5)
