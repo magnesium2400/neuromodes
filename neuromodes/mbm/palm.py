@@ -1,6 +1,9 @@
 import numpy as np
 from scipy.interpolate import interp1d
 
+#from IPython import embed
+
+
 def palm_pareto(G, Gdist, rev, Pthr, G1out):
     """
     Compute the p-values for a set of statistics G, taking
@@ -32,10 +35,15 @@ def palm_pareto(G, Gdist, rev, Pthr, G1out):
     """
 
     # Ensure inputs are numpy arrays
+
+    # these should be vectors
     G = np.asarray(G)
+    if G.ndim <= 1:
+        G = G.reshape(-1)
+        
     Gdist = np.asarray(Gdist)
-    if Gdist.ndim == 1:
-        Gdist = Gdist.reshape(-1, 1)
+    if Gdist.ndim <= 1:
+        Gdist = Gdist.reshape(-1)
 
     # Compute the usual permutation p-values.
     if G1out:
@@ -115,7 +123,6 @@ def palm_pareto(G, Gdist, rev, Pthr, G1out):
                 P[(G < upar) & Pidx] = Ptail
             else:
                 P[(G > upar) & Pidx] = Ptail
-
     return P, apar, kpar, upar
 
 def gpdpvals(x, a, k):
@@ -198,28 +205,55 @@ def palm_datapval(G, Gvals, rev):
         distp = distp_raw.flatten()[idx] / Gvals.size
         
         # Convert the data to p-values
-        pvals = np.zeros(G.shape)
-        for g in range(cdfG.size):
-            pvals[G >= cdfG[g]] = distp[g]
-        pvals[G > cdfG[-1]] = 1.0
         
+        if G.size == 1:
+            I = np.where(G >= cdfG)[0]
+            if I.size > 0:
+                pvals = np.array([distp[I[-1]]])
+            else:
+                
+                pvals = np.array([1])
+        else:
+            pvals = np.ones(G.size)
+            for z in range(G.size):
+                I = np.where(G[z] >= cdfG)[0]
+                if I.size > 0:
+                    pvals[z] = distp[I[-1]]
+            pvals = np.reshape(G.shape)
+        # for g in range(cdfG.size):
+        #     pvals[G >= cdfG[g]] = distp[g]
+        # pvals[G > cdfG[-1]] = 1.0
+            
+
     else: # if large G are significant (typical case)
         # Sort the data and compute the empirical distribution
-        _, cdfG_raw, distp_raw = palm_competitive(Gvals.reshape(-1, 1), 'descend', True)
+        _, cdfG, distp = palm_competitive(Gvals.reshape(-1, 1), 'descend', True)
         # Unique values and corresponding modified ranks
-        cdfG, idx = np.unique(cdfG_raw, return_index=True)
-        distp = distp_raw.flatten()[idx] / Gvals.size
+        #cdfG, idx = np.unique(cdfG_raw, return_index=True)
+        #distp = distp_raw.flatten()[idx] / Gvals.size
         # Sort back because unique sorts ascending
-        sort_idx = np.argsort(cdfG)[::-1]
-        cdfG = cdfG[sort_idx]
-        distp = distp[sort_idx]
-        
+        #sort_idx = np.argsort(cdfG)[::-1]
+        #cdfG = cdfG[sort_idx]
+        #distp = distp[sort_idx]
+        cdfG = np.unique(cdfG)
+        distp = np.flipud(np.unique(distp)) / Gvals.size
+
         # Convert the data to p-values
-        pvals = np.zeros(G.shape)
-        for g in range(cdfG.size - 1, -1, -1):
-            pvals[G <= cdfG[g]] = distp[g]
-        pvals[G > cdfG[0]] = 0.0
         
+        if G.size == 1:
+            I = np.where(G < cdfG)[0]
+            if I.size > 0:
+                pvals = np.array([distp[I[0]]])
+            else:
+                pvals = np.array([0])
+        else:
+            pvals = np.zeros(G.size)
+            for z in range(G.size):
+                I = np.where(G[z] < cdfG)
+                if I.size > 0:
+                    pvals[z] = distp[I[0]]
+            pvals = np.reshape(G.shape)
+    
     return pvals
 
 def palm_competitive(X, ord='ascend', mod=False):
