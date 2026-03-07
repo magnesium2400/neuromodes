@@ -322,8 +322,8 @@ class EigenSolver(Solver):
         **kwargs
     ) -> NDArray[floating]:
         """
-        This is a wrapper for `neuromodes.basis.decompose`, see its documentation for details: 
-        https://neuromodes.readthedocs.io/en/latest/generated/neuromodes.basis.decompose.html
+        This is a wrapper for :func:`neuromodes.basis.decompose` (docstring also available at
+        https://neuromodes.readthedocs.io/en/latest/generated/neuromodes.basis.decompose.html)
 
         Note that `emodes`, `mass`, and `checks` are passed automatically by the `EigenSolver`
         instance.
@@ -346,8 +346,8 @@ class EigenSolver(Solver):
         **kwargs
     ) -> Tuple[NDArray[floating], NDArray[floating], list[NDArray[floating]]]:
         """
-        This is a wrapper for `neuromodes.basis.reconstruct`, see its documentation for details:
-        https://neuromodes.readthedocs.io/en/latest/generated/neuromodes.basis.reconstruct.html
+        This is a wrapper for :func:`neuromodes.basis.reconstruct` (docstring also available at
+        https://neuromodes.readthedocs.io/en/latest/generated/neuromodes.basis.reconstruct.html)
 
         Note that `emodes`, `mass`, and `checks` are passed automatically by the `EigenSolver`
         instance.
@@ -371,9 +371,9 @@ class EigenSolver(Solver):
     ) -> Tuple[NDArray[floating], NDArray[floating], NDArray[floating], NDArray[floating],
                list[NDArray[floating]]]:
         """
-        This is a wrapper for `neuromodes.basis.reconstruct_timeseries`, see its documentation for
-        details:
-        https://neuromodes.readthedocs.io/en/latest/generated/neuromodes.basis.reconstruct_timeseries.html
+        This is a wrapper for :func:`neuromodes.basis.reconstruct_timeseries` (docstring also
+        available at
+        https://neuromodes.readthedocs.io/en/latest/generated/neuromodes.basis.reconstruct_timeseries.html)
 
         Note that `emodes`, `mass`, and `checks` are passed automatically by the `EigenSolver`
         instance.
@@ -395,9 +395,9 @@ class EigenSolver(Solver):
         **kwargs
     ) -> NDArray[floating]:
         """
-        This is a wrapper for `neuromodes.connectome.model_connectome`, see its documentation for
-        details:
-        https://neuromodes.readthedocs.io/en/latest/generated/neuromodes.connectome.model_connectome.html
+        This is a wrapper for :func:`neuromodes.connectome.model_connectome` (docstring also
+        available at
+        https://neuromodes.readthedocs.io/en/latest/generated/neuromodes.connectome.model_connectome.html)
 
         Note that `emodes`, `evals`, and `checks` are passed automatically by the `EigenSolver`
         instance.
@@ -418,8 +418,8 @@ class EigenSolver(Solver):
         **kwargs
     ) -> NDArray[floating]:
         """
-        This is a wrapper for `neuromodes.waves.simulate_waves`, see its documentation for details:
-        https://neuromodes.readthedocs.io/en/latest/generated/neuromodes.waves.simulate_waves.html
+        This is a wrapper for :func:`neuromodes.waves.simulate_waves` (docstring also available at
+        https://neuromodes.readthedocs.io/en/latest/generated/neuromodes.waves.simulate_waves.html)
 
         Note that `emodes`, `evals`, `mass`, `scaled_hetero`, and `checks` are passed automatically
         by the `EigenSolver` instance.
@@ -444,8 +444,8 @@ class EigenSolver(Solver):
         **kwargs
     ) -> NDArray[floating]:
         """
-        This is a wrapper for `neuromodes.waves.bold_transform`, see its documentation for details:
-        https://neuromodes.readthedocs.io/en/latest/generated/neuromodes.waves.bold_transform.html
+        This is a wrapper for :func:`neuromodes.waves.bold_transform` (docstring also available at
+        https://neuromodes.readthedocs.io/en/latest/generated/neuromodes.waves.bold_transform.html)
 
         Note that `emodes`, `mass`, and `checks` are passed automatically by the `EigenSolver`
         instance.
