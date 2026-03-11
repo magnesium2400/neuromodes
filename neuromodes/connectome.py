@@ -18,22 +18,22 @@ def model_connectome(
     checks: bool = True
 ) -> NDArray[floating]:
     """
-    Generate a vertex-wise structural connectivity matrix using the Geometric Eigenmode Model [1].
+    Generate a vertex-wise structural connectivity matrix using the Geometric Eigenmode Model [1]_.
 
     Parameters
     ----------
     emodes : array-like
-        The eigenmodes array of shape (n_verts, n_modes), where n_verts is the number of vertices 
-        and n_modes is the number of eigenmodes.
+        The eigenmodes array of shape ``(n_verts, n_modes)``, where ``n_verts`` is the number of
+        vertices and ``n_modes`` is the number of eigenmodes.
     evals : array-like
-        The eigenvalues array of shape (n_modes,).
+        The eigenvalues array of shape ``(n_modes,)``.
     r : float, optional
-        Spatial scale parameter for the Green's function, in millimeters. Default is `9.53`.
+        Spatial scale parameter for the Green's function, in millimeters. Default is ``9.53``.
     k : int, optional
-        Number of eigenmodes to use. Default is `108`.
+        Number of eigenmodes to use. Default is ``108``.
     checks : bool, optional
-        Whether to verify types and shapes of `emodes` and `evals` before computation. Default is
-        `True`.
+        Whether to verify types and shapes of ``emodes`` and ``evals`` before computation. Default
+        is ``True``.
 
     Returns
     -------
@@ -43,13 +43,13 @@ def model_connectome(
     Raises
     ------
     ValueError
-        If `emodes` does not have shape (n_verts, n_modes) where n_verts > n_modes.
+        If ``emodes`` does not have shape ``(n_verts, n_modes)`` where ``n_verts > n_modes``.
     ValueError
-        If `evals` does not have shape (n_modes,).
+        If ``evals`` does not have shape ``(n_modes,)``.
     ValueError
-        If `r` is not a positive number.
+        If ``r`` is not a positive number.
     ValueError
-        If `k` is not a positive integer in the range [1, n_modes].
+        If ``k`` is not a positive integer in the range [1, ``n_modes``].
 
     Notes
     -----
@@ -72,15 +72,15 @@ def model_connectome(
         evals = np.asarray_chkfinite(evals)
 
         if emodes.ndim != 2 or emodes.shape[0] <= emodes.shape[1]:
-            raise ValueError("`emodes` must have shape (n_verts, n_modes), with n_verts > n_modes.")
+            raise ValueError("emodes must have shape (n_verts, n_modes), with n_verts > n_modes.")
         if evals.shape != (emodes.shape[1],):
-            raise ValueError(f"`evals` must have shape (n_modes,) = {(emodes.shape[1],)}, matching "
-                             "the number of columns in `emodes`.")
+            raise ValueError(f"evals must have shape (n_modes,) = {(emodes.shape[1],)}, matching "
+                             "the number of columns in emodes.")
     n_modes = emodes.shape[1]
     if r <= 0:
-        raise ValueError("Parameter `r` must be a positive number.")
+        raise ValueError("Parameter r must be a positive number.")
     if k != int(k) or k <= 0 or k > n_modes:
-        raise ValueError(f"Parameter `k` must be an integer in the range [1, n_modes = {n_modes}].")
+        raise ValueError(f"Parameter k must be an integer in the range [1, n_modes = {n_modes}].")
 
     # Compute the Geometric Eigenmode Model
     denom = 1/(1 + evals[:k] * r**2)

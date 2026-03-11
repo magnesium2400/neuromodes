@@ -16,14 +16,14 @@ def mask_mesh(
 ) -> Union[TriaMesh, TetMesh]:
     """
     Remove specified vertices and corresponding elements from a triangular surface or tetrahedral
-    volume mesh. Returns a `lapy.TriaMesh` or `lapy.TetMesh` object.
+    volume mesh. Returns a ``lapy.TriaMesh`` or ``lapy.TetMesh`` object.
 
     Parameters
     ----------
     geometry : lapy.TriaMesh or lapy.TetMesh
         The input surface or volume mesh.
     mask : array-like
-        A boolean array indicating which vertices to keep (`True`) or remove (`False`).
+        A boolean array indicating which vertices to keep (``True``) or remove (``False``).
 
     Returns
     -------
@@ -33,12 +33,13 @@ def mask_mesh(
     Raises
     ------
     ValueError
-        If `mask` does not have a length matching the number of vertices in `geometry`.
+        If ``mask`` does not have a length matching the number of vertices in ``geometry``.
     """
     # Format / validate arguments
     mask = np.asarray_chkfinite(mask, dtype=bool)
     if mask.shape != (geometry.v.shape[0],):
-        raise ValueError(f"`mask` must have shape (n_verts,) = ({geometry.v.shape[0]},).")
+        raise ValueError("`mask` must be a 1D array-like with length matching the number of "
+                         f"vertices in geometry ({geometry.v.shape[0]},).")
 
     # Remove vertices not in mask
     v_masked = geometry.v[mask]
@@ -66,25 +67,25 @@ def unmask_data(
     Parameters
     ----------
     data : numpy.ndarray
-        The data to be unmasked, which should have the same number of rows as the number of True
-        values in `mask`. Can be 1D or 2D (n_masked_verts, n_maps).
+        The data to be unmasked, of shape ``(n_verts)`` or ``(n_verts, n_maps)``.
     mask : numpy.ndarray
-        A boolean array where True indicates the positions of the data in the full array.
+        A boolean array-like of shape ``(n_verts + n_extra_verts)`` where ``True`` indicates the
+        positions of the data in the full array. Must contain exactly ``n_verts`` ``True`` values.
     fill_val : float, optional
-        The value to fill in the positions outside the mask. Default is np.nan.
+        The value to fill in the positions outside the mask. Default is NaN.
 
     Returns
     -------
     numpy.ndarray
-        The unmasked data, with the same shape as the medial mask.
+        The unmasked data of shape ``(n_verts + n_extra_verts)`` or
+        ``(n_verts + n_added_verts, n_maps)``.
 
     Raises
     ------
     ValueError
-        If `mask` is not a 1D boolean array.
+        If ``mask`` is not a 1D boolean array.
     ValueError
-        If `data` does not have shape (n_masked_verts,) or (n_masked_verts, n_maps), where
-        n_masked_verts is the number of True values in `mask`.
+        If ``data`` does not have shape ``(n_verts,)`` or ``(n_verts, n_maps)``.
     """
     # Format / validate arguments
     data = np.asarray(data)
@@ -92,10 +93,8 @@ def unmask_data(
     if mask.ndim != 1:
         raise ValueError("`mask` must be a 1D boolean array.")
     if data.ndim not in [1, 2] or data.shape[0] != np.sum(mask):
-        raise ValueError(
-            "`data` must have shape (n_masked_verts,) or (n_masked_verts, n_maps), where "
-            f"n_masked_verts is the number of True values in `mask` ({np.sum(mask)})."
-            )
+        raise ValueError("`data` must have shape (n_verts,) or (n_verts, n_maps), where n_verts "
+                         f"matches the number of True values in `mask` ({np.sum(mask)}).")
     n_verts = len(mask)
     out_shape = (n_verts, data.shape[1]) if data.ndim == 2 else (n_verts,)
 
