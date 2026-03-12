@@ -111,6 +111,11 @@ def simulate_waves(
 
     Notes
     -----
+    Prior works have treated ``r`` as a free parameter to fit empirical data [1]_ [2]_, with the
+    default value reflecting an optimal fit to human resting-state functional MRI data [2]_.
+    Consider adjusting this parameter, as its optimum can vary across analyses (e.g., different
+    surfaces, heterogeneous modes, parcellated timeseries, empirical data, fitting metrics, etc.).
+
     Since the simulation begins at rest, consider discarding the first ~50 seconds to allow the
     system to reach a steady state.
 

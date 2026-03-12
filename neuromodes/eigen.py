@@ -24,9 +24,10 @@ class EigenSolver(Solver):
     Class for computing and using eigenmodes and eigenvalues of a brain structure mesh [1]_ via the
     Finite Element Method, which discretizes the Laplace-Beltrami eigenvalue problem using mass and
     stiffness matrices [2]_ [3]_. Spatial heterogeneity can be optionally incorporated, modifying
-    the Laplace-Beltrami operator via a symmetric diffusion tensor [4]_. After calling :meth:`solve`
-    to compute modes, a range of analysis methods can be called (``decompose``, ``reconstruct``,
-    ``reconstruct_timeseries``, ``simulate_waves``, ``transform_bold``, and ``model_connectome``).
+    the Laplace-Beltrami operator via an isotropic diffusion tensor [4]_. After calling
+    :meth:`solve` to compute modes, a range of analysis methods can be called (``decompose``,
+    ``reconstruct``, ``reconstruct_timeseries``, ``simulate_waves``, ``transform_bold``, and
+    ``model_connectome``).
 
     Parameters
     ----------
@@ -39,6 +40,10 @@ class EigenSolver(Solver):
     mask : array-like, optional
         A boolean mask to exclude certain vertices (e.g., medial wall) from the mesh. Default is
         ``None``.
+    normalize : bool, optional
+        Whether to normalize the mesh to have unit surface area and centroid at origin. Note that
+        this will rescale the computed eigenmodes, eigenvalues, and mass matrix. Default is
+        ``False``.
     hetero : array-like, optional
         A heterogeneity map to scale the Laplace-Beltrami operator. Default is ``None``.
     alpha : float, optional
@@ -53,6 +58,11 @@ class EigenSolver(Solver):
     ------
     ValueError
         If ``hetero`` length does not match the number of vertices (masked or unmasked).
+
+    Notes
+    -----
+    The coordinates of vertices in ``geometry`` are assumed to be in millimetres, following the
+    convention of common neuroimaging software.
 
     References
     ----------
@@ -552,7 +562,7 @@ def is_orthonormal_basis(
 ) -> bool:
     """
     Check if a set of vectors is orthonormal in Euclidean space (i.e., ``emodes.T @ emodes == I``,
-    where ``I`` is the identity matrix) or with respect to a mass matrix (i.e., ``emodes.T @ mass @
+    where ``I`` is an identity matrix) or with respect to a mass matrix (i.e., ``emodes.T @ mass @
     emodes == I``). Mass-orthonormality is expected for the geometric eigenmodes (see notes).
 
     Parameters
