@@ -33,7 +33,7 @@ def eigenstrap(
     check_ortho: bool = True,
 ) -> NDArray[floating]:
     """
-    Generate spatial null maps via eigenstrapping[1]_.
+    Generate spatial null maps via eigenstrapping [1]_.
     
     This function generates spatial null maps that preserve the spatial autocorrelation structure of
     brain maps through random rotation of geometric eigenmodes. The method works by rotating
@@ -43,18 +43,18 @@ def eigenstrap(
     Parameters
     ----------
     data : array-like
-        Empirical brain map(s) of shape (n_verts,) or (n_verts, n_maps) to generate nulls from. If
+        Empirical brain map(s) of shape ``(n_verts,)`` or ``(n_verts, n_maps)`` to generate nulls from. If
         n_maps > 1, the same set of randomized rotations is applied to all maps for each null (see
         Notes). 
-    emodes : array-like of shape (n_verts, n_modes)
-        The eigenmodes array of shape (n_verts, n_modes). This function rotates modes within
-        eigengroups. Note that, unlike the original implementation[1]_, this requires the constant
-        mode (the first column) to be input too. By default (if n_groups is None), if the number of
+    emodes : array-like
+        The eigenmodes array of shape ``(n_verts, n_modes)``. This function rotates modes within
+        eigengroups. Note that, unlike the original implementation [1]_, this requires the constant
+        mode (the first column) to be input too. By default (if ``n_groups`` is None), if the number of
         eigenmodes is not a perfect square (i.e., the number of modes does not allow for complete
         eigengroups), then the last incomplete eigengroup will be excluded.
-    evals : array-like of shape (n_modes,)
-        The eigenvalues array of shape (n_modes,). Note that, unlike the original
-        implementation[1]_, this requires the zero eigenvalue (the first eigenvalue) to be input
+    evals : array-like
+        The eigenvalues array of shape ``(n_modes,)``. Note that, unlike the original
+        implementation [1]_, this requires the zero eigenvalue (the first eigenvalue) to be input
         too. 
     n_nulls : int, optional
         Number of null maps to generate per input map. Default is 1000.
@@ -84,23 +84,23 @@ def eigenstrap(
         The method used for eigendecomposition, either ``'project'`` to project data into a
         mass-orthonormal space or ``'regress'`` for least-squares fitting. Default is ``'project'``.
     mass : array-like, optional
-        The mass matrix of shape (n_verts, n_verts) used for the decomposition when
+        The mass matrix of shape ``(n_verts, n_verts)`` used for the decomposition when
         ``decomp_method`` is ``'project'``. Default is ``None``.
-    seed : array-like of shape (n_nulls,) or int, optional
-        Random seed for reproducibility. If an array of shape (n_nulls,) is provided, it is used
+    seed : array-like or int, optional
+        Random seed for reproducibility. If an array of shape ``(n_nulls,)`` is provided, it is used
         directly as the seed for each null. Otherwise, if a single integer is provided, it is used
         to generate a master seed that is then used to generate a different seed for each null. If
         ``None``, the global state is used. Default is ``None``.
     check_ortho : bool, optional
         Whether to check if ``emodes`` are mass-orthonormal before using the ``'project'`` method in
-        ``neuromodes.basis.decompose``. Default is ``True``.
+        :func:`neuromodes.basis.decompose`. Default is ``True``.
     
     Returns
     -------
-    ndarray of shape (n_verts, n_nulls) or (n_verts, n_nulls, n_maps)
-        Generated null maps of shape (n_verts, n_nulls) if ``data`` has shape (n_verts,), or
-        (n_verts, n_nulls, n_maps) if ``data`` has shape (n_verts, n_maps).
-    
+    ndarray of shape ``(n_verts, n_nulls)`` or ``(n_verts, n_nulls, n_maps)``
+        Generated null maps of shape ``(n_verts, n_nulls)`` if ``data`` has shape ``(n_verts,)``, or
+        ``(n_verts, n_nulls, n_maps)`` if ``data`` has shape ``(n_verts, n_maps)``.
+
     Raises
     ------
     ValueError
@@ -126,7 +126,7 @@ def eigenstrap(
        randomizations and residual permutations).
 
     2. ``n_groups`` and ``residual``. The choice of ``n_groups`` and ``residual`` will affect the
-       spatial autocorrelation similarity between the nulls and empirical data. See ref[1]_ for a
+       spatial autocorrelation similarity between the nulls and empirical data. See ref [1]_ for a
        heuristic for choosing ``n_groups`` and to see how the choice of ``residual`` affects the
        spatial autocorrelation of the nulls.
 
@@ -146,11 +146,11 @@ def eigenstrap(
        of the distribution, as they change the location and scale of the reconstructed nulls. The
        choice of ``resample`` should be guided by the importance of matching the original
        distribution of values and ultimately by whichever option produces the lowest false discovery
-       rate (FDR). See ref[1]_ for an example of how to compute the FDR.
+       rate (FDR). See ref [1]_ for an example of how to compute the FDR.
 
     5. ``seed``. Seeding is handled in one or two stages. First, if ``seed`` is None or a scalar
-       integer, it is used to generate an array of size (n_nulls,). (If ``seed`` is already an array
-       of size (n_nulls,1), it is used directly.) Then, each of the n_nulls seeds are used to
+       integer, it is used to generate an array of size ``(n_nulls,)``. (If ``seed`` is already an array
+       of size ``(n_nulls,)``, it is used directly.) Then, each of the ``n_nulls`` seeds are used to
        generate 3 new seeds: for rotations, randomisations, and residual permutations (if
        randomisations/permutations are not requested, these will be generated but not used). This
        ensures that the same seed will produce the same nulls regardless of how many nulls are
@@ -158,14 +158,14 @@ def eigenstrap(
        identical).
 
     6. Comparisons with original implementation. The following notes are in relation to the original
-       implementation of eigenstrapping in ref[1]_, which is available `here
+       implementation of eigenstrapping in ref [1]_, which is available `here
        <https://github.com/SNG-Newy/eigenstrapping/tree/c2d8e5a5e7af47649f6358334644a6b49d22cf8e>`__.
        In this function, we have made a few changes to the implementation. These changes simplify
        installation, increase speed, process multiple maps concurrently, and facilitate
        reproducibility. Nonetheless, under a specific configuration, the function can exactly match
        the default usage of the implementation (i.e. generating the same nulls when the
        corresponding seed is set). See `this notebook
-       <https://neuromodes.readthedocs.io/en/latest/validation/eigenstrapping_match_orig.html>`__
+       <https://neuromodes.readthedocs.io/en/latest/validation/nulls_eigenstrap_orig.html>`__
        for an example.
 
        a. Simplified installation. ``eigenstrapping`` is dependent on many packages, including exact
@@ -181,7 +181,7 @@ def eigenstrap(
           iii. ``eigenstrap(rotation_method='qr')``:    0.10 seconds
 
           See `this notebook
-          <https://neuromodes.readthedocs.io/en/latest/validation/eigenstrapping_compare_speeds.html>`__
+          <https://neuromodes.readthedocs.io/en/latest/validation/nulls_eigenstrap_speed.html>`__
           for more comparisons between the ``'scipy'`` and ``'qr'`` methods.
 
        c. Lack of cholmod. The original implementation uses ``cholmod`` for fast sparse matrix
@@ -225,7 +225,7 @@ def eigenstrap(
           mode/eigenvalue removed (something of the form ``emodes[:, 1:]`` and ``evals[1:]``), here
           users are expected to input ``emodes`` and ``evals`` with the constant mode/eigenvalue
           included. This has minimal changes to the functionality of the code, other than this
-          syntactic change. 
+          syntactic change.
 
        h. Concurrent processing of multiple maps. This function can process multiple maps at the
           same time. This was possible in the original implementation, but required users to save
@@ -240,7 +240,7 @@ def eigenstrap(
           used.
 
        j. Syntax for exact replication. To exactly match the default version of the original
-          implementation of eigenstrapping in ref[1]_, users specify the following input parameters
+          implementation of eigenstrapping in ref [1]_, users specify the following input parameters
           to this function:
 
           - Ensure ``data`` has a mean of zero.
@@ -260,7 +260,7 @@ def eigenstrap(
             ``SurfaceEigenstrapping``
 
           For an example of how to do this, see `this notebook
-          <https://neuromodes.readthedocs.io/en/latest/validation/eigenstrapping_match_orig.html>`__.
+          <https://neuromodes.readthedocs.io/en/latest/validation/nulls_eigenstrap_orig.html>`__.
     
     References
     ----------
@@ -424,15 +424,20 @@ def _rotate_coeffs_scipy(
 
     Parameters
     ----------
-    inv_coeffs : array of shape (n_modes, n_nulls, n_maps)
+    inv_coeffs : array-like
         The inverse-transformed coefficients (spheroid -> ellipsoid) of shape (n_modes, n_nulls,
         n_maps) to rotate.
     groups : list of arrays
         A list of arrays, where each array contains the indices of modes belonging to the same
         eigengroup.
-    seeds : array of shape (n_nulls,)
+    seeds : array-like
         An array of integer seeds of shape (n_nulls,) to use for reproducibility of the random
         rotations for each null map.
+
+    Returns
+    -------
+    np.ndarray of shape ``(n_modes, n_nulls, n_maps)``
+        The rotated coefficients (spheroid -> ellipsoid) to use for generating null maps.
 
     Notes
     -----
@@ -470,15 +475,20 @@ def _rotate_coeffs_qr(
     
     Parameters
     ----------
-    inv_coeffs : np.ndarray of shape (n_modes, n_nulls, n_maps)
-        The inverse-transformed coefficients (spheroid -> ellipsoid) of shape (n_modes, n_nulls,
-        n_maps) to rotate.
+    inv_coeffs : np.ndarray
+        The inverse-transformed coefficients (spheroid -> ellipsoid) of shape ``(n_modes, n_nulls,
+        n_maps)`` to rotate.
     groups : list of np.ndarrays
         A list of arrays, where each array contains the indices of modes belonging to the same
         eigengroup.
-    seeds : np.ndarray (n_nulls,)
-        An array of integer seeds of shape (n_nulls,) to use for reproducibility of the random
+    seeds : np.ndarray
+        An array of integer seeds of shape ``(n_nulls,)`` to use for reproducibility of the random
         rotations for each null map.
+
+    Returns
+    -------
+    np.ndarray of shape ``(n_modes, n_nulls, n_maps)``
+        The rotated coefficients (spheroid -> ellipsoid) to use for generating null maps.
 
     Notes
     -----
