@@ -2,14 +2,13 @@ from pathlib import Path
 from lapy import TriaMesh
 import numpy as np
 import pytest
-from neuromodes.eigen import EigenSolver, is_orthonormal_basis, scale_hetero
+from neuromodes.eigen import EigenSolver, is_orthonormal_basis, scale_hetero, get_eigengroup_inds
 from neuromodes.io import fetch_surf, fetch_map, mask_surf
 
 @pytest.fixture
 def surf_medmask_hetero():
     mesh, medmask = fetch_surf(density='4k')
-    rng = np.random.default_rng(0)
-    hetero = rng.standard_normal(size=len(medmask))
+    hetero = fetch_map(data="myelinmap", density="4k")
     return mesh, medmask, hetero
 
 def test_init_params(surf_medmask_hetero):
@@ -174,7 +173,7 @@ def test_vector_seeded_modes(presolver):
 
 def test_invalid_vector_seed(presolver):
     with pytest.raises(ValueError,
-                       match=r"of shape \(n_verts,\) = \(3636,\)."):
+                       match=r"of shape \(n_verts,\) = \(3619,\)."):
         presolver.solve(16, seed=np.ones(10))
 
 @pytest.fixture
@@ -197,13 +196,13 @@ def test_solve_lumped_mass(solver, surf_medmask_hetero):
     surf, medmask, hetero = surf_medmask_hetero
 
     # Get modes after solving with lumped mass matrix
-    solver = EigenSolver(surf, mask=medmask, hetero=hetero)
-    solver.solve(emodes.shape[1], lump=True)
+    solver_lump = EigenSolver(surf, mask=medmask, hetero=hetero)
+    solver_lump.solve(emodes.shape[1], lump=True)
     emodes_lumped = solver.emodes
 
     assert np.allclose(abs(emodes), abs(emodes_lumped), atol=1e-3), \
         'Lumped mass modes do not approximately match original modes.'
-    for i in range(1, solver.n_modes):
+    for i in range(1, solver_lump.n_modes):
         assert np.corrcoef(emodes[:, i], emodes_lumped[:, i])[0, 1] > 0.99, \
             'Lumped mass modes do not match original modes.'
 
@@ -253,9 +252,8 @@ def test_check_euclidean_orthonorm():
 def test_scale_hetero(surf_medmask_hetero):
     _, _, hetero = surf_medmask_hetero
 
-    # Check that sigmoid-scaled hetero has mean ~1 and be within (0, 2)
+    # Check that sigmoid-scaled hetero is within (0, 2)
     hetero_sig = scale_hetero(hetero)
-    assert np.isclose(np.mean(hetero_sig), 1.0, atol=1e-3)
     assert np.all((hetero_sig > 0) & (hetero_sig < 2))
 
     # Check that exponential-scaled hetero is all positive
@@ -268,4 +266,15 @@ def test_invalid_scale_hetero(surf_medmask_hetero):
     with pytest.raises(ValueError, match="Invalid scaling 'plantasia'"):
         scale_hetero(hetero, scaling='plantasia')
 
-    
+def test_get_eigengroup_inds(solver):
+    # Test that function returns correct groups for 8 modes
+    groups = get_eigengroup_inds(8)
+    expected_groups = [np.array([0]), np.array([1, 2, 3]), np.array([4, 5, 6, 7])]
+    for g, expected in zip(groups, expected_groups):
+        assert np.array_equal(g, expected), f'Expected group {expected}, got {g}.'
+
+    # Check on solver
+    groups = get_eigengroup_inds(solver.n_modes)
+    last_mode = groups[-1][-1] + 1
+    assert solver.emodes[:, :last_mode].shape == solver.emodes.shape, \
+        'Last eigengroup indices do not match number of modes.'

@@ -107,6 +107,23 @@ API Reference
 
    neuromodes.connectome.model_connectome
 
+.. _ref_nulls:
+
+:mod:`neuromodes.nulls` - Generate null brain maps preserving spatial autocorrelation
+---------------------------------------------------------------
+
+.. automodule:: neuromodes.nulls
+   :no-members:
+   :no-inherited-members:
+
+.. currentmodule:: neuromodes.nulls
+
+.. autosummary::
+   :template: function.rst
+   :toctree: generated/
+
+   neuromodes.nulls.eigenstrap
+
 .. _ref_io:
 
 :mod:`neuromodes.io` - IO functions for cortical surface meshes and maps

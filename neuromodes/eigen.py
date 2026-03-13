@@ -232,14 +232,17 @@ class EigenSolver(Solver):
         self.compute_lbo(lump)
         
         # Set intitialization vector (if desired) for reproducibile eigenvectors 
-        if seed is None or isinstance(seed, int):
+        if seed is None or isinstance(seed, (int, np.integer)):
             rng = np.random.default_rng(seed)
             v0 = rng.random(self.n_verts)
         else:
             v0 = np.asarray_chkfinite(seed)
+            if not np.issubdtype(v0.dtype, np.floating):
+                raise ValueError("If `seed` is an array, it must be of a floating-point "
+                                 f"type, got dtype {v0.dtype}.")
             if v0.shape != (self.n_verts,):
-                raise ValueError("`seed` must be either an integer or an array of shape (n_verts,) "
-                                 f"= {(self.n_verts,)}.")
+                raise ValueError("If `seed` is an array, it must be of shape (n_verts,) "
+                                 f"= {(self.n_verts,)}, got shape {v0.shape}.")
 
         # Solve the eigenvalue problem
         lu = splu(self.stiffness - sigma * self.mass)
@@ -399,6 +402,32 @@ class EigenSolver(Solver):
             check_ortho=False,
             **kwargs
         )
+    
+    def eigenstrap(
+            self,
+            data: ArrayLike,
+            **kwargs
+    ) -> NDArray:
+        """
+        This is a wrapper for `neuromodes.nulls.generate_nulls`, see its documentation
+        for details:
+        https://neuromodes.readthedocs.io/en/latest/generated/neuromodes.nulls.eigenstrap.html
+
+        Note that `emodes`, `evals`, `mass`, and `check_ortho` are passed automatically by the
+        `EigenSolver` instance.
+        """
+        from neuromodes.nulls import eigenstrap
+
+        self._check_for_emodes()
+
+        return eigenstrap(
+            data=data,
+            emodes=self.emodes,
+            evals=self.evals,
+            mass=self.mass,
+            check_ortho=False,
+            **kwargs
+        )
 
 def scale_hetero(
     hetero: ArrayLike,
@@ -541,3 +570,29 @@ def is_orthonormal_basis(
     # Check Euclidean or mass-orthonormality
     prod = emodes.T @ emodes if mass is None else emodes.T @ mass @ emodes
     return np.allclose(prod, np.eye(n_modes), rtol=rtol, atol=atol, equal_nan=False)
+
+def get_eigengroup_inds(
+        n_modes: int,
+    ) -> list[NDArray]:
+    """
+    Identify eigengroups based on ordering of spherical harmonics. Each eigengroup 
+    contains the next 2k+1 modes, where k is the eigengroup number (starting from 0). If
+    n_modes does not include a complete eigengroup, the final group will contain the 
+    remaining modes.
+    
+    Parameters
+    ----------
+    n_modes : int
+        The number of eigenmodes, which determines the grouping.
+    
+    Returns
+    -------
+    list of list of int
+        A list where each element is a list of indices corresponding to the modes in that 
+        eigengroup.
+    """
+    i = np.arange(n_modes)
+    g = np.floor(np.sqrt(i)).astype(int)
+    idx = [i[g == k] for k in np.unique(g)]
+
+    return idx

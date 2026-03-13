@@ -2,19 +2,18 @@ import pytest
 import os
 from tempfile import TemporaryDirectory
 import numpy as np
-from neuromodes.io import fetch_surf
+from neuromodes.io import fetch_surf, fetch_map
 from neuromodes.eigen import EigenSolver
 from neuromodes.waves import simulate_waves, calc_wave_speed, get_balloon_params
 
 @pytest.fixture
 def solver():
-    rng = np.random.default_rng(0)
     mesh, medmask = fetch_surf(density='4k')
-    hetero = rng.standard_normal(size=sum(medmask))
+    hetero = fetch_map(data="myelinmap", density="4k")[medmask]
     return EigenSolver(mesh, mask=medmask, hetero=hetero).solve(n_modes=100, seed=0)
 
 def test_unusual_wave_speed(solver):
-    with pytest.warns(UserWarning, match=r'range of 0-150 m/s \(calculated 23.3-160.4 m/s\).'):
+    with pytest.warns(UserWarning, match=r'range of 0-150 m/s \(calculated 46.2-162.5 m/s\).'):
         solver.simulate_waves(r=1000)
 
 def test_unusual_wave_speed_no_hetero(solver):
@@ -205,7 +204,7 @@ def test_simulate_waves_seed_bold_reproducibility_fourier(solver):
 
 def test_simulate_waves_invalid_input_shape(solver):
 
-    with pytest.raises(ValueError, match=r"must have shape \(n_verts, nt\) = \(3636, 1000\)."):
+    with pytest.raises(ValueError, match=r"must have shape \(n_verts, nt\) = \(3619, 1000\)."):
         simulate_waves(
             solver.emodes,
             solver.evals,

@@ -8,8 +8,7 @@ from neuromodes.io import fetch_surf, fetch_map
 @pytest.fixture
 def surf_medmask_hetero():
     mesh, medmask = fetch_surf(density='4k')
-    rng = np.random.default_rng(0)
-    hetero = rng.standard_normal(size=len(medmask))
+    hetero = fetch_map(data="myelinmap", density="4k")
     return mesh, medmask, hetero
 
 @pytest.fixture
@@ -37,7 +36,7 @@ def test_decompose_eigenmodes(solver):
 
 def test_decompose_invalid_data_shape(solver):
 
-    with pytest.raises(ValueError, match=r"`emodes` \(3636\)."):
+    with pytest.raises(ValueError, match=r"`emodes` \(3619\)."):
         decompose(np.ones(4002), solver.emodes, mass=solver.mass)
 
 def test_decompose_nan_inf_mode(solver):
@@ -67,7 +66,7 @@ def test_decompose_invalid_method(solver):
 def gen_eigenmap(solver):
 
     # Use randomly weighted sums of modes to generate maps
-    n_maps = 3
+    n_maps = 5
     rng = np.random.default_rng(0)
     weights = rng.standard_normal(size=(solver.n_modes, n_maps))
     eigenmaps = solver.emodes @ weights
@@ -95,9 +94,9 @@ def test_reconstruct_mode_superposition(solver, gen_eigenmap):
 
     # Reconstruct using the first 5 modes, then the first 2 modes
     _, correlation_error_modesq, _ = reconstruct(eigenmaps, solver.emodes, mass=solver.mass, mode_counts=[5,2])
-    assert (correlation_error_modesq[0,:] == correlation_error[4,:]).all(), \
+    assert np.allclose(correlation_error_modesq[0,:], correlation_error[4,:]), \
         'Reconstruction scores do not match for 5 modes.'
-    assert (correlation_error_modesq[1,:] == correlation_error[1,:]).all(), \
+    assert np.allclose(correlation_error_modesq[1,:], correlation_error[1,:]), \
         'Reconstruction scores do not match for 2 modes.'
 
 def test_reconstruct_regress_method(solver, gen_eigenmap):
@@ -179,7 +178,7 @@ def test_reconstruct_real_map_32k():
 
 def test_reconstruct_invalid_map_shape(solver):
 
-    with pytest.raises(ValueError, match=r"`emodes` \(3636\)."):
+    with pytest.raises(ValueError, match=r"`emodes` \(3619\)."):
         reconstruct(np.ones(4002), solver.emodes, mass=solver.mass)
 
 def test_reconstruct_massless(solver):

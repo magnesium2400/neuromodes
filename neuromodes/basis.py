@@ -64,8 +64,8 @@ def decompose(
     data = np.asarray_chkfinite(data)
     emodes = np.asarray_chkfinite(emodes)
 
-    if emodes.ndim != 2 or emodes.shape[0] < emodes.shape[1]:
-        raise ValueError("`emodes` must have shape (n_verts, n_modes), where n_verts ≥ n_modes.")
+    if emodes.ndim != 2 or emodes.shape[0] <= emodes.shape[1]:
+        raise ValueError("`emodes` must have shape (n_verts, n_modes), where n_verts > n_modes.")
     n_verts = emodes.shape[0]
     if data.ndim == 1:
         data = data[:, np.newaxis]

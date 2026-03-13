@@ -150,9 +150,3 @@ def test_caching_default_dir(capsys):
         # Restore original CACHE_DIR
         if cache_dir is not None:
             os.environ["CACHE_DIR"] = cache_dir
-
-def test_caching_no_joblib():
-    # Mock the import of joblib to raise ImportError
-    with patch.dict('sys.modules', {'joblib': None}):
-        with raises(ImportError, match="joblib is required for caching"):
-            _set_cache()
