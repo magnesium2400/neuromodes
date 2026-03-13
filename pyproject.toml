@@ -3,7 +3,7 @@ name = "neuromodes"
 version = "0.1.0"
 description = "Eigenmode-based brain mapping and modelling toolbox developed by the Neural Systems and Behaviour Lab"
 readme = "README.rst"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 keywords = ["python", "modelling", "neuroimaging", "eigenmodes", "brain-mapping"]
 
 dependencies = [
@@ -17,6 +17,7 @@ dependencies = [
 
 [project.optional-dependencies]
 testing = [
+    "pygeodesic>=0.1.11",
     "pytest>=8.4.2",
 ]
 tutorials = [
