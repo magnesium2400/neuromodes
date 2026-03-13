@@ -13,6 +13,8 @@ from nibabel.gifti.gifti import GiftiImage
 from nibabel.loadsave import load
 import numpy as np
 from trimesh import Trimesh
+from joblib import Memory
+
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray, ArrayLike
@@ -273,15 +275,6 @@ def _set_cache():
     ImportError
         If `joblib` is not installed.
     """
-    try:
-        from joblib import Memory
-    except ImportError:
-        raise ImportError(
-            "joblib is required for caching. Please install it via 'pip install joblib' (or "
-            "install neuromodes with UV via 'uv add \"neuromodes[cache] @ "
-            "git+https://github.com/NSBLab/neuromodes.git\")."
-        )
-
     CACHE_DIR = os.getenv("CACHE_DIR")
     if CACHE_DIR is None:
         CACHE_DIR = Path.home() / ".neuromodes_cache"

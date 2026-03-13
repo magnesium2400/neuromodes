@@ -195,7 +195,7 @@ def simulate_waves(
         else:
             gen_input = _gen_noise
         
-        ext_input = gen_input((n_verts, nt), seed)
+        ext_input = np.asarray(gen_input((n_verts, nt), seed))
 
     # Eigendecompose external input to get modal coefficients over time
     input_coeffs = decompose(ext_input, emodes, method=decomp_method,
@@ -250,7 +250,10 @@ def calc_wave_speed(
 
     return speed
 
-def _gen_noise(size, seed):
+def _gen_noise(
+    size: tuple[int, int],
+    seed: Union[int, None]
+) -> NDArray:
     return np.random.default_rng(seed).standard_normal(size=size)
 
 def _model_wave_fourier(
