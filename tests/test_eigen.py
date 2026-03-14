@@ -30,7 +30,7 @@ def test_no_medmask(surf_medmask_hetero):
 def test_invalid_mask_shape(surf_medmask_hetero):
     surf, _, _ = surf_medmask_hetero
     bad_mask = np.ones(10)
-    with pytest.raises(ValueError, match=r"`mask` must have shape \(n_verts,\) = \(4002,\)"):
+    with pytest.raises(ValueError, match=r"mask must have shape \(4002,\)"):
         EigenSolver(surf, mask=bad_mask)
 
 def test_no_hetero(surf_medmask_hetero):
@@ -51,9 +51,9 @@ def test_no_hetero(surf_medmask_hetero):
         
 def test_no_hetero_alpha_scaling(surf_medmask_hetero):
     surf, medmask, _ = surf_medmask_hetero
-    with pytest.warns(UserWarning, match="`alpha` is ignored"):
+    with pytest.warns(UserWarning, match="alpha is ignored"):
         EigenSolver(surf, mask=medmask, hetero=None, alpha=0.5)
-    with pytest.warns(UserWarning, match="`scaling` is ignored"):
+    with pytest.warns(UserWarning, match="scaling is ignored"):
         EigenSolver(surf, mask=medmask, hetero=None, scaling='exponential')
 
 def test_invalid_hetero_shape(surf_medmask_hetero):
@@ -78,7 +78,7 @@ def test_constant_hetero(surf_medmask_hetero):
 
     hetero = np.ones(surf.v.shape[0])
 
-    with pytest.warns(UserWarning, match="Provided `hetero` is constant"):
+    with pytest.warns(UserWarning, match="Provided hetero is constant"):
         EigenSolver(surf, hetero=hetero)
 
 def test_nan_inf_hetero_medmask(surf_medmask_hetero):
@@ -110,7 +110,7 @@ def test_hetero_ones(surf_medmask_hetero):
     hetero = np.ones(sum(medmask))
 
     homo_solver = EigenSolver(surf, mask=medmask).solve(20, seed=0)
-    with pytest.warns(UserWarning, match="Provided `hetero` is constant"):
+    with pytest.warns(UserWarning, match="Provided hetero is constant"):
         het_solver = EigenSolver(surf, mask=medmask, hetero=hetero).solve(20, seed=0)
 
     assert np.allclose(het_solver.evals, homo_solver.evals), \

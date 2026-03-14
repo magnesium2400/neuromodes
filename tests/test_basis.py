@@ -25,7 +25,7 @@ def test_decompose_eigenmodes(solver):
 
 def test_decompose_invalid_data_shape(solver):
 
-    with pytest.raises(ValueError, match=r"`emodes` \(3636\)."):
+    with pytest.raises(ValueError, match=r"emodes \(3636\)."):
         decompose(np.ones(4002), solver.emodes, mass=solver.mass)
 
 def test_decompose_nan_inf_mode(solver):
@@ -50,7 +50,7 @@ def test_decompose_massless(solver):
 def test_decompose_invalid_method(solver):
 
     with pytest.raises(ValueError,
-                       match="Invalid `method` 'fornitonian'; must be 'project' or 'regress'."):
+                       match="Invalid method 'fornitonian'; must be 'project' or 'regress'."):
         decompose(np.ones(solver.n_verts), solver.emodes, method='fornitonian')
 
 @pytest.fixture(scope='module')
@@ -87,7 +87,7 @@ def test_decompose_nans(solver_32k):
     modes_noise = np.concatenate([solver_32k.emodes, noise], axis=0)
 
     # emodes/mass get masked according to the nans/infs in data, leading to original beta values
-    with pytest.warns(UserWarning, match="`data` and `emodes`"):
+    with pytest.warns(UserWarning, match="data and emodes"):
         beta_masked = decompose(data_naninfs, modes_noise, method='regress', checks=False)
     assert np.allclose(beta, beta_masked, atol=1e-4), \
         'Beta values for project method are not close when data contains NaNs/Infs'
@@ -204,7 +204,7 @@ def test_reconstruct_real_map_32k(solver_32k):
 
 def test_reconstruct_invalid_map_shape(solver):
 
-    with pytest.raises(ValueError, match=r"`emodes` \(3636\)."):
+    with pytest.raises(ValueError, match=r"emodes \(3636\)."):
         reconstruct(np.ones(4002), solver.emodes, mass=solver.mass)
 
 def test_reconstruct_massless(solver):
