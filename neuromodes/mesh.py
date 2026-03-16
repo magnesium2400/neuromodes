@@ -38,8 +38,8 @@ def mask_mesh(
     # Format / validate arguments
     mask = np.asarray_chkfinite(mask, dtype=bool)
     if mask.shape != (geometry.v.shape[0],):
-        raise ValueError("`mask` must be a 1D array-like with length matching the number of "
-                         f"vertices in geometry ({geometry.v.shape[0]},).")
+        raise ValueError(f"mask must have shape ({geometry.v.shape[0]},), matching the number of "
+                         "vertices in geometry.")
 
     # Remove vertices not in mask
     v_masked = geometry.v[mask]

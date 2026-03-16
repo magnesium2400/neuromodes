@@ -262,10 +262,11 @@ class EigenSolver(Solver):
         if not hasattr(self, 'stiffness'):
             self.compute_lbo(lump)
         
-        # Set intitialization vector (if desired) for reproducibile eigenvectors 
+        # Setup intitialization vector
+        v0 = None
+        rng = None
         if seed is None or isinstance(seed, int):
             rng = np.random.default_rng(seed)
-            v0 = rng.uniform(low=-1, high=1, size=self.n_verts)  # Match eigsh() / ARPACK default
         else:
             v0 = np.asarray_chkfinite(seed)
             if v0.shape != (self.n_verts,):
@@ -286,7 +287,8 @@ class EigenSolver(Solver):
             M=self.mass,
             sigma=sigma,
             OPinv=op_inv,
-            v0=v0
+            v0=v0,
+            rng=rng
         )
 
         # Validate results

@@ -30,11 +30,11 @@ def test_unusual_wave_speed_no_hetero(solver):
             )
 
 def test_single_speed_limit(solver):
-    with pytest.raises(ValueError, match="`speed_limits` must be a tuple"):
+    with pytest.raises(ValueError, match="speed_limits must be a tuple"):
         solver.simulate_waves(nt=10, r=18.0, speed_limits=150)
 
 def test_reversed_speed_limits(solver):
-    with pytest.raises(ValueError, match="`speed_limits` must be a tuple"):
+    with pytest.raises(ValueError, match="speed_limits must be a tuple"):
         solver.simulate_waves(nt=10, r=18.0, speed_limits=(150, 0))
 
 def test_simulate_waves_impulse(solver):
@@ -129,7 +129,7 @@ def test_simulate_waves_reproducibility_fourier(solver):
 
 def test_simulate_waves_invalid_input_shape(solver):
 
-    with pytest.raises(ValueError, match=r"n_verts is the number of rows in `emodes` \(3636\)."):
+    with pytest.raises(ValueError, match=r"n_verts is the number of rows in emodes \(3636\)."):
         solver.simulate_waves(ext_input=np.ones((4002, 1000)))
 
 def test_simulate_waves_invalid_pde_method(solver):
@@ -142,7 +142,7 @@ def test_simulate_waves_invalid_pde_method(solver):
 @pytest.mark.filterwarnings("ignore:invalid value encountered in scalar subtract:RuntimeWarning")
 def test_simulate_waves_ode_balloon_overflow(solver):
 
-    # Large `dt` can cause overflow errors in the `dqdt` expression for the ODE balloon model, so
+    # Large dt can cause overflow errors in the dqdt expression for the ODE balloon model, so
     # test that our error is raised
     dt = 1
 
@@ -207,12 +207,12 @@ def test_calc_wave_speed(solver):
 
     # Homogeneous case
     speed = calc_wave_speed(r=18.0, gamma=116)
-    assert isinstance(speed, float), "Output type is not float for `hetero=None`."
+    assert isinstance(speed, float), "Output type is not float for hetero=None."
 
     # Heterogeneous case
     speed = calc_wave_speed(r=18.0, gamma=116, scaled_hetero=solver.hetero)
-    assert np.all(speed > 0), "Output contains non-positive wave speeds when using `scaled_hetero`."
-    assert speed.shape == (solver.n_verts,), "Output shape is incorrect when using `scaled_hetero`."
+    assert np.all(speed > 0), "Output contains non-positive wave speeds when using scaled_hetero."
+    assert speed.shape == (solver.n_verts,), "Output shape is incorrect when using scaled_hetero."
 
 def test_fem_alignment(solver):
     # Check that modal approximation aligns with FEM solution
