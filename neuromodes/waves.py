@@ -386,7 +386,7 @@ def _model_wave_fourier(
       3. Apply the frequency response (transfer function)
       4. Use fft to return to the time domain (with appropriate shifts)
     """
-    n_modes, nt = input_coeffs.shape
+    nt = input_coeffs.shape[1]
 
     # Pad input with zeros on negative side to ensure causality (system is only driven for t >= 0)
     # This is required for the correct Green's function solution of the damped wave equation.

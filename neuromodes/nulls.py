@@ -43,14 +43,14 @@ def eigenstrap(
     Parameters
     ----------
     data : array-like
-        Empirical brain map(s) of shape ``(n_verts,)`` or ``(n_verts, n_maps)`` to generate nulls from. If
-        ``n_maps > 1``, the same set of randomized rotations is applied to all maps for each null (see
-        Notes). 
+        Empirical brain map(s) of shape ``(n_verts,)`` or ``(n_verts, n_maps)`` to generate nulls
+        from. If ``n_maps > 1``, the same set of randomized rotations is applied to all maps for
+        each null (see Notes). 
     emodes : array-like
         The eigenmodes array of shape ``(n_verts, n_modes)``. This function rotates modes within
         eigengroups. Note that, unlike the original implementation [1]_, this requires the constant
-        mode (the first column) to be input too. By default (if ``n_groups`` is None), if the number of
-        eigenmodes is not a perfect square (i.e., the number of modes does not allow for complete
+        mode (the first column) to be input too. By default (if ``n_groups`` is None), if the number
+        of eigenmodes is not a perfect square (i.e., the number of modes does not allow for complete
         eigengroups), then the last incomplete eigengroup will be excluded.
     evals : array-like
         The eigenvalues array of shape ``(n_modes,)``. Note that, unlike the original
@@ -149,9 +149,9 @@ def eigenstrap(
        rate (FDR). See ref [1]_ for an example of how to compute the FDR.
 
     5. ``seed``. Seeding is handled in one or two stages. First, if ``seed`` is None or a scalar
-       integer, it is used to generate an array of size ``(n_nulls,)``. (If ``seed`` is already an array
-       of size ``(n_nulls,)``, it is used directly.) Then, each of the ``n_nulls`` seeds are used to
-       generate 3 new seeds: for rotations, randomisations, and residual permutations (if
+       integer, it is used to generate an array of size ``(n_nulls,)``. (If ``seed`` is already an
+       array of size ``(n_nulls,)``, it is used directly.) Then, each of the ``n_nulls`` seeds are
+       used to generate 3 new seeds: for rotations, randomisations, and residual permutations (if
        randomisations/permutations are not requested, these will be generated but not used). This
        ensures that the same seed will produce the same nulls regardless of how many nulls are
        generated (e.g., if n_nulls is increased from 10 to 100, the first 10 nulls will be
@@ -269,8 +269,7 @@ def eigenstrap(
         Imaging Neuroscience. https://doi.org/10.1162/IMAG.a.71
     """
     # Format / validate arguments
-    # data
-    data = np.asarray(data)  # chkfinite in decompose
+    data = np.asarray(data)
     if (is_vector_data := data.ndim == 1):
         data = data[:, np.newaxis]
     n_maps = data.shape[1]
@@ -317,8 +316,8 @@ def eigenstrap(
     else: # check that this is a valid array of seeds, one for each null
         seeds_main = np.asarray_chkfinite(seed)
         if seeds_main.shape != (n_nulls,):
-            raise ValueError(f"If `seed` is an array, it must have shape (n_nulls,) = ({n_nulls},), got "
-                             f"{seeds_main.shape}.")
+            raise ValueError(f"If `seed` is an array, it must have shape (n_nulls,) = ({n_nulls},),"
+                             f" got {seeds_main.shape}.")
         if not np.issubdtype(seeds_main.dtype, np.integer):
             raise ValueError(f"`seed` must be an integer or array of integers, got dtype "
                              f"{seeds_main.dtype}.")
@@ -377,7 +376,7 @@ def eigenstrap(
     nulls = np.tensordot(norm_emodes, tforms, axes=(1, 0)) # (n_verts, n_nulls, n_maps)
 
     # Optional post-processing steps
-    # Optionally add residuals of reconstruction
+    # Add residuals of reconstruction
     if residual is not None:
         residual_data = data - emodes @ coeffs # shape (n_verts, n_maps)
         if residual == 'add':
@@ -386,24 +385,44 @@ def eigenstrap(
             for i, s in enumerate(seeds_residual):
                 nulls[:, i, :] += np.random.default_rng(s).permutation(residual_data, axis=0)
 
-    # Optionally resample values to match stats of original data
+    # Resample values to match stats of original data
     if resample == 'exact':
-        sorted_data = np.sort(data, axis=0)[:, np.newaxis, :]
-        ranks = np.argsort(np.argsort(nulls, axis=0), axis=0)
-        nulls = np.take_along_axis(sorted_data, ranks, axis=0)
+        # check for NaNs / Infs
+        data_finite = np.isfinite(data)
+        if data_finite.all():
+            sorted_data = np.sort(data, axis=0)[:, np.newaxis, :]
+            ranks = np.argsort(np.argsort(nulls, axis=0), axis=0)
+            nulls = np.take_along_axis(sorted_data, ranks, axis=0)
+        else:
+            # Handle each pattern of non-finite values separately
+            unique_masks, mask_indices = np.unique(data_finite, axis=1, return_inverse=True)
+            for i, mask in enumerate(unique_masks.T):
+                map_idx = np.where(mask_indices == i)[0]
+                nulls_masked = nulls[mask][:, :, map_idx]
+
+                # Resample finite values
+                sorted_vals = np.sort(data[mask][:, map_idx], axis=0)[:, np.newaxis, :]
+                ranks = np.argsort(np.argsort(nulls_masked, axis=0), axis=0)
+                resampled = np.take_along_axis(sorted_vals, ranks, axis=0)
+
+                # Reinsert resampled values and preserve non-finite values
+                for j, map in enumerate(map_idx):
+                    nulls[mask, :, map] = resampled[:, :, j]
+                    nulls[~mask, :, map] = data[~mask, map][:, np.newaxis]
+
     elif resample == 'mean':
         nulls -= nulls.mean(axis=0, keepdims=True)
-        nulls += data.mean(axis=0)
+        nulls += np.nanmean(data, axis=0)
     elif resample == 'affine':
         nulls -= nulls.mean(axis=0, keepdims=True)
         nulls /= nulls.std(axis=0, keepdims=True)
-        nulls *= data.std(axis=0)
-        nulls += data.mean(axis=0)
+        nulls *= np.nanstd(data, axis=0)
+        nulls += np.nanmean(data, axis=0)
     elif resample == 'range': # to match original
         nulls -= nulls.min(axis=0, keepdims=True)
         nulls /= nulls.max(axis=0, keepdims=True)
-        nulls *= data.max(axis=0) - data.min(axis=0)
-        nulls += data.min(axis=0)
+        nulls *= np.nanmax(data, axis=0) - np.nanmin(data, axis=0)
+        nulls += np.nanmin(data, axis=0)
 
     if is_vector_data:
         nulls = nulls.squeeze(axis=2)
