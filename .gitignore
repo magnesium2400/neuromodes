@@ -23,6 +23,7 @@ MANIFEST
 
 # Documentation
 docs/_build/
+docs/generated/
 
 # PyBuilder
 .pybuilder/
@@ -40,7 +41,8 @@ __pypackages__/
 
 # Environments
 .env
-.venv
+.envrc
+.venv*
 env/
 venv/
 ENV/

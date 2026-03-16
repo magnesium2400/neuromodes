@@ -185,7 +185,7 @@ def fetch_map(
             f"Map '{filename}' not found. Please see {data_dir}/included_data.csv or "
             "https://github.com/NSBLab/neuromodes/blob/main/neuromodes/data/included_data.csv for a"
             " list of available data files."
-        )
+            )
 
 def _cache_output(
     function: Callable,

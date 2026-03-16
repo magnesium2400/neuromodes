@@ -17,4 +17,5 @@ repository <https://github.com/NSBLab/neuromodes/issues>`_.
    tutorials/calc_modes
    tutorials/recon_maps
    tutorials/wave_model
+   tutorials/eigenstrapping
    tutorials/GEM

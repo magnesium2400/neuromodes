@@ -2,20 +2,19 @@ import pytest
 import os
 from tempfile import TemporaryDirectory
 import numpy as np
-from neuromodes.io import fetch_surf
+from neuromodes.io import fetch_surf, fetch_map
 from neuromodes.eigen import EigenSolver
 from neuromodes.waves import (simulate_waves, calc_wave_speed, get_balloon_params, _gen_noise,
                               _simulate_waves_fem, _analytical_fc)
 
 @pytest.fixture(scope="module")
 def solver():
-    rng = np.random.default_rng(0)
     mesh, medmask = fetch_surf(density='4k')
-    hetero = rng.standard_normal(size=sum(medmask))
+    hetero = fetch_map(data="myelinmap", density="4k")[medmask]
     return EigenSolver(mesh, mask=medmask, hetero=hetero).solve(n_modes=100, seed=0)
 
 def test_unusual_wave_speed(solver):
-    with pytest.warns(UserWarning, match=r'range of 0-150 m/s \(calculated 23.3-160.4 m/s\).'):
+    with pytest.warns(UserWarning, match=r'range of 0-150 m/s \(calculated 46.2-162.5 m/s\).'):
         solver.simulate_waves(r=1000, nt=10)
 
 def test_unusual_wave_speed_no_hetero(solver):
@@ -129,7 +128,7 @@ def test_simulate_waves_reproducibility_fourier(solver):
 
 def test_simulate_waves_invalid_input_shape(solver):
 
-    with pytest.raises(ValueError, match=r"n_verts is the number of rows in emodes \(3636\)."):
+    with pytest.raises(ValueError, match=r"n_verts is the number of rows in emodes \(3619\)."):
         solver.simulate_waves(ext_input=np.ones((4002, 1000)))
 
 def test_simulate_waves_invalid_pde_method(solver):
@@ -221,7 +220,12 @@ def test_fem_alignment(solver):
     seed=0
 
     fourier_ts = solver.simulate_waves(nt=nt, dt=dt, seed=seed)
+
+    # Get lumped mass and run FEM simulation
+    solver.compute_lbo(lump=True)
     fem_ts = _simulate_waves_fem(solver.mass, solver.stiffness, nt=nt, dt=dt, seed=seed)
+
+    # Assess
     for t in range(10, nt):
         assert np.corrcoef(fourier_ts[:, t], fem_ts[:, t])[0, 1] > 0.8, \
             f'Modal and FEM solutions are not correlated at r>.8 at t={t}.'

@@ -128,6 +128,23 @@ API Reference
    unmask_data
    check_surf
 
+.. _ref_nulls:
+
+:mod:`neuromodes.nulls` - Generate null brain maps preserving spatial autocorrelation
+---------------------------------------------------------------
+
+.. automodule:: neuromodes.nulls
+   :no-members:
+   :no-inherited-members:
+
+.. currentmodule:: neuromodes.nulls
+
+.. autosummary::
+   :template: function.rst
+   :toctree: generated/
+
+   eigenstrap
+
 .. _ref_io:
 
 :mod:`neuromodes.io` - IO functions for loading cortical meshes and maps

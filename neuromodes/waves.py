@@ -124,10 +124,10 @@ def simulate_waves(
 
     References
     ----------
-    ..  [1] Pang, J. C., et al. (2023). Geometric constraints on human brain function. Nature.
-        https://doi.org/10.1038/s41586-023-06098-1
-    ..  [2] Barnes, V., et al. (2026). Regional heterogeneity shapes macroscopic wave dynamics of
+    ..  [1] Barnes, V., et al. (2026). Regional heterogeneity shapes macroscopic wave dynamics of
         the human and non-human primate cortex. bioRxiv. https://doi.org/10.64898/2026.01.22.701178
+    ..  [2] Pang, J. C., et al. (2023). Geometric constraints on human brain function. Nature.
+        https://doi.org/10.1038/s41586-023-06098-1
     ..  [3] Robinson, P. A., et al. (1997). Propagation and stability of waves of electrical
         activity in the cerebral cortex. Physical Review E. https://doi.org/10.1103/physreve.56.826
     """
@@ -315,9 +315,9 @@ def _gen_noise(
     seed: int
 ) -> NDArray:
     """
-    Generate reproducible Gaussian white noise of shape ``(n_verts, nt)`` for a given ``seed``. The
-    output is reproducible across nt (i.e., ``_gen_noise(n_verts, nt, seed) == _gen_noise(n_verts,
-    nt+k, seed)[:, :nt]``).
+    Generate reproducible white noise of shape ``(n_verts, nt)`` for a given ``seed``, derived from
+    a standard normal distribution. The output is reproducible across nt (i.e.,
+    ``_gen_noise(n_verts, nt, seed) == _gen_noise(n_verts, nt+k, seed)[:, :nt]``).
 
     Parameters
     ----------
@@ -717,8 +717,7 @@ def _simulate_waves_fem(
     cache_input: bool = False
 ) -> NDArray:
     """
-    Full FEM version of ``simulate_waves(..., bold_out=False)``, for validating the eigenmode
-    expansion approach.
+    Full FEM version of ``simulate_waves()``, for validating the eigenmode expansion approach.
     """
     # Lazy import to reduce load time for modal wave model
     from joblib import Parallel, delayed
@@ -733,10 +732,10 @@ def _simulate_waves_fem(
     if mass.get_shape() != (n_verts, n_verts) or stiffness.get_shape() != (n_verts, n_verts):
         raise ValueError("mass and stiffness must have shape (n_verts, n_verts).")
     mass_diag = mass.diagonal()
-    if np.any(mass_diag <= 0) or np.any(~np.isfinite(mass_diag)):
-        raise ValueError("mass matrix must have positive, finite diagonal entries.")
-    if not np.all(mass - diags(mass_diag, format='csc') == 0):
-        raise ValueError("mass matrix must be diagonal.")
+    mass_off_diag = mass - diags(mass_diag, format='csc')
+    if np.any(mass_diag <= 0) or np.any(~np.isfinite(mass_diag)) or mass_off_diag.nnz != 0:
+        raise ValueError("mass matrix must have positive, finite diagonal entries and no "
+                         "off-diagonal elements (lumped).")
     if np.any(stiffness.diagonal() < 0) or np.any(~np.isfinite(stiffness.diagonal())):
         raise ValueError("stiffness matrix must have non-negative, finite diagonal entries.")
     if r <= 0:
