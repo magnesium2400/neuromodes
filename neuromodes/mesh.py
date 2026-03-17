@@ -42,7 +42,7 @@ def mask_mesh(
                          "vertices in geometry.")
 
     # Remove vertices not in mask
-    v_masked = geometry.v[mask]
+    v_masked = geometry.v[mask].astype(np.float64)
 
     # Update vertex indices of elements (-1 represents removed vertices)
     v_map = np.full(len(mask), -1, dtype=int)

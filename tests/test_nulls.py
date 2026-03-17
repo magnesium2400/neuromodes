@@ -119,7 +119,8 @@ def test_residual_none(solver, test_data):
     nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, residual=None)
     recons = np.squeeze(solver.reconstruct(nulls, mode_counts=[solver.n_modes], metric=None)[0])
     residuals = nulls - recons
-    assert np.allclose(residuals, 0, atol=1e-6), \
+    
+    assert np.allclose(residuals, 0, atol=1e-10), \
         "Nulls should not have any residual added when residual=None"
 
 def test_residual_add(solver, test_data):
@@ -129,7 +130,7 @@ def test_residual_add(solver, test_data):
     nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, residual='add')
     null_recons = np.squeeze(solver.reconstruct(nulls, mode_counts=[solver.n_modes], metric=None)[0])
     null_residuals = nulls - null_recons
-    assert np.allclose(null_residuals, data_residuals[:,np.newaxis], atol=1e-5), \
+    assert np.allclose(null_residuals, data_residuals[:,np.newaxis]), \
         "Nulls should have residual added when residual='add'"
     
 def test_residual_permute(solver, test_data):

@@ -8,7 +8,6 @@ from warnings import warn
 from lapy import Solver
 import numpy as np
 from scipy.sparse import spmatrix
-from scipy.sparse.linalg import LinearOperator, eigsh, splu
 from neuromodes.io import read_surf
 from neuromodes.mesh import mask_mesh, check_surf
 
@@ -17,6 +16,7 @@ if TYPE_CHECKING:
     from lapy import TriaMesh
     from nibabel.gifti.gifti import GiftiImage
     from numpy import floating
+    from numpy.random import Generator
     from numpy.typing import NDArray, ArrayLike
 
 class EigenSolver(Solver):
@@ -200,11 +200,12 @@ class EigenSolver(Solver):
         n_modes: int, 
         standardize: bool = True,
         fix_mode1: bool = True,
+        lump: bool = False,
         atol: float = 1e-3,
         rtol: float = 1e-5,
         sigma: float | None = -0.01,
-        seed: int | ArrayLike | None = None, 
-        lump: bool = False,
+        seed: int | Generator | None = None, 
+        v0: ArrayLike | None = None
     ) -> EigenSolver:
         """
         Solves the generalized eigenvalue problem for the Laplace-Beltrami operator and compute
@@ -222,6 +223,9 @@ class EigenSolver(Solver):
             If ``True``, sets the first eigenmode to a constant value and the first eigenvalue to
             zero, as is expected analytically. Default is ``True``. See the ``is_orthonormal_basis``
             function for details.
+        lump: bool, optional
+            Whether to use a lumped mass matrix for the Laplace-Beltrami operator. Default is
+            ``False``.
         atol : float, optional
             Absolute tolerance for mass-orthonormality validation. Default is ``1e-3``.
         rtol : float, optional
@@ -229,15 +233,14 @@ class EigenSolver(Solver):
         sigma : float, optional
             Shift-invert parameter to speed up the computation of eigenvalues close to this value.
             Default is ``-0.01``.
-        seed : int or array-like, optional
-            Random seed for reproducibile generation of eigenvectors (which otherwise use an
-            iterative algorithm that starts with a random vector, meaning that repeated generation
-            of eigenmodes from the same mesh can have different orientations). Specify as an `int`
-            (to set the seed) or a vector with n_verts elements (to directly set the initialisation
-            vector). Default is ``None`` (not reproducible).
-        lump: bool, optional
-            Whether to use a lumped mass matrix for the Laplace-Beltrami operator. Default is
-            ``False``.
+        seed : int or numpy.random.Generator, optional
+            Random seed for the generation of the initialization vector (see below). If ``None``,
+            computed eigenmodes and eigenvalues will not be exactly identical across runs. Most
+            notably, the (arbitrary) signs of modes may flip. Default is ``None``.
+        v0 : array-like, optional
+            Initialization vector of shape ``(n_verts,)`` for the iterative solver. If ``None``, a
+            vector sampled uniformly over [-1, 1] will be generated using the specified ``seed``.
+            This parameter takes priority over ``seed``. Default is ``None``.
 
         Returns
         -------
@@ -249,7 +252,7 @@ class EigenSolver(Solver):
         ValueError
             If ``n_modes`` is not a positive integer less than ``n_verts``.
         ValueError
-            If ``seed`` is an array but does not have shape ``(n_verts,)``.
+            If ``v0`` is provided but does not have shape ``(n_verts,)``.
         AssertionError
             If computed eigenvalues or eigenmodes contain NaNs.
         """
@@ -259,57 +262,22 @@ class EigenSolver(Solver):
                              f" ({self.n_verts}).")
 
         # Compute the Laplace-Beltrami operator / set stiffness and mass matrices
-        if not hasattr(self, 'stiffness'):
-            self.compute_lbo(lump)
+        self.compute_lbo(lump)
         
         # Setup intitialization vector
-        v0 = None
-        rng = None
-        if seed is None or isinstance(seed, int):
-            rng = np.random.default_rng(seed)
-        else:
-            v0 = np.asarray_chkfinite(seed)
-            if not np.issubdtype(v0.dtype, np.floating):
-                raise ValueError("If `seed` is an array, it must be of a floating-point "
-                                 f"type, got dtype {v0.dtype}.")
+        if v0 is not None:
+            v0 = np.asarray_chkfinite(v0)
             if v0.shape != (self.n_verts,):
-                raise ValueError("seed must be None, an integer, or an array of shape (n_verts,) "
-                                 f"= {(self.n_verts,)}.")
+                raise ValueError(f"v0 must have shape (n_verts,) = {(self.n_verts,)}.")
 
         # Solve the eigenvalue problem
-        lu = splu(self.stiffness - sigma * self.mass)
-        op_inv = LinearOperator( 
-            matvec=lu.solve, # type: ignore
-            shape=self.stiffness.shape,
-            dtype=self.stiffness.dtype,
-        )
-
-        evals, emodes = eigsh(
-            self.stiffness,
-            k=n_modes,
-            M=self.mass,
-            sigma=sigma,
-            OPinv=op_inv,
-            v0=v0,
-            rng=rng
-        )
+        evals, emodes = self.eigs(k=n_modes, sigma=sigma, v0=v0, rng=seed)
 
         # Validate results
-        assert not (np.isnan(evals).any() or np.isnan(emodes).any()), (
-            "Computed eigenvalues or eigenmodes contain NaNs. This may indicate numerical "
-            "instability; consider adjusting sigma or checking mesh quality.")
-
         if not is_orthonormal_basis(emodes, self.mass, atol=atol, rtol=rtol):
             warn(f"Computed eigenmodes are not mass-orthonormal (atol={atol}, rtol={rtol}).")
 
         ## Post-process
-
-        # Sort modes by ascending eigenvalue (should already be sorted for sigma < 0)
-        if sigma >= 0:
-            sort_idx = np.argsort(evals)
-            evals = evals[sort_idx]
-            emodes = emodes[:, sort_idx]
-
         if fix_mode1:
             if sigma >= 0:
                 warn("Mode 1 will not be fixed to a constant when sigma >= 0, as the constant mode "

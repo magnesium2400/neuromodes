@@ -219,13 +219,12 @@ def eigenstrap(
           for compatibility, but not in ``rotation_method='qr'``.
 
        g. Use of first mode: This function uses the constant mode (first column of ``emodes``) and
-          its corresponding eigenvalue to generate mean-preserving nulls. In contrast, the original
-          implementation excludes the constant mode and its eigenvalue. Whereas in the original
-          implementation users were expected to input ``emodes`` and ``evals`` with the constant
-          mode/eigenvalue removed (something of the form ``emodes[:, 1:]`` and ``evals[1:]``), here
-          users are expected to input ``emodes`` and ``evals`` with the constant mode/eigenvalue
-          included. This has minimal changes to the functionality of the code, other than this
-          syntactic change.
+          its corresponding eigenvalue. In contrast, the original implementation excludes the
+          constant mode and its eigenvalue. Whereas in the original  implementation users were
+          expected to input ``emodes`` and ``evals`` with the constant mode/eigenvalue removed
+          (something of the form ``emodes[:, 1:]`` and ``evals[1:]``), here users are expected to
+          input ``emodes`` and ``evals`` with the constant mode/eigenvalue included. This has
+          minimal changes to the functionality of the code, other than this syntactic change.
 
        h. Concurrent processing of multiple maps. This function can process multiple maps at the
           same time. This was possible in the original implementation, but required users to save
@@ -345,10 +344,18 @@ def eigenstrap(
     else: 
         raise ValueError(f"Invalid rotation method '{rotation_method}'; must be 'qr' or 'scipy'.")
 
+    if evals[0] != 0:
+        warn("First eigenvalue is not exactly zero, as is analytically expected for geometric "
+             "eigenmodes. However, since the first mode is not rotated, this will not affect the "
+             "nulls.")
+    if emodes[:, 0].std() > 1e-12:
+        warn("First eigenmode is not exactly constant across vertices, as is analytically expected "
+             "for geometric eigenmodes. Computed nulls may be biased.")
+    evals[0] = 1 # No transform for constant mode (avoids division by zero)
+
     # Main calculations
     # Precompute transformed modes (ellipsoid -> spheroid for each eigengroup)
     sqrt_evals = np.sqrt(evals)
-    sqrt_evals[0] = 1 # No transform for constant mode (preserves mean and avoids division by zero)
     norm_emodes = emodes / sqrt_evals[np.newaxis, :] # sqrt_evals behaves like a row vector
     sqrt_evals = sqrt_evals[:, np.newaxis, np.newaxis] # turn it into 3D column vector for below broadcasting
 

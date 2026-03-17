@@ -8,7 +8,7 @@ keywords = ["python", "modelling", "neuroimaging", "eigenmodes", "brain-mapping"
 
 dependencies = [
     "joblib>=1.5.3",
-    "lapy @ git+https://github.com/Deep-MI/LaPy.git@main",
+    "lapy>=1.6.0",
     "nibabel>=5.2.1",
     "numpy>=1.24.4",
     "scipy>=1.10.1",

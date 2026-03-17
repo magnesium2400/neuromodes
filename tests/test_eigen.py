@@ -161,15 +161,36 @@ def test_seeded_modes(presolver):
     assert not (emodes1 == emodes3).all(), 'Modes from different seeds should not be identical.'
     assert not (evals1 == evals3).all(), 'Eigenvalues from different seeds should not be identical.'
 
+def test_generator_seeded_modes(presolver):
+    rng = np.random.default_rng(0)
+    presolver.solve(16, standardize=False, fix_mode1=False, seed=rng)
+    emodes1 = presolver.emodes
+    evals1 = presolver.evals
+
+    # Reset the generator to ensure the same sequence of random numbers
+    rng = np.random.default_rng(0)
+    presolver.solve(presolver.n_modes, standardize=False, fix_mode1=False, seed=rng)
+    emodes2 = presolver.emodes
+    evals2 = presolver.evals
+    assert (emodes1 == emodes2).all(), 'Modes from same seed generator are not identical.'
+    assert (evals1 == evals2).all(), 'Eigenvalues from same seed generator are not identical.'
+
+    rng = np.random.default_rng(1)
+    presolver.solve(presolver.n_modes, standardize=False, fix_mode1=False, seed=rng)
+    emodes3 = presolver.emodes
+    evals3 = presolver.evals
+    assert not (emodes1 == emodes3).all(), 'Modes from different seed generators are identical.'
+    assert not (evals1 == evals3).all(), 'Eigenvalues from different seed generators are identical.'
+
 def test_vector_seeded_modes(presolver):
     rng = np.random.default_rng(0)
     v0 = rng.standard_normal(size=presolver.n_verts)
-    presolver.solve(16, standardize=False, fix_mode1=False, seed=v0)
+    presolver.solve(16, standardize=False, fix_mode1=False, v0=v0)
     emodes1 = presolver.emodes
     evals1 = presolver.evals
 
     # Reuse the same seed vector
-    presolver.solve(presolver.n_modes, standardize=False, fix_mode1=False, seed=v0)
+    presolver.solve(presolver.n_modes, standardize=False, fix_mode1=False, v0=v0)
     emodes2 = presolver.emodes
     evals2 = presolver.evals
 
@@ -179,7 +200,7 @@ def test_vector_seeded_modes(presolver):
     rng = np.random.default_rng(1)
     v0_diff = rng.standard_normal(size=presolver.n_verts)
 
-    presolver.solve(presolver.n_modes, standardize=False, fix_mode1=False, seed=v0_diff)
+    presolver.solve(presolver.n_modes, standardize=False, fix_mode1=False, v0=v0_diff)
     emodes3 = presolver.emodes
     evals3 = presolver.evals
 
@@ -188,8 +209,8 @@ def test_vector_seeded_modes(presolver):
 
 def test_invalid_vector_seed(presolver):
     with pytest.raises(ValueError,
-                       match=r"of shape \(n_verts,\) = \(3619,\)."):
-        presolver.solve(16, seed=np.ones(10))
+                       match=r"v0 must have shape \(n_verts,\) = \(3619,\)."):
+        presolver.solve(16, v0=np.ones(10))
 
 @pytest.fixture(scope="module")
 def solver(presolver):
