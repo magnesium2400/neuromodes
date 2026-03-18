@@ -705,7 +705,7 @@ def _simulate_waves_fem(
     mass: spmatrix,
     stiffness: spmatrix,
     nt: int | None = None,
-    input: ArrayLike | None = None,
+    ext_input: ArrayLike | None = None,
     dt: float = 1e-4,
     r: float = 17.4,
     gamma: float = 116.0,
@@ -719,10 +719,15 @@ def _simulate_waves_fem(
     """
     Full FEM version of ``simulate_waves()``, for validating the eigenmode expansion approach.
     """
-    # Lazy import to reduce load time for modal wave model
-    from joblib import Parallel, delayed
-
     # Format / validate arguments
+    if n_jobs > 1:
+        try:
+            from joblib import Parallel, delayed
+        except ImportError:
+            warn("joblib is not installed; parallel computation of frequencies will be disabled. "
+                "Neuromodes can be installed with the 'cache' extra to include joblib as a "
+                "dependency (e.g., pip install neuromodes[cache]).")
+
     r = float(r)
     gamma = float(gamma)
     
@@ -746,8 +751,8 @@ def _simulate_waves_fem(
         raise ValueError("dt must be positive.")
     if nt is not None and (not isinstance(nt, int) or nt <= 0):
         raise ValueError("nt must be None or a positive integer.")
-    if nt is None and input is None:
-        raise ValueError("Either nt or input must be provided.")
+    if nt is None and ext_input is None:
+        raise ValueError("Either nt or ext_input must be provided.")
     if speed_limits is not None:
         if (not isinstance(speed_limits, tuple) or not len(speed_limits) == 2
             or speed_limits[0] < 0 or speed_limits[0] >= speed_limits[1]):
@@ -762,15 +767,15 @@ def _simulate_waves_fem(
                  f"{calc_str} m/s). Consider changing these parameters to ensure physiologically "
                  "plausible wave speeds, or adjust speed_limits.")
 
-    if input is not None:
-        input = np.asarray_chkfinite(input)
+    if ext_input is not None:
+        ext_input = np.asarray_chkfinite(ext_input)
         if nt is not None:
-            warn("nt is ignored when input is provided.")
+            warn("nt is ignored when ext_input is provided.")
         if seed is not None:
-            warn("seed is ignored when input is provided.")
+            warn("seed is ignored when ext_input is provided.")
         if cache_input:
-            warn("cache_input is ignored when input is provided.")
-        nt = input.shape[1]
+            warn("cache_input is ignored when ext_input is provided.")
+        nt = ext_input.shape[1]
     else:
         if cache_input and seed is not None:
             from neuromodes.io import _cache_output
@@ -796,15 +801,20 @@ def _simulate_waves_fem(
     temporal = -omega**2 / gamma**2 - 2j * omega / gamma + 1
 
     # Compute activity at each frequency
-    phi_freqs = Parallel(n_jobs=n_jobs, verbose=verbose)(
-        delayed(_solve_fem_freq)(
-                # Construct frequency-specific operator for wave equation
-            operator=spatial + temporal[k] * identity,
+    # Parallelise if joblib is available and n_jobs > 1
+    if n_jobs > 1 and 'Parallel' in globals():
+        phi_freqs = Parallel(n_jobs=n_jobs, verbose=verbose)(
+            delayed(_solve_fem_freq)(
+                    # Construct frequency-specific operator for wave equation
+                operator=spatial + temporal[k] * identity,
 
-                # Solve for this frequency's input
-                input=input_padded_freqs[:, k]
-                ) for k in range(2 * nt)
-                )
+                    # Solve for this frequency's input
+                    input=input_padded_freqs[:, k]
+                    ) for k in range(2 * nt)
+                    )
+    else:
+        phi_freqs = [_solve_fem_freq(spatial + temporal[k] * identity, input_padded_freqs[:, k])
+                     for k in range(2 * nt)]
     phi_freqs = np.stack(phi_freqs, axis=1)
 
     # Inverse transform to time domain, implemented as forward FFT for causality

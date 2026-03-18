@@ -1,7 +1,8 @@
-import pytest
 import os
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 import numpy as np
+import pytest
 from neuromodes.io import fetch_surf, fetch_map
 from neuromodes.eigen import EigenSolver
 from neuromodes.waves import (simulate_waves, calc_wave_speed, get_balloon_params, _gen_noise,
@@ -213,6 +214,14 @@ def test_calc_wave_speed(solver):
     assert np.all(speed > 0), "Output contains non-positive wave speeds when using scaled_hetero."
     assert speed.shape == (solver.n_verts,), "Output shape is incorrect when using scaled_hetero."
 
+def test_analytical_fc(solver):
+    sim_ts = solver.simulate_waves(nt=1000, dt=0.1, seed=0)
+    # Check that simulated FC from waves aligns with the analytical FC
+    ana_fc = _analytical_fc(solver.emodes, solver.evals, r=17.4, gamma=116)
+    sim_fc = np.corrcoef(sim_ts)
+    mse = np.mean((ana_fc - sim_fc)**2)
+    assert mse < 0.01, f"Analytical FC does not align with simulated FC (MSE={mse:.4f})."
+
 def test_fem_alignment(solver):
     # Check that modal approximation aligns with FEM solution
     nt=50
@@ -223,17 +232,31 @@ def test_fem_alignment(solver):
 
     # Get lumped mass and run FEM simulation
     solver.compute_lbo(lump=True)
-    fem_ts = _simulate_waves_fem(solver.mass, solver.stiffness, nt=nt, dt=dt, seed=seed)
+    fem_ts = _simulate_waves_fem(solver.mass, solver.stiffness, nt=nt, dt=dt, seed=seed, n_jobs=-1)
+
+    # Reset mass attribute
+    solver.compute_lbo(lump=False)
 
     # Assess
     for t in range(10, nt):
         assert np.corrcoef(fourier_ts[:, t], fem_ts[:, t])[0, 1] > 0.8, \
             f'Modal and FEM solutions are not correlated at r>.8 at t={t}.'
-        
-def test_analytical_fc(solver):
-    sim_ts = solver.simulate_waves(nt=1000, dt=0.1, seed=0)
-    # Check that simulated FC from waves aligns with the analytical FC
-    ana_fc = _analytical_fc(solver.emodes, solver.evals, r=17.4, gamma=116)
-    sim_fc = np.corrcoef(sim_ts)
-    mse = np.mean((ana_fc - sim_fc)**2)
-    assert mse < 0.01, f"Analytical FC does not align with simulated FC (MSE={mse:.4f})."
+
+def test_fem_no_joblib(solver):
+    # Check that FEM simulation runs without joblib installed
+    nt=2
+    dt=0.1
+    seed=0
+
+    with patch.dict('sys.modules', {'joblib': None}):
+        # Get lumped mass and run FEM simulation
+        solver.compute_lbo(lump=True)
+        with pytest.warns(UserWarning, match="joblib is not installed"):
+            fem_ts = _simulate_waves_fem(solver.mass, solver.stiffness, nt=nt, dt=dt, seed=seed,
+                                         n_jobs=-1)
+
+        # Reset mass attribute
+        solver.compute_lbo(lump=False)
+
+        assert fem_ts.shape == (solver.n_verts, nt), \
+            "FEM output shape is incorrect when joblib is not installed."
