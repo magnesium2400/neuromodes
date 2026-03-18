@@ -84,7 +84,6 @@ def test_nan_inf_hetero_medmask(surf_medmask_hetero):
     # Inject NaN/Inf at a cortical vertex (should raise error)
     surf, medmask, hetero = surf_medmask_hetero
     cortical_vertex = np.where(medmask)[0][0]
-    print(cortical_vertex)
     bad_hetero = hetero.copy()
     bad_hetero[cortical_vertex] = np.nan
     with pytest.raises(ValueError, match="array must not contain infs or NaNs"):

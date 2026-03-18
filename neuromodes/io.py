@@ -61,12 +61,10 @@ def read_surf(
         # Handle different file types
         if surf_str.endswith('.vtk'):
             return TriaMesh.read_vtk(surf_str)
+        elif surf_str.endswith('.gii'):
+            return TriaMesh.read_gifti(surf_str)
         elif surf_str.endswith(fs_extensions):
             return TriaMesh.read_fssurf(surf_str)
-        elif surf_str.endswith('.gii'):
-            surf_data = cast(GiftiImage, load(surf_str)).darrays
-            vertices=surf_data[0].data
-            faces=surf_data[1].data
         else:
             raise ValueError(
                 'surf must be a path-like string to a valid VTK (.vtk), GIFTI (.gii), or '
