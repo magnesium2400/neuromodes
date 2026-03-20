@@ -36,27 +36,27 @@ def test_fwhm_regression():
 def test_mode_to_group():
     idx = np.arange(22)
 
-    assert np.all(mode_to_group(idx, method='ceil') \
+    assert np.all(mode_to_group(idx, method='ceil') 
         == [0, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4])
-    assert np.all(mode_to_group(idx, method='floor') \
+    assert np.all(mode_to_group(idx, method='floor') 
         == [0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3])
-    assert np.all(mode_to_group(idx, method='round') \
+    assert np.all(mode_to_group(idx, method='round') 
         == [0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 4, 4])
     
-    assert np.allclose(mode_to_group(idx, method='raw'), \
+    assert np.allclose(mode_to_group(idx, method='raw'), 
         np.sqrt(np.arange(1,23)) - 1)
 
 def test_group_to_mode():
     idx = mode_to_group(np.arange(22), method='raw')
 
-    assert np.all(group_to_mode(idx, method='ceil') \
+    assert np.all(group_to_mode(idx, method='ceil') 
         == [0, 3, 3, 3, 8, 8, 8, 8, 8, 15, 15, 15, 15, 15, 15, 15, 24, 24, 24, 24, 24, 24])
-    assert np.all(group_to_mode(idx, method='floor') \
+    assert np.all(group_to_mode(idx, method='floor') 
         == [0, 0, 0, 3, 3, 3, 3, 3, 8,  8,  8,  8,  8,  8,  8, 15, 15, 15, 15, 15, 15, 15])
-    assert np.all(group_to_mode(idx, method='round') \
+    assert np.all(group_to_mode(idx, method='round') 
         == [0, 0, 3, 3, 3, 3, 8, 8, 8,  8,  8,  8, 15, 15, 15, 15, 15, 15, 15, 15, 24, 24])
     
-    assert np.allclose(group_to_mode(idx, method='raw'), \
+    assert np.allclose(group_to_mode(idx, method='raw'), 
         np.arange(22))
 
 def test_continuous_bijection():

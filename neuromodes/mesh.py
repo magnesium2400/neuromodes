@@ -28,6 +28,7 @@ def truncate_emodes(geometry: TriaMesh, vfunc, emodes, evals, mass, per_spectrum
     # TODO : probably change this so that per_spectrum represents total accuracy (eg from reconstruct)
     # rather than the percentage of the spectrum
     # TODO : check that the number of modes is not just the max (error if j is at the end)
+    # TODO : add option to return exact mode vs. complete group 
     if per_spectrum is not None:
         power = decompose(data=vfunc, emodes=emodes, mass=mass)**2
         power = power/np.sum(power)
@@ -43,6 +44,7 @@ def truncate_emodes(geometry: TriaMesh, vfunc, emodes, evals, mass, per_spectrum
         return group_to_mode(n_group, method='ceil') # make it the whole group
 
 # TODO : error if inputs are not integer
+# TODO : clarify that for inputs of the form n^2-1, all methods return n-1 
 def mode_to_group(mode_id: ArrayLike, method: str = 'ceil') -> Union[int, float, np.ndarray]:
     """
     Translates a linear mode index to its spherical harmonic group index.
@@ -58,7 +60,7 @@ def mode_to_group(mode_id: ArrayLike, method: str = 'ceil') -> Union[int, float,
     # For method, get the (function, outputtype)
     ops = {
         'ceil':  (np.ceil, int),        # includes current group if mode_id is anywhere in it
-        'floor': (np.floor, int),       # includes only complete groups <= mode_id
+        'floor': (np.floor, int),       # includes current group only if it is complete
         'round': (np.round, int),       # rounds to nearest group (if half, includes current group)
         'raw':   (lambda x: x, float)   # gives non-integer group index
     }
@@ -72,6 +74,7 @@ def mode_to_group(mode_id: ArrayLike, method: str = 'ceil') -> Union[int, float,
     result = func(np.sqrt(np.asarray(mode_id) + 1)).astype(outtype) - 1 # have to use asarray for list inputs
     return result.item() if np.isscalar(mode_id) else result
 
+# TODO : clarify that for inputs of the form n, all methods return (n+1)^2-1=n(n+2) 
 def group_to_mode(group_id: ArrayLike, method: str = 'ceil') -> Union[int, float, np.ndarray]:
     """
     Translates a spherical harmonic group index back to a linear mode index.
@@ -87,9 +90,9 @@ def group_to_mode(group_id: ArrayLike, method: str = 'ceil') -> Union[int, float
     """
     # For method, get the (function, outputtype)
     ops = {
-        'ceil':  (np.ceil, int),        # includes all modes, including all of the current group
-        'floor': (np.floor, int),       # includes only modes from complete groups <= group_id
-        'round': (np.round, int),       # rounds to nearest mode
+        'ceil':  (np.ceil, int),        # modes up to and including all of the current group
+        'floor': (np.floor, int),       # includes current group only if it is complete
+        'round': (np.round, int),       # rounds to nearest complete group
         'raw':   (lambda x: x, float)   # gives (possibly) non-integer mode index
     }
 
