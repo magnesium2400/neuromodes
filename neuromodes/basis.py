@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 def decompose(
     data: ArrayLike,
     emodes: ArrayLike,
+    n_modes: Union[int, None] = None,
     method: str = 'project',
     mass: Union[spmatrix, ArrayLike, None] = None,
     check_ortho: bool = True,
@@ -26,10 +27,12 @@ def decompose(
     Parameters
     ----------
     data : array-like
-        The input data array of shape (n_verts,) or (n_verts, n_maps), where n_verts is the number
-        of vertices and n_maps is the number of maps.
+        The input data array of shape (n_verts, ...), where n_verts is the number of vertices.
     emodes : array-like
-        The vectors array of shape (n_verts, n_modes), where n_modes is the number of basis vectors.
+        The vectors array of shape (n_verts, n_cols), where n_cols is the number of basis vectors.
+    n_modes : int, optional
+        The number of basis vectors to use for the decomposition. If `None`, all basis vectors are
+        used. Default is `None`.
     method : str, optional
         The method used for the decomposition, either `'project'` to project data into a
         mass-orthonormal space or `'regress'` for least-squares fitting. Note that the beta values
@@ -40,20 +43,20 @@ def decompose(
         `'project'`. If vectors are orthonormal in Euclidean space, leave as `None`. See
         `eigen.is_orthonormal_basis` for more details. Default is `None`.
     check_ortho : bool, optional
-        Whether to check if `emodes` are mass-orthonormal before using the `'project'` method. 
+        Whether to check if `emodes` are mass-orthonormal before using the `'project'` method.
         Default is `True`.
 
     Returns
     -------
     numpy.ndarray
-        The beta coefficients array of shape (n_modes, n_maps), obtained from the decomposition.
+        The beta coefficients array of shape (n_modes, ...), obtained from the decomposition.
     
     Raises
     ------
     ValueError
         If `emodes` does not have shape (n_verts, n_modes), where n_verts ≥ n_modes.
     ValueError
-        If `data` does not have shape (n_verts,) or (n_verts, n_maps).
+        If `data` does not have shape (n_verts, ...).
     ValueError
         If `method='project'` and `emodes` columns do not form an orthonormal basis set (when
         `check_ortho=True`).
@@ -61,33 +64,44 @@ def decompose(
         If `method` is not 'project' or 'regress'.
     """
     # Format / validate inputs
-    data = np.asarray_chkfinite(data)
     emodes = np.asarray_chkfinite(emodes)
-
-    if emodes.ndim != 2 or emodes.shape[0] <= emodes.shape[1]:
-        raise ValueError("`emodes` must have shape (n_verts, n_modes), where n_verts > n_modes.")
     n_verts = emodes.shape[0]
-    if data.ndim == 1:
-        data = data[:, np.newaxis]
-    if data.ndim != 2 or data.shape[0] != n_verts:
-        raise ValueError("`data` must have shape (n_verts,) or (n_verts, n_maps), where n_verts is "
+    if emodes.ndim != 2 or emodes.shape[0] < emodes.shape[1]:
+        raise ValueError("`emodes` must have shape (n_verts, n_modes), where n_modes <= n_verts.")
+
+    if n_modes is None: 
+        n_modes = emodes.shape[1]
+    else:
+        n_modes = int(n_modes)
+        if n_modes < 1 or n_modes > emodes.shape[1]:
+            raise ValueError(f"`n_modes` must be an integer between 1 and the number of columns in `emodes` ({emodes.shape[1]}).")
+    emodes_s = emodes[:, :n_modes] # selected emodes
+
+    data = np.asarray_chkfinite(data)
+    if data.shape[0] != n_verts:
+        raise ValueError("`data` must have shape (n_verts,...), where n_verts is "
                          f"the number of rows in `emodes` ({n_verts}).")
+    
     if method == 'project':
-        if check_ortho and not is_orthonormal_basis(emodes, mass):
+        if mass is not None and not isinstance(mass, spmatrix): # don't cast if sparse
+            mass = np.asarray_chkfinite(mass)
+        if check_ortho and not is_orthonormal_basis(emodes_s, mass):
             err_str = "in Euclidean space" if mass is None else "with the provided mass matrix"
             raise ValueError("The columns of `emodes` do not form an orthonormal basis set "
                              f"{err_str}. Consider providing a suitable `mass` matrix or using "
                              "`method='regress'`.")
-        if not isinstance(mass, (spmatrix, type(None))):
-            mass = np.asarray_chkfinite(mass)
     elif method != 'regress':
         raise ValueError(f"Invalid `method` '{method}'; must be 'project' or 'regress'.")
 
     # Decomposition
-    if method == 'project':
-        return emodes.T @ data if mass is None else emodes.T @ mass @ data
-    else:  # method == 'regress'
-        return np.linalg.lstsq(emodes, data)[0]
+    data_r = data.reshape(n_verts, -1) # data reshaped
+    if method == 'project' and mass is None:
+        coeffs = emodes_s.T @ data_r
+    elif method == 'project': # and mass is not None
+        coeffs = emodes_s.T @ (mass @ data_r) # faster if n_maps < n_modes 
+    else: # method == 'regress'
+        coeffs = np.linalg.lstsq(emodes_s, data_r)[0]
+    return coeffs.reshape((n_modes,) + data.shape[1:])
 
 def reconstruct(
     data: ArrayLike,

@@ -44,6 +44,13 @@ def test_decompose_invalid_method(solver):
                        match="Invalid `method` 'fornitonian'; must be 'project' or 'regress'."):
         decompose(np.ones(solver.n_verts), solver.emodes, method='fornitonian')
 
+def test_decompose_3d(solver): 
+    data = np.reshape(solver.emodes, (solver.n_verts, 2, 5))
+    beta = decompose(data=data, emodes=solver.emodes, mass=solver.mass)
+    expected = np.reshape(np.eye(solver.n_modes)[:, :2*5], (solver.n_modes, 2, 5))
+    np.testing.assert_allclose(beta, expected, atol=1e-4, \
+        err_msg='Decomposition of eigenmodes onto themselves did not yield identity coefficients for 3D data.')
+
 @pytest.fixture
 def gen_eigenmap(solver):
 
