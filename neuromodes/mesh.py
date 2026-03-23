@@ -4,19 +4,19 @@ Module for reading, validating, manipulating, and creating meshes of brain struc
 
 from __future__ import annotations
 from typing import TYPE_CHECKING
-from lapy import TriaMesh, TetMesh
+from lapy import TriaMesh
 import numpy as np
 
 if TYPE_CHECKING:
     from numpy.typing import ArrayLike, NDArray
 
 def mask_mesh(
-    geometry: TriaMesh | TetMesh,
+    geometry: TriaMesh,
     mask: ArrayLike
-) -> TriaMesh | TetMesh:
+) -> TriaMesh:
     """
-    Remove specified vertices and corresponding elements from a triangular surface or tetrahedral
-    volume mesh. Returns a ``lapy.TriaMesh`` or ``lapy.TetMesh`` object.
+    Remove specified vertices and corresponding elements from a triangular surface mesh. Returns a
+    ``lapy.TriaMesh`` object.
 
     Parameters
     ----------

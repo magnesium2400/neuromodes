@@ -42,7 +42,7 @@ def read_surf(
     ------
     ValueError
         If ``surf`` is a path-like string to an unsupported format.
-    ValueError
+    FileNotFoundError
         If ``surf`` is a path-like string to a file that does not exist.
     """
     if isinstance(surf, TriaMesh):
@@ -57,7 +57,7 @@ def read_surf(
         surf_str = str(surf)
         # check that file exists
         if not Path(surf_str).is_file():
-            raise ValueError(f'File not found: {surf_str}')
+            raise FileNotFoundError(f'File not found: {surf_str}')
         # Handle different file types
         if surf_str.endswith('.vtk'):
             return TriaMesh.read_vtk(surf_str)
@@ -127,8 +127,8 @@ def fetch_surf(
             medmask = cast(GiftiImage, load(fpath)).darrays[0].data.astype(bool)
         
         return surf, medmask
-    except Exception:
-        raise ValueError(
+    except FileNotFoundError:
+        raise FileNotFoundError(
             f"Surface data {surf_name} not found. Please see {data_dir}/included_data.csv or "
             "https://github.com/NSBLab/neuromodes/blob/main/neuromodes/data/included_data.csv for a"
             " list of available surfaces."
@@ -167,7 +167,7 @@ def fetch_map(
 
     Raises
     ------
-    ValueError
+    FileNotFoundError
         If the specified map data is not found in the ``neuromodes/data`` directory.
     """
     data_dir = files('neuromodes.data')
@@ -177,8 +177,8 @@ def fetch_map(
         with as_file(data_dir / filename) as fpath:
             return cast(GiftiImage, load(fpath)).darrays[0].data
     
-    except Exception:
-        raise ValueError(
+    except FileNotFoundError:
+        raise FileNotFoundError(
             f"Map '{filename}' not found. Please see {data_dir}/included_data.csv or "
             "https://github.com/NSBLab/neuromodes/blob/main/neuromodes/data/included_data.csv for a"
             " list of available data files."

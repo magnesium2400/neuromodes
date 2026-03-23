@@ -16,6 +16,9 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray, ArrayLike
     from scipy.spatial.distance import _MetricCallback, _MetricKind 
 
+nan_warning = ("data contains NaNs and/or Infs; these will be disregarded during decomposition by "
+               "masking corresponding vertices from data and emodes.")
+
 def decompose(
     data: ArrayLike,
     emodes: ArrayLike,
@@ -63,52 +66,52 @@ def decompose(
         If ``data`` contains NaNs or Infs and ``method='project'``.
     """
     # Format / validate inputs
-    if method == 'regress' and mass is not None:
+    if method == 'regress':
         mass = None
         if checks:  # Skip warning for EigenSolver, where mass is always passed in
             warn("mass is ignored when method='regress'.")
-    if checks:
-        emodes, _, mass = _validate_eigenvars(emodes=emodes, mass=mass,
-                                              check_ortho=(method == 'project'))[:3]
-
-    data = np.asarray(data)
-    if method not in ['project', 'regress']:
+    elif method != 'project':
         raise ValueError(f"Invalid method '{method}'; must be 'project' or 'regress'.")
+    
+    if checks:
+        check_ortho = (method == 'project')
+        emodes, _, mass = _validate_eigenvars(emodes=emodes, mass=mass, check_ortho=check_ortho)[:3]
+
     n_verts, n_modes = emodes.shape
+    data = np.asarray(data)
     if data.ndim == 1:
         data = data[:, np.newaxis]
     if data.ndim != 2 or data.shape[0] != n_verts:
         raise ValueError("data must have shape (n_verts,) or (n_verts, n_maps), where n_verts is "
                          f"the number of rows in emodes ({n_verts}).")
 
-    # Handle NaNs and Infs by masking out afflicted vertices
     data_finite = np.isfinite(data)
-    if not data_finite.all():
-        if method == 'project':
-            raise ValueError("data contains NaNs and/or Infs; decomposition must use "
-                             "method='regress' to handle these values.")
-        warn("data contains NaNs and/or Infs; these will be disregarded during decomposition by "
-             "masking corresponding vertices from data and emodes.")
-        
-        # Decompose separarely for each NaN/Inf pattern
-        masks, mask_indices = np.unique(data_finite, axis=1, return_inverse=True)
+    if data_finite.all():
+        # Standard decomposition
+        return _calc_beta(data, emodes, method, mass)
+    
+    # Handle NaNs and Infs by masking out afflicted vertices
+    if method == 'project':
+        raise ValueError("data contains NaNs and/or Infs; decomposition must use method='regress' "
+                         "to handle these values.")
+    warn(nan_warning)
+    
+    # Decompose separarely for each NaN/Inf pattern
+    masks, mask_indices = np.unique(data_finite, axis=1, return_inverse=True)
 
-        beta = np.empty((n_modes, data.shape[1]))
-        for i, mask in enumerate(masks.T):
-            # Get indices of maps with this NaN/Inf pattern
-            map_indices = np.where(mask_indices == i)[0]
+    beta = np.empty((n_modes, data.shape[1]))
+    for i, mask in enumerate(masks.T):
+        # Get indices of maps with this NaN/Inf pattern
+        map_indices = np.where(mask_indices == i)[0]
 
-            # Remove verts with NaNs/Inf in this group from data and emodes
-            data_masked = data[mask, :][:, map_indices]
-            emodes_masked = emodes[mask, :]
+        # Remove verts with NaNs/Inf in this group from data and emodes
+        data_masked = data[mask, :][:, map_indices]
+        emodes_masked = emodes[mask, :]
 
-            # Calculate beta coefficients for subset of data
-            beta[:, map_indices] = _calc_beta(data_masked, emodes_masked, method, mass)
-        
-        return beta
-
-    # Standard decompose
-    return _calc_beta(data, emodes, method, mass)
+        # Calculate beta coefficients for subset of data
+        beta[:, map_indices] = _calc_beta(data_masked, emodes_masked, method, mass)
+    
+    return beta
 
 def reconstruct(
     data: ArrayLike,
@@ -177,13 +180,16 @@ def reconstruct(
         If ``mode_counts`` is not a 1D array-like of integers within the range [1, ``n_modes``].
     """
     # Format / validate arguments
+    if checks:
+        check_ortho = (method == 'project')
+        emodes, _, mass = _validate_eigenvars(emodes=emodes, mass=mass, check_ortho=check_ortho)[:3]
+
+    n_verts, n_modes = emodes.shape
     data = np.asarray(data) # chkfinite in decompose
     if data.ndim == 1:
         data = data[:, np.newaxis]
     n_maps = data.shape[1]
-
-    n_verts, n_modes = emodes.shape
-
+    
     if mode_counts is None:
         mode_counts = np.arange(n_modes) + 1
     else:
@@ -200,12 +206,33 @@ def reconstruct(
         tmp = decompose(data, emodes[:, :np.max(mode_counts)], mass=mass,
                         method=method, checks=checks)
         beta = [tmp[:mq, :] for mq in mode_counts]
-    else:
-        beta = [
-            decompose(data, emodes[:, :mq], mass=None, method=method,
-                      checks=(checks if i == 0 else False))
-            for i, mq in enumerate(mode_counts)
-        ]
+    else:  # method == 'regress'
+        data_finite = np.isfinite(data)
+        if data_finite.all():
+            beta = [
+                decompose(data, emodes[:, :mq], mass=None, method=method, checks=False)
+                for mq in mode_counts
+            ]
+        else: # TODO: add mode_counts to decompose() to clean this up?
+            # Handle NaNs/Infs by masking out afflicted vertices
+            warn(nan_warning)
+            
+            # Decompose separarely for each NaN/Inf pattern
+            masks, mask_indices = np.unique(data_finite, axis=1, return_inverse=True)
+
+            beta = [np.empty((mq, data.shape[1])) for mq in mode_counts]
+            for i, mask in enumerate(masks.T):
+                # Get indices of maps with this NaN/Inf pattern
+                map_indices = np.where(mask_indices == i)[0]
+
+                # Remove verts with NaNs/Inf in this group from data and emodes
+                data_masked = data[mask, :][:, map_indices]
+                emodes_masked = emodes[mask, :]
+
+                # Calculate beta coefficients for subset of data
+                for i, mq in enumerate(mode_counts):
+                    beta[i][:, map_indices] = decompose(data_masked, emodes_masked[:, :mq], method,
+                                                         mass=None, checks=False)
 
     # Reconstruct maps from beta coefficients
     recon = np.empty((n_verts, n_recons, n_maps))
@@ -216,12 +243,15 @@ def reconstruct(
     recon_error = np.empty((n_recons, n_maps))
     if metric is not None:
         for i in range(n_maps):
-            recon_error[:, i] = cdist(
-                recon[:, :, i].T,
-                data[:, [i]].T,
-                metric=metric,
-                **cdist_kwargs
-                )[:, 0]
+            recons = recon[:, :, i]
+            empirical = data[:, [i]]
+
+            # Handle NaNs/Infs
+            if method == 'regress' and not (mask := data_finite[:, i]).all():
+                recons = recons[mask, :]
+                empirical = empirical[mask, :]
+
+            recon_error[:, i] = cdist(recons.T, empirical.T, metric=metric, **cdist_kwargs)[:, 0]
 
     return recon, recon_error, beta
 
