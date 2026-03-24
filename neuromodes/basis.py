@@ -62,20 +62,26 @@ def decompose(
         If ``data`` does not have shape ``(n_verts,)`` or ``(n_verts, n_maps)``.
     ValueError
         If ``method`` is not ``'project'`` or ``'regress'``.
-    ValueError
-        If ``data`` contains NaNs or Infs and ``method='project'``.
+
+    Notes
+    -----
+    If ``data`` contains NaNs or Infs, these will be disregarded during decomposition by masking
+    corresponding vertices from ``data``, ``emodes``, and ``mass``. Note that this can lead to
+    unexpected behaviour, such as extreme values in affected areas of the reconstructed data, or
+    extreme beta values. This appears particularly prevalent when using the ``'regress'`` method. 
     """
     # Format / validate inputs
-    if method == 'regress':
+    if method == 'regress' and mass is not None:
         mass = None
         if checks:  # Skip warning for EigenSolver, where mass is always passed in
             warn("mass is ignored when method='regress'.")
-    elif method != 'project':
-        raise ValueError(f"Invalid method '{method}'; must be 'project' or 'regress'.")
     
     if checks:
         check_ortho = (method == 'project')
         emodes, _, mass = _validate_eigenvars(emodes=emodes, mass=mass, check_ortho=check_ortho)[:3]
+
+    if method not in ['project', 'regress']:
+        raise ValueError("method must be either 'project' or 'regress'.")
 
     n_verts, n_modes = emodes.shape
     data = np.asarray(data)
@@ -91,9 +97,6 @@ def decompose(
         return _calc_beta(data, emodes, method, mass)
     
     # Handle NaNs and Infs by masking out afflicted vertices
-    if method == 'project':
-        raise ValueError("data contains NaNs and/or Infs; decomposition must use method='regress' "
-                         "to handle these values.")
     warn(nan_warning)
     
     # Decompose separarely for each NaN/Inf pattern
@@ -107,9 +110,10 @@ def decompose(
         # Remove verts with NaNs/Inf in this group from data and emodes
         data_masked = data[mask, :][:, map_indices]
         emodes_masked = emodes[mask, :]
+        mass_masked = mass[mask, :][:, mask] if mass is not None else None
 
         # Calculate beta coefficients for subset of data
-        beta[:, map_indices] = _calc_beta(data_masked, emodes_masked, method, mass)
+        beta[:, map_indices] = _calc_beta(data_masked, emodes_masked, method, mass_masked)
     
     return beta
 
@@ -178,6 +182,13 @@ def reconstruct(
     ------
     ValueError
         If ``mode_counts`` is not a 1D array-like of integers within the range [1, ``n_modes``].
+
+    Notes
+    -----
+    If ``data`` contains NaNs or Infs, these will be disregarded during decomposition by masking
+    corresponding vertices from ``data``, ``emodes``, and ``mass``. Note that this can lead to
+    unexpected behaviour, such as extreme values in affected areas of the reconstructed data, or
+    extreme beta values. This appears particularly prevalent when using the ``'regress'`` method.
     """
     # Format / validate arguments
     if checks:
@@ -206,14 +217,14 @@ def reconstruct(
         tmp = decompose(data, emodes[:, :np.max(mode_counts)], mass=mass,
                         method=method, checks=checks)
         beta = [tmp[:mq, :] for mq in mode_counts]
-    else:  # method == 'regress'
+    else:  # method == 'regress' (TODO: just add mode_counts to decompose() to clean this up?)
         data_finite = np.isfinite(data)
         if data_finite.all():
             beta = [
                 decompose(data, emodes[:, :mq], mass=None, method=method, checks=False)
                 for mq in mode_counts
             ]
-        else: # TODO: add mode_counts to decompose() to clean this up?
+        else:
             # Handle NaNs/Infs by masking out afflicted vertices
             warn(nan_warning)
             
@@ -334,6 +345,8 @@ def reconstruct_timeseries(
         If ``timeseries`` does not have shape ``(n_verts, n_timepoints)``.
     """
     # Format / validate arguments
+    if checks:
+        timeseries = np.asarray_chkfinite(timeseries)
     if np.ndim(timeseries) != 2:
         raise ValueError("timeseries must have shape (n_verts, n_timepoints).")
     
