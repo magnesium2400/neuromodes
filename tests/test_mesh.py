@@ -119,41 +119,45 @@ class TestModeGroupConversion:
             b = mode_to_group(group_to_mode(a, method='raw'), method='raw')
         np.testing.assert_array_almost_equal(a, b)
 
-def test_fwhm_wb():
-    ATOL = 1e-6
-    # Do some CSV parsing without using pandas
-    filename = Path(__file__).parent / 'test_data' / 'mesh_estimate_fwhm_results.csv'
-    with open(filename, mode='r', newline='') as csv_file:
-        csv_reader = csv.reader(csv_file, delimiter=',')
-        data_list = list(csv_reader)
-    header = data_list[0]  # first row is the header
+class TestFWHM:
 
-    # Compare with saved values
-    for row in data_list[1:]:
-        species = row[header.index('species')]
-        template = row[header.index('template')]
-        density = row[header.index('density')]
-        hemi = row[header.index('hemi')]
-        surf_type = row[header.index('surf_type')]
-        data = row[header.index('data')]
-        expected_fwhm = row[header.index('wbcommand_fwhm')]
 
-        mesh, _ = fetch_surf(surf_type=surf_type, template=template, species=species, density=density, hemi=hemi)
-        geometry = TriaMesh(mesh.vertices, mesh.faces)
-        vfunc = fetch_map(data=data, template=template, species=species, density=density, hemi=hemi)
-        estimated_fwhm = estimate_fwhm(geometry, vfunc, method='wb')
 
-        assert np.allclose(estimated_fwhm, float(expected_fwhm), atol=ATOL), \
-            f"Estimated FWHM ({estimated_fwhm}) does not match expected FWHM ({float(expected_fwhm)}) for {data}"
+    def test_fwhm_wb(self):
+        ATOL = 1e-6
+        # Do some CSV parsing without using pandas
+        filename = Path(__file__).parent / 'test_data' / 'mesh_estimate_fwhm_results.csv'
+        with open(filename, mode='r', newline='') as csv_file:
+            csv_reader = csv.reader(csv_file, delimiter=',')
+            data_list = list(csv_reader)
+        header = data_list[0]  # first row is the header
 
-@pytest.mark.parametrize("method_and_rtol", [('wb', 1e-1), ('fem', 1e-6)])
-def test_fwhm(method_and_rtol):
-    mesh, _ = fetch_surf(surf_type='sphere', density='4k')
-    solver = EigenSolver(mesh).solve(n_modes=25)
-    estimated_value = estimate_fwhm(solver.geometry, solver.emodes[:,1:], method=method_and_rtol[0])
-    theoretical_value = np.sqrt(8 * np.log(2) / solver.evals[1:])
-    assert np.allclose(estimated_value, theoretical_value, rtol=method_and_rtol[1]), \
-        f"Estimated value does not match theoretical value for method {method_and_rtol[0]}"
+        # Compare with saved values
+        for row in data_list[1:]:
+            species = row[header.index('species')]
+            template = row[header.index('template')]
+            density = row[header.index('density')]
+            hemi = row[header.index('hemi')]
+            surf_type = row[header.index('surf_type')]
+            data = row[header.index('data')]
+            expected_fwhm = row[header.index('wbcommand_fwhm')]
+
+            mesh, _ = fetch_surf(surf_type=surf_type, template=template, species=species, density=density, hemi=hemi)
+            geometry = TriaMesh(mesh.vertices, mesh.faces)
+            vfunc = fetch_map(data=data, template=template, species=species, density=density, hemi=hemi)
+            estimated_fwhm = estimate_fwhm(geometry, vfunc, method='wb')
+
+            assert np.allclose(estimated_fwhm, float(expected_fwhm), atol=ATOL), \
+                f"Estimated FWHM ({estimated_fwhm}) does not match expected FWHM ({float(expected_fwhm)}) for {data}"
+
+    @pytest.mark.parametrize("method_and_rtol", [('wb', 1e-1), ('fem', 1e-6)])
+    def test_fwhm(self, method_and_rtol):
+        mesh, _ = fetch_surf(surf_type='sphere', density='4k')
+        solver = EigenSolver(mesh).solve(n_modes=25)
+        estimated_value = estimate_fwhm(solver.geometry, solver.emodes[:,1:], method=method_and_rtol[0])
+        theoretical_value = np.sqrt(8 * np.log(2) / solver.evals[1:])
+        assert np.allclose(estimated_value, theoretical_value, rtol=method_and_rtol[1]), \
+            f"Estimated value does not match theoretical value for method {method_and_rtol[0]}"
 
 @pytest.fixture(scope="module")
 def solver(): 
