@@ -7,6 +7,55 @@ from numpy.typing import ArrayLike
 from neuromodes.eigen import EigenSolver
 from neuromodes.basis import decompose, reconstruct
 
+def truncate_emodes(geometry: TriaMesh, vfunc, evals, threshold, 
+                    emodes=None, mass=None, threshold_method='power',
+                    reconstruct_kwargs={}, output='group'): 
+    # TODO : probably change this so that per_spectrum represents total accuracy (eg from reconstruct)
+    # rather than the percentage of the spectrum
+    # TODO : check that the number of modes is not just the max (error if j is at the end)
+    # TODO : add option to return exact mode vs. complete group 
+    # TODO : add multi map support
+    if threshold_method == 'power':
+        if emodes is None or mass is None:
+            raise ValueError("emodes and mass must be provided when using power_threshold.")
+        vf = vfunc - np.average(vfunc, weights=mass.diagonal(), axis=0)
+        total_power = vf.T @ mass @ vf
+        total_threshold = total_power * (1 - threshold)
+        betas = decompose(vf, emodes=emodes, mass=mass)
+        power = np.cumsum(betas**2)
+        if power[-1] < total_threshold:
+            raise RuntimeError(f"Power threshold {threshold} is too low. Consider providing more modes or increasing threshold.")
+        n_mode = np.searchsorted(power, total_threshold, side='right')
+    elif threshold_method == 'error':
+        if emodes is None or mass is None:
+            raise ValueError("emodes and mass must be provided when using error_threshold.")
+        _, errors, _ = reconstruct(data=vfunc, emodes=emodes, mass=mass, **reconstruct_kwargs)
+        errors = np.squeeze(errors)
+        if threshold < errors[-1]: 
+            raise RuntimeError(f"Error threshold {threshold} is too low. Consider providing more modes or increasing threshold.")
+        n_mode = np.searchsorted(-errors, -threshold, side='right')
+    elif threshold_method == 'eigenvalue':
+        n_mode = np.searchsorted(evals, threshold, side='right')
+    elif threshold_method == 'wavelength': 
+        if threshold is None:
+            threshold = estimate_fwhm(geometry, vfunc, output='wavelength')
+        wavelengths = convert_from_eigenvalue(evals, output_type='wavelength')
+        if threshold < wavelengths[-1]:
+            raise RuntimeError(f"Wavelength threshold ({threshold}) is smaller than the wavelength of the highest mode ({wavelengths[-1]}). Please provide more modes.")
+        n_mode = np.searchsorted(-wavelengths, -threshold, side='right')
+    else: 
+        raise ValueError("Incorrect threshold_method specified.")
+
+    if n_mode == len(evals):
+        warn("All modes are needed to meet the threshold. Consider providing more modes or increasing threshold.")
+
+    if output == 'mode': 
+        return n_mode+1
+    elif output == 'group':
+        return mode_to_group(n_mode, method='ceil')+1
+    else: 
+        raise ValueError("Output must be either 'mode' or 'group'.")
+
 def estimate_fwhm(surf: TriaMesh | Solver | EigenSolver, vfunc, method='fem', roi_mask=None, output='fwhm'):
     if method == 'wb':
         if isinstance(surf, TriaMesh):
@@ -27,7 +76,7 @@ def estimate_fwhm(surf: TriaMesh | Solver | EigenSolver, vfunc, method='fem', ro
         elif isinstance(surf, TriaMesh):
             stiffness, mass = Solver._fem_tria(surf) # TODO : Check lump (true? false? either? default?)
         else:
-            raise ValueError("For 'fem' method, geometry must be either a Solver instance or a TriaMesh instance.")
+            raise ValueError("For 'fem' method, geometry must be a Solver/EigenSolver/TriaMesh instance.")
         return _estimate_fwhm_fem(mass, stiffness, vfunc, output=output)
     
     else:
@@ -47,11 +96,10 @@ def _estimate_fwhm_wb(geometry: TriaMesh, vfunc, roi_mask=None, output='fwhm'):
     # Main computation
     vg = np.var(data, axis=0, ddof=0)                         # global variance
     vl = np.mean((data[rows, :] - data[cols, :])**2, axis=0)  # local variance
-    # In accordance with wb_command, use whole mesh mean edge length (not just mask)
-    fwhm = geometry.avg_edge_length() * np.sqrt(-2 * np.log(2) / np.log(1 - vl / (2 * vg)))
     
-    lambda_eff = convert_to_eigenvalue(fwhm, input_type='fwhm')
-    return convert_from_eigenvalue(lambda_eff, output_type=output)
+    # In accordance with wb_command, use whole mesh mean edge length (not just mask)
+    lambda_eff = -4 * np.log(1 - vl / (2 * vg)) / geometry.avg_edge_length()**2
+    return convert_from_eigenvalue(lambda_eff, output_type=output) # alternate expression, but same as wb_command
 
 def _estimate_fwhm_fem(mass, stiffness, vfunc, output='fwhm'):
     # Vm = \Sigma_{i=1}^N \beta_i^2 (where \beta_i is the coefficient of mode i in the decomposition of vfunc)
@@ -70,49 +118,7 @@ def _estimate_fwhm_fem_local(mass, stiffness, vfunc, output='fwhm'):
     Vs = vf * (stiffness @ vf) - 0.5 * (stiffness @ vf**2)
     lambda_eff = Vs / Vm
     return convert_from_eigenvalue(lambda_eff, output_type=output)
-     
-def truncate_emodes(geometry: TriaMesh, vfunc, evals, emodes=None, mass=None, 
-                    error_threshold=None, power_threshold=None, wavelength_threshold=None, 
-                    reconstruct_kwargs={}, output='group'): 
-    # TODO : probably change this so that per_spectrum represents total accuracy (eg from reconstruct)
-    # rather than the percentage of the spectrum
-    # TODO : check that the number of modes is not just the max (error if j is at the end)
-    # TODO : add option to return exact mode vs. complete group 
-    if error_threshold is not None:
-        if emodes is None or mass is None:
-            raise ValueError("emodes and mass must be provided when using error_threshold.")
-        _, errors, _ = reconstruct(data=vfunc, emodes=emodes, mass=mass, **reconstruct_kwargs)
-        errors = np.squeeze(errors)
-        if error_threshold < errors[-1]: 
-            raise RuntimeError(f"Error threshold {error_threshold} is too low. Consider providing more modes or increasing threshold.")
-        n_mode = np.searchsorted(-errors, -error_threshold, side='right')
-    elif power_threshold is not None:
-        if emodes is None or mass is None:
-            raise ValueError("emodes and mass must be provided when using power_threshold.")
-        vf = vfunc - np.average(vfunc, weights=mass.diagonal(), axis=0)
-        total_power = vf.T @ mass @ vf
-        total_threshold = total_power * (1 - power_threshold)
-        betas = decompose(vf, emodes=emodes, mass=mass)
-        power = np.cumsum(betas**2)
-        if power[-1] < total_threshold:
-            raise RuntimeError(f"Power threshold {power_threshold} is too low. Consider providing more modes or increasing threshold.")
-        n_mode = np.searchsorted(power, total_threshold, side='right')
-    else: 
-        if wavelength_threshold is None:
-            wavelength_threshold = estimate_fwhm(geometry, vfunc, output='wavelength')
-        wavelengths = convert_from_eigenvalue(evals, output_type='wavelength')
-        if wavelength_threshold < wavelengths[-1]:
-            raise RuntimeError(f"Wavelength threshold ({wavelength_threshold}) is smaller than the wavelength of the highest mode ({wavelengths[-1]}). Please provide more modes.")
-        n_mode = np.searchsorted(-wavelengths, -wavelength_threshold, side='right')
-
-    if output == 'mode': 
-        return n_mode+1
-    elif output == 'group':
-        return mode_to_group(n_mode, method='ceil')+1
-    else: 
-        raise ValueError("Output must be either 'mode' or 'group'.")
-
-# TODO : error if inputs are not integer
+  
 # TODO : clarify that for inputs of the form n^2-1, all methods return n-1 
 def mode_to_group(mode_id: ArrayLike, method: str = 'ceil') -> Union[int, float, np.ndarray]:
     """
@@ -140,8 +146,11 @@ def mode_to_group(mode_id: ArrayLike, method: str = 'ceil') -> Union[int, float,
     func, outtype = ops[method]
     
     # Calcs
-    result = func(np.sqrt(np.asarray(mode_id) + 1)).astype(outtype) - 1 # have to use asarray for list inputs
-    return result.item() if np.isscalar(mode_id) else result
+    mode_id_arr = np.asarray(mode_id)
+    if not np.issubdtype(mode_id_arr.dtype, np.integer):
+        warn("mode_id should be an integer or array of integers.")
+    result = func(np.sqrt(mode_id_arr + 1)).astype(outtype) - 1 
+    return result.item() if np.isscalar(mode_id_arr) else result
 
 # TODO : clarify that for inputs of the form n, all methods return (n+1)^2-1=n(n+2) 
 def group_to_mode(group_id: ArrayLike, method: str = 'ceil') -> Union[int, float, np.ndarray]:
@@ -178,9 +187,11 @@ def convert_to_eigenvalue(value, input_type='fwhm', area=None):
     if input_type == 'eigenvalue': 
         return value
     elif input_type == 'wavelength':
-        return (2 * np.pi / value)**2
+        with np.errstate(divide='ignore'):
+            return (2 * np.pi / value)**2
     elif input_type == 'fwhm':
-        return 8 * np.log(2) / value**2
+        with np.errstate(divide='ignore'):
+            return 8 * np.log(2) / value**2
     elif input_type == 'group':
         if area is None:
             raise ValueError("Area must be provided when input_type is 'group'.")
@@ -211,4 +222,3 @@ def convert_from_eigenvalue(eigenvalue, output_type='fwhm', area=None):
         return eigenvalue * area / (4 * np.pi)
     else:
         raise ValueError("Incorrect output_type specified")
-
