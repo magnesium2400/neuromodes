@@ -12,12 +12,15 @@ def truncate_emodes(geometry: TriaMesh, vfunc, threshold,
                     threshold_kwargs=None, output='group'): 
 
     # Prelims
-    n_maps = vfunc.shape[1] if vfunc.ndim > 1 else 1
+    vf = np.asarray(vfunc, copy=True)
+    vf = vf if vf.ndim > 1 else vf[:, np.newaxis] # ensure 2d for consistent processing
+    n_maps = vf.shape[1]
+    
     physical_threshold = threshold_method in ['eigenvalue', 'wavelength', 'fwhm']
 
     if threshold is None:
         if physical_threshold:
-            thresholds = estimate_fwhm(geometry, vfunc, output=threshold_method)
+            thresholds = estimate_fwhm(geometry, vf, output=threshold_method)
         else: 
             raise ValueError(f"Threshold must be provided for threshold_method={threshold_method}.")
     elif np.isscalar(threshold):
@@ -34,17 +37,15 @@ def truncate_emodes(geometry: TriaMesh, vfunc, threshold,
     if threshold_method == 'decompose':
         if emodes is None or mass is None:
             raise ValueError(f"emodes and mass must be provided when using threshold_method='{threshold_method}'.")
-        vf = vfunc - np.average(vfunc, weights=mass.diagonal(), axis=0)
+        vf -= np.average(vf, weights=mass.diagonal(), axis=0)
+        betas = decompose(vf, emodes=emodes, mass=mass, **threshold_kwargs)
+        ascending_data = np.cumsum(betas**2, axis=0)
         total_power = np.sum(vf * (mass @ vf), axis=0) # = np.diag(vf.T @ mass @ vf)
         thresholds = total_power * (1 - thresholds)
-        betas = decompose(vf, emodes=emodes, mass=mass, **threshold_kwargs)
-        power = np.cumsum(betas**2, axis=0)
-        ascending_data = power[:,np.newaxis] if power.ndim == 1 else power
     elif threshold_method == 'reconstruct':
         if emodes is None or mass is None:
             raise ValueError(f"emodes and mass must be provided when using threshold_method='{threshold_method}'.")
-        _, errors, _ = reconstruct(data=vfunc, emodes=emodes, mass=mass, **threshold_kwargs)
-        errors = errors[:,np.newaxis] if errors.ndim == 1 else errors
+        _, errors, _ = reconstruct(data=vf, emodes=emodes, mass=mass, **threshold_kwargs)
         ascending_data = -errors
         thresholds = -thresholds
     elif threshold_method == 'eigenvalue':
@@ -61,17 +62,17 @@ def truncate_emodes(geometry: TriaMesh, vfunc, threshold,
         raise ValueError("Incorrect threshold_method specified.")
 
     # Find the required mode for each map
+    # If the threshold is physical, keep only the modes that are strictly below the threshold
+    # It the threshold is statistical, use the first mode that crosses the threshold 
     side = 'right' if physical_threshold else 'left' 
     n_mode = [np.searchsorted(ascending_data[:,i], thresholds[i], side=side) for i in range(n_maps)]
     n_mode = np.array(n_mode)
-    if np.any(n_mode == ascending_data.shape[0]):
-        warn("All modes are needed to meet the threshold. Consider providing more modes or changing threshold.")
+    if (failed_indices := np.where(n_mode == ascending_data.shape[0])[0]).size > 0:
+        warn(f"Threshold not met for map(s) [{', '.join(map(str, failed_indices))}]. "
+             f"All available modes were used. Consider providing more modes or loosening the threshold.")
+    n_mode += not physical_threshold # this is the number of modes to use i.e. the first excluded mode
 
     # Return
-    # if the threshold is physical, keep only the modes that are strictly below the threshold
-    # otherwise, use the first mode that crosses the threshold 
-    n_mode += not physical_threshold # this is the number of modes to use = the first excluded mode
-
     if output == 'mode': 
         result = n_mode
     elif output == 'group':

@@ -192,23 +192,93 @@ class TestFWHM:
         assert not np.isinf(fwhm_2d).any()
 
 class TestTruncateEmodes:
-    @pytest.mark.parametrize("threshold_method", ['decompose', 'reconstruct'])
-    def test_truncate_emodes_1d(self, solver, threshold_method):
-        betas = np.random.randn(solver.n_modes, 1)
-        for n_zeros in range(1, solver.n_modes-2):
-            # Create data using only part of the mode basis
-            vfunc = solver.emodes @ np.vstack((betas[:-n_zeros], np.zeros((n_zeros,1))))
-            expected_groups = np.ceil(np.sqrt(solver.n_modes - n_zeros)).astype(int)
-            
-            # Expected and actual outputs
-            out = truncate_emodes(geometry=solver.geometry, vfunc=vfunc, 
-                emodes=solver.emodes, evals=solver.evals, mass=solver.mass, 
-                threshold_method=threshold_method, threshold=1e-8)
-            assert out == expected_groups, \
-                f"Expected {expected_groups} groups, but got {out} groups when truncating {n_zeros} modes."
+    # Test correctness of decompose
+    def test_truncate_emodes_decompose(self, solver):
+        betas = np.random.default_rng().standard_normal((solver.n_modes, 1))
+        betas[0] = 0
+        vfunc = solver.emodes @ betas 
 
+        power = np.cumsum(betas**2)
+        power = power / power[-1]
+        
+        kmin = 3
+        thresholds = 1 - (power[kmin-1:-1] + power[kmin:]) / 2
+
+        for i in range(kmin, solver.n_modes - 1):
+            out = truncate_emodes(
+                geometry=solver.geometry, 
+                vfunc=vfunc, 
+                emodes=solver.emodes, 
+                mass=solver.mass, 
+                threshold_method='decompose', 
+                threshold=thresholds[i - kmin], 
+                output='mode'
+            )
+            assert out == i + 1, f"Expected {i + 1} modes, but got {out}."
+
+    # Test correctness of reconstruct
+    def test_truncate_emodes_reconstruct(self, solver):
+        betas = np.random.default_rng().standard_normal((solver.n_modes, 1))
+        betas[0] = 0
+        vfunc = solver.emodes @ betas 
+
+        _, errors, _ = solver.reconstruct(data=vfunc)
+
+        kmin = 3
+        thresholds = (errors[kmin-1:-1] + errors[kmin:]) / 2
+
+        for i in range(kmin, solver.n_modes - 1):
+            out = truncate_emodes(
+                geometry=solver.geometry, 
+                vfunc=vfunc, 
+                emodes=solver.emodes, 
+                mass=solver.mass, 
+                threshold_method='reconstruct', 
+                threshold=thresholds[i - kmin], 
+                output='mode'
+            )
+            assert out == i + 1, f"Expected {i + 1} modes, but got {out}."
+    
+    # Test correctness of physical methods
+    @pytest.mark.parametrize("threshold_method", ['eigenvalue', 'fwhm', 'wavelength'])
+    def test_truncate_emodes_physical(self, solver, threshold_method):
+        kmin = 3
+        thresholds = (solver.evals[kmin-1:-1] + solver.evals[kmin:]) / 2
+        thresholds = convert_from_eigenvalue(thresholds, output=threshold_method)
+
+        for i in range(kmin, solver.n_modes - 1):
+            out = truncate_emodes(
+                geometry=solver.geometry, 
+                vfunc=solver.emodes[:, i],
+                evals=solver.evals, 
+                threshold_method=threshold_method, 
+                threshold=thresholds[i - kmin], 
+                output='mode'
+            )
+            assert out == i, f"Expected {i} modes, but got {out}."
+
+    # Test auto-thresholding for physical methods
+    @pytest.mark.parametrize("threshold_method", ['eigenvalue', 'fwhm', 'wavelength'])
+    def test_truncate_emodes_auto_threshold(self, solver, threshold_method):
+        """Tests that passing threshold=None successfully triggers the FWHM estimator."""
+        idx = np.random.default_rng().integers(1, solver.n_modes-1)
+        vfunc = solver.emodes[:, idx] # Use a specific mode as the map
+        
+        # It should run without raising errors
+        out_mode = truncate_emodes(
+            geometry=solver.geometry, 
+            vfunc=vfunc, 
+            threshold=None, # Trigger auto-fallback
+            evals=solver.evals, 
+            threshold_method=threshold_method, 
+            output='mode'
+        )
+        assert isinstance(out_mode, (int, np.integer))
+        assert 0 < out_mode <= idx + 1
+
+    # Test correctness of statistical thresholding using maps with some betas=0 
     @pytest.mark.parametrize("threshold_method", ['decompose', 'reconstruct'])
-    def test_truncate_emodes_2d_a(self, solver, threshold_method):
+    def test_truncate_emodes_2d_statistical(self, solver, threshold_method):
         betas = np.random.default_rng().integers(1, 2, size=(solver.n_modes, solver.n_modes-3))
         filt = 1 - np.tri(*betas.shape, k=-3).astype(int) 
         vfunc = solver.emodes @ (betas * filt)
@@ -218,8 +288,9 @@ class TestTruncateEmodes:
             threshold_method=threshold_method, threshold=1e-8, output='mode')
         assert np.array_equal(out, expected_modes)
 
+    # Test correctness of physical thresholding using maps with some betas=0
     @pytest.mark.parametrize("threshold_method", ['eigenvalue', 'fwhm', 'wavelength'])
-    def test_truncate_emodes_2d_b(self, solver, threshold_method):
+    def test_truncate_emodes_2d_physical(self, solver, threshold_method):
         betas = np.random.default_rng().integers(1, 2, size=(solver.n_modes, solver.n_modes-3))
         filt = 1 - np.tri(*betas.shape, k=-3).astype(int) 
         vfunc = solver.emodes @ (betas * filt)
@@ -230,3 +301,25 @@ class TestTruncateEmodes:
             emodes=solver.emodes, evals=solver.evals, mass=solver.mass, 
             threshold_method=threshold_method, threshold=thresholds, output='mode')
         assert np.array_equal(out, expected_modes)
+
+    # Test some exceptions
+    def test_truncate_emodes_exceptions(self, solver):
+        """Tests that missing requirements trigger the correct errors."""
+        vfunc = solver.emodes[:, 1]
+        
+        # Missing emodes/mass for decompose
+        with pytest.raises(ValueError, match="emodes and mass must be provided"):
+            truncate_emodes(geometry=solver.geometry, vfunc=vfunc, threshold=0.05, 
+                            threshold_method='decompose')
+            
+        # Missing evals for physical properties
+        with pytest.raises(ValueError, match="evals must be provided"):
+            truncate_emodes(geometry=solver.geometry, vfunc=vfunc, threshold=10.0, 
+                            threshold_method='wavelength')
+            
+        # Mismatched threshold array length
+        vfunc_2d = solver.emodes[:, 1:3] # 2 maps
+        with pytest.raises(ValueError, match="Length of threshold array must match"):
+            truncate_emodes(geometry=solver.geometry, vfunc=vfunc_2d, threshold=[0.05], # Only 1 threshold
+                            emodes=solver.emodes, mass=solver.mass)
+            
