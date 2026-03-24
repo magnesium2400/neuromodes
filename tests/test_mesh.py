@@ -36,8 +36,8 @@ class TestEigenvalueConversion:
         """Tests that converting to and from an eigenvalue returns the original array."""
         area = 100.0
         values1 = np.array([0.5, 1.0, 2.5, 10.0, 100.0])
-        evals = convert_to_eigenvalue(values1, input_type=ctype, area=area)
-        values2 = convert_from_eigenvalue(evals, output_type=ctype, area=area)
+        evals = convert_to_eigenvalue(values1, input=ctype, area=area)
+        values2 = convert_from_eigenvalue(evals, output=ctype, area=area)
         assert_allclose(values1, values2)
 
     # Exception and validation Tests
@@ -51,7 +51,7 @@ class TestEigenvalueConversion:
     @pytest.mark.parametrize('direction', [convert_to_eigenvalue, convert_from_eigenvalue])
     def test_invalid_type_errors(self, direction):
         """Tests that unrecognized string types trigger ValueErrors."""
-        with pytest.raises(ValueError, match=r"Incorrect .*type specified"):
+        with pytest.raises(ValueError, match=r"Incorrect .*put specified"):
             direction(5.0, 'frequency')
 
     # Zero and inf
@@ -119,10 +119,22 @@ class TestModeGroupConversion:
             b = mode_to_group(group_to_mode(a, method='raw'), method='raw')
         np.testing.assert_array_almost_equal(a, b)
 
+@pytest.fixture(scope="module")
+def solver(): 
+    mesh, _ = fetch_surf(surf_type='sphere', density='4k')
+    return EigenSolver(mesh).solve(n_modes=100)
+
 class TestFWHM:
+    # Test that (i) both methods run on 2d data; (ii) 'fem' is very close to theory; (iii) 'wb'
+    # approximately equals theory
+    @pytest.mark.parametrize("method_and_rtol", [('wb', 1e-1), ('fem', 1e-6)])
+    def test_fwhm(self, solver, method_and_rtol):
+        estimated_value = estimate_fwhm(solver.geometry, solver.emodes[:,1:], method=method_and_rtol[0])
+        theoretical_value = np.sqrt(8 * np.log(2) / solver.evals[1:])
+        assert np.allclose(estimated_value, theoretical_value, rtol=method_and_rtol[1]), \
+            f"Estimated value does not match theoretical value for method {method_and_rtol[0]}"
 
-
-
+    # Test that 'wb' is very close to values previously computed using wb_command
     def test_fwhm_wb(self):
         ATOL = 1e-6
         # Do some CSV parsing without using pandas
@@ -150,30 +162,71 @@ class TestFWHM:
             assert np.allclose(estimated_fwhm, float(expected_fwhm), atol=ATOL), \
                 f"Estimated FWHM ({estimated_fwhm}) does not match expected FWHM ({float(expected_fwhm)}) for {data}"
 
-    @pytest.mark.parametrize("method_and_rtol", [('wb', 1e-1), ('fem', 1e-6)])
-    def test_fwhm(self, method_and_rtol):
-        mesh, _ = fetch_surf(surf_type='sphere', density='4k')
-        solver = EigenSolver(mesh).solve(n_modes=25)
-        estimated_value = estimate_fwhm(solver.geometry, solver.emodes[:,1:], method=method_and_rtol[0])
-        theoretical_value = np.sqrt(8 * np.log(2) / solver.evals[1:])
-        assert np.allclose(estimated_value, theoretical_value, rtol=method_and_rtol[1]), \
-            f"Estimated value does not match theoretical value for method {method_and_rtol[0]}"
-
-@pytest.fixture(scope="module")
-def solver(): 
-    mesh, _ = fetch_surf(surf_type='sphere', density='4k')
-    return EigenSolver(mesh).solve(n_modes=25)
-
-def test_truncate_emodes(solver):
-    betas = np.random.randn(solver.n_modes, 1)
-    for n_zeros in range(1, solver.n_modes-2):
-        # Create data using only part of the mode basis
-        vfunc = solver.emodes @ np.vstack((betas[:-n_zeros], np.zeros((n_zeros,1))))
-        expected_groups = np.ceil(np.sqrt(solver.n_modes - n_zeros)).astype(int)
+    # Test that roi_mask runs without errors and produces different results than global FWHM (but
+    # doesn't text actual correctness)
+    # TODO : add correctness tests for method fem (what is ground truth)? 
+    @pytest.mark.parametrize("method", ['wb', 'fem'])
+    def test_roi_mask_execution(self, solver, method):
+        """Tests that the roi_mask successfully evaluates without shape errors."""
+        # Create a dummy mask (e.g., just the first half of the vertices)
+        num_vertices = solver.geometry.v.shape[0]
+        mask = np.zeros(num_vertices, dtype=bool)
+        mask[:num_vertices // 2] = True
         
-        # Expected and actual outputs
+        # Test 1D array
+        vfunc_1d = solver.emodes[:, 1]
+        fwhm_1d = estimate_fwhm(solver, vfunc_1d, method=method, roi_mask=mask)
+        assert isinstance(fwhm_1d, float)
+        assert not np.isnan(fwhm_1d)
+        
+        # Verify FWHM is actually different than the global FWHM
+        global_fwhm = estimate_fwhm(solver, vfunc_1d, method=method, roi_mask=None)
+        assert fwhm_1d != global_fwhm
+
+        # Test 2D array
+        vfunc_2d = solver.emodes[:, 1:]
+        fwhm_2d = estimate_fwhm(solver, vfunc_2d, method=method, roi_mask=mask)
+        assert isinstance(fwhm_2d, np.ndarray)
+        assert fwhm_2d.shape == (solver.n_modes - 1,)
+        assert not np.isnan(fwhm_2d).any()
+        assert not np.isinf(fwhm_2d).any()
+
+class TestTruncateEmodes:
+    @pytest.mark.parametrize("threshold_method", ['decompose', 'reconstruct'])
+    def test_truncate_emodes_1d(self, solver, threshold_method):
+        betas = np.random.randn(solver.n_modes, 1)
+        for n_zeros in range(1, solver.n_modes-2):
+            # Create data using only part of the mode basis
+            vfunc = solver.emodes @ np.vstack((betas[:-n_zeros], np.zeros((n_zeros,1))))
+            expected_groups = np.ceil(np.sqrt(solver.n_modes - n_zeros)).astype(int)
+            
+            # Expected and actual outputs
+            out = truncate_emodes(geometry=solver.geometry, vfunc=vfunc, 
+                emodes=solver.emodes, evals=solver.evals, mass=solver.mass, 
+                threshold_method=threshold_method, threshold=1e-8)
+            assert out == expected_groups, \
+                f"Expected {expected_groups} groups, but got {out} groups when truncating {n_zeros} modes."
+
+    @pytest.mark.parametrize("threshold_method", ['decompose', 'reconstruct'])
+    def test_truncate_emodes_2d_a(self, solver, threshold_method):
+        betas = np.random.default_rng().integers(1, 2, size=(solver.n_modes, solver.n_modes-3))
+        filt = 1 - np.tri(*betas.shape, k=-3).astype(int) 
+        vfunc = solver.emodes @ (betas * filt)
+        expected_modes = filt.sum(axis=0)
         out = truncate_emodes(geometry=solver.geometry, vfunc=vfunc, 
             emodes=solver.emodes, evals=solver.evals, mass=solver.mass, 
-            threshold_method='power', threshold=1e-8)
-        assert out == expected_groups, \
-            f"Expected {expected_groups} groups, but got {out} groups when truncating {n_zeros} modes."
+            threshold_method=threshold_method, threshold=1e-8, output='mode')
+        assert np.array_equal(out, expected_modes)
+
+    @pytest.mark.parametrize("threshold_method", ['eigenvalue', 'fwhm', 'wavelength'])
+    def test_truncate_emodes_2d_b(self, solver, threshold_method):
+        betas = np.random.default_rng().integers(1, 2, size=(solver.n_modes, solver.n_modes-3))
+        filt = 1 - np.tri(*betas.shape, k=-3).astype(int) 
+        vfunc = solver.emodes @ (betas * filt)
+        thresholds = [solver.evals[i-1] for i in filt.sum(axis=0)]
+        thresholds = convert_from_eigenvalue(thresholds, output=threshold_method)
+        expected_modes = filt.sum(axis=0)
+        out = truncate_emodes(geometry=solver.geometry, vfunc=vfunc, 
+            emodes=solver.emodes, evals=solver.evals, mass=solver.mass, 
+            threshold_method=threshold_method, threshold=thresholds, output='mode')
+        assert np.array_equal(out, expected_modes)
