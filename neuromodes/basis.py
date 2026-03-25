@@ -72,7 +72,6 @@ def decompose(
     """
     # Format / validate inputs
     if method == 'regress' and mass is not None:
-        mass = None
         if checks:  # Skip warning for EigenSolver, where mass is always passed in
             warn("mass is ignored when method='regress'.")
     
@@ -81,7 +80,7 @@ def decompose(
         emodes, _, mass = _validate_eigenvars(emodes=emodes, mass=mass, check_ortho=check_ortho)[:3]
 
     if method not in ['project', 'regress']:
-        raise ValueError("method must be either 'project' or 'regress'.")
+        raise ValueError(f"Invalid method '{method}'; must be 'project' or 'regress'.")
 
     n_verts, n_modes = emodes.shape
     data = np.asarray(data)
@@ -110,7 +109,7 @@ def decompose(
         # Remove verts with NaNs/Inf in this group from data and emodes
         data_masked = data[mask, :][:, map_indices]
         emodes_masked = emodes[mask, :]
-        mass_masked = mass[mask, :][:, mask] if mass is not None else None
+        mass_masked = mass[mask, :][:, mask] if mass is not None else None # TODO: recalculate diagonal?
 
         # Calculate beta coefficients for subset of data
         beta[:, map_indices] = _calc_beta(data_masked, emodes_masked, method, mass_masked)

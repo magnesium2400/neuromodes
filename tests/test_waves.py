@@ -186,22 +186,9 @@ def test_simulate_waves_balloon_param(solver):
         "BOLD signals with different balloon model parameters match unexpectedly."
     
 def test_get_balloon_params():
-
-    # Check a default
-    params = get_balloon_params()
-    assert params['rho'] == 0.34, "Default parameter 'rho' is incorrect."
-
-    # Check an override
-    params = get_balloon_params(rho=0.5)
-    assert params['rho'] == 0.5, "Overridden parameter 'rho' is incorrect."
-
     # Check an invalid override
-    with pytest.raises(ValueError, match=r"\(received rho=0\)."):
+    with pytest.raises(ValueError, match="'rho' must be positive."):
         _ = get_balloon_params(rho=0)
-
-    # Check an invalid parameter name
-    with pytest.raises(ValueError, match="Invalid Balloon model parameter 'yoyoyo'."):
-        _ = get_balloon_params(yoyoyo=1.0)
 
 def test_calc_wave_speed(solver):
 

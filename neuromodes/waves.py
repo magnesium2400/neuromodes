@@ -475,61 +475,72 @@ def _model_wave_ode(
 
     return mode_coeffs
 
-def get_balloon_params(**overrides) -> dict:
+def get_balloon_params(
+    kappa: float = 0.65,
+    gamma_h: float = 0.41,
+    tau: float = 0.98,
+    alpha: float = 0.32,
+    rho: float = 0.34,
+    V_0: float = 0.02,
+    w_f: float = 0.56,
+    k1: float = 3.72,
+    k2: float = 0.527,
+    k3: float = 0.48
+) -> dict:
     """
     Return balloon model parameters with optional overrides.
     
     Parameters
     ----------
-    **overrides
-        Balloon model parameters to override default values. Must be positive.
+    kappa : float, optional
+        Signal decay rate in seconds^-1. Default is ``0.65``.
+    gamma_h : float, optional
+        Rate of elimination in seconds^-1. Default is ``0.41``.
+    tau : float, optional
+        Hemodynamic transit time in seconds. Default is ``0.98``.
+    alpha : float, optional
+        Grubb's exponent (unitless). Default is ``0.32``.
+    rho : float, optional
+        Resting oxygen extraction fraction (unitless). Default is ``0.34``.
+    V_0 : float, optional
+        Resting blood volume fraction (unitless). Default is ``0.02``.
+    w_f : float, optional
+        Frequency of blood flow response in radians per second. Default is ``0.56``.
+    k1 : float, optional
+        First coefficient in BOLD signal equation (unitless). Default is ``3.72``.
+    k2 : float, optional
+        Second coefficient in BOLD signal equation (unitless). Default is ``0.527``.
+    k3 : float, optional
+        Third coefficient in BOLD signal equation (unitless). Default is ``0.48``.
         
     Returns
     -------
     dict
         Balloon model parameters.
-        - ``kappa``: Signal decay rate [s^-1]. Default is ``0.65``.
-        - ``gamma_h``: Rate of elimination [s^-1]. Default is ``0.41``.
-        - ``tau``: Hemodynamic transit time [s]. Default is ``0.98``.
-        - ``alpha``: Grubb's exponent [unitless]. Default is ``0.32``.
-        - ``rho``: Resting oxygen extraction fraction [unitless]. Default is ``0.34``.
-        - ``V_0``: Resting blood volume fraction [unitless]. Default is ``0.02``.
-        - ``w_f``: Frequency of blood flow response [rad/s]. Default is ``0.56``.
-        - ``k1``, ``k2``, ``k3"": Coefficients for BOLD signal equation [unitless]. Defaults are
-        ``3.72``, ``0.527``, and ``0.48``, respectively.
     
     Raises
     ------
     ValueError
-        If any provided balloon model parameter name is invalid.
-    ValueError
         If any provided balloon model parameter is not positive.
     """
-    
-    # Get default values
+    # Construct parameter dictionary
     params = {
-        'kappa': 0.65,
-        'gamma_h': 0.41,
-        'tau': 0.98,
-        'alpha': 0.32,
-        'rho': 0.34,
-        'V_0': 0.02,
-        'w_f': 0.56,
-        'k1': 3.72,
-        'k2': 0.527,
-        'k3': 0.48
+        'kappa': kappa,
+        'gamma_h': gamma_h,
+        'tau': tau,
+        'alpha': alpha,
+        'rho': rho,
+        'V_0': V_0,
+        'w_f': w_f,
+        'k1': k1,
+        'k2': k2,
+        'k3': k3
     }
 
-    # Validate and apply overrides
-    for param, value in overrides.items():
-        if param not in params:
-            raise ValueError(f"Invalid Balloon model parameter '{param}'. See get_balloon_params() "
-                             "for valid parameters.")
-        if value <= 0 or np.isnan(value) or np.isinf(value):
-            raise ValueError("All Balloon model parameters must be positive and finite (received "
-                             f"{param}={value}).")
-
-    params.update(overrides)
+    # Check that all are positive
+    for param_name, param_value in params.items():
+        if param_value <= 0:
+            raise ValueError(f"Balloon model parameter '{param_name}' must be positive.")
 
     return params
 

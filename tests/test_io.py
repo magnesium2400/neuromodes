@@ -13,7 +13,7 @@ def test_fetch_surf():
         for species in ['human', 'macaque', 'marmoset']:
             for density in ['4k', '32k']:
                 if species != 'human' and density == '4k':
-                    with raises(ValueError, match="Surface data .* not found"):
+                    with raises(FileNotFoundError, match="Surface data .* not found"):
                         fetch_surf(species=species, hemi=hemi, density=density)
                     continue
 
@@ -28,7 +28,7 @@ def test_fetch_surf():
                 check_surf(surf)  # Should not raise
 
 def test_fetch_invalid_surf():
-    with raises(ValueError, match="Surface data .* not found"):
+    with raises(FileNotFoundError, match="Surface data .* not found"):
         fetch_surf(surf_type='makessense')
 
 def test_fetch_gradient():
@@ -37,7 +37,7 @@ def test_fetch_gradient():
     assert grad.shape == (32492,)
 
 def test_fetch_invalid_map():
-    with raises(ValueError, match="Map 'sp-human_tpl-fsLR_den-32k_hemi-L_panshifu.func.gii'.*"):
+    with raises(FileNotFoundError, match="Map 'sp-human_tpl-fsLR_den-32k_hemi-L_panshifu.func.gii'.*"):
         fetch_map('panshifu')
 
 def test_read_surf_dict():
@@ -61,7 +61,7 @@ def test_read_surf_vtk():
 
 def test_read_surf_invalid():
     invalid_path = Path(__file__).parent / 'test_data' / 'civilised_lunch.surf.vtk'
-    with raises(ValueError, match="File not found: .*civilised_lunch.surf.vtk"):
+    with raises(FileNotFoundError, match="File not found: .*civilised_lunch.surf.vtk"):
         read_surf(invalid_path)
 
 def test_read_surf_freesurfer():
