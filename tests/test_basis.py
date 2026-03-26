@@ -19,13 +19,13 @@ def test_decompose_eigenmodes(solver):
         beta = decompose(data, emodes, mass=solver.mass)
 
         # The mode should load onto only itself due to orthogonality
-        beta_expected = np.zeros((solver.n_modes, 1))
-        beta_expected[i, 0] = 1
-        assert np.allclose(beta, beta_expected, atol=1e-4), f'Decomposition of mode {i+1} failed.'
+        beta_expected = np.zeros((solver.n_modes,))
+        beta_expected[i] = 1
+        assert np.allclose(beta, beta_expected, atol=1e-4), f'Decomposition of mode {i} failed.'
 
 def test_decompose_invalid_data_shape(solver):
 
-    with pytest.raises(ValueError, match=r"emodes \(3619\)."):
+    with pytest.raises(ValueError, match=r"data.*first dimension.*3619"):
         decompose(np.ones(4002), solver.emodes, mass=solver.mass)
 
 def test_decompose_nan_inf_mode(solver):
@@ -81,14 +81,12 @@ def test_decompose_nans(solver_32k):
     ], axis=0)
 
     # Add noise to modes and mass to match shapes (+100 vertices)
-    noise = np.random.default_rng(0).standard_normal(
-         extraverts * solver_32k.n_modes
-        ).reshape((extraverts, solver_32k.n_modes))
+    noise = np.random.default_rng().standard_normal((extraverts, solver_32k.n_modes))
     modes_noise = np.concatenate([solver_32k.emodes, noise], axis=0)
 
     # emodes/mass get masked according to the nans/infs in data, leading to original beta values
-    with pytest.warns(UserWarning, match="data and emodes"):
-        beta_masked = decompose(data_naninfs, modes_noise, method='regress', checks=False)
+    with pytest.warns(UserWarning, match="values detected in data"):
+        beta_masked = decompose(data_naninfs, modes_noise, method='regress', checks='maps')
     assert np.allclose(beta, beta_masked, atol=1e-4), \
         'Beta values for project method are not close when data contains NaNs/Infs'
 
@@ -204,7 +202,7 @@ def test_reconstruct_real_map_32k(solver_32k):
 
 def test_reconstruct_invalid_map_shape(solver):
 
-    with pytest.raises(ValueError, match=r"emodes \(3619\)."):
+    with pytest.raises(ValueError, match=r"data.*first dimension.*3619"):
         reconstruct(np.ones(4002), solver.emodes, mass=solver.mass)
 
 def test_reconstruct_massless(solver):

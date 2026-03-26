@@ -10,7 +10,7 @@ from warnings import warn
 import numpy as np
 from scipy.stats import special_ortho_group
 from neuromodes.basis import decompose
-from neuromodes.eigen import _validate_eigendata, get_eigengroup_inds
+from neuromodes.eigen import EigenData, get_eigengroup_inds
 
 if TYPE_CHECKING:
     from scipy.sparse import csc_matrix
@@ -30,7 +30,7 @@ def eigenstrap(
     decomp_method: str = 'project',
     mass: csc_matrix | None = None,
     seed: int | NDArray | None = None,
-    checks: bool = True,
+    checks: bool | str = True,
 ) -> NDArray[floating]:
     """
     Generate spatial null maps via eigenstrapping [1]_.
@@ -264,8 +264,8 @@ def eigenstrap(
         Imaging Neuroscience. https://doi.org/10.1162/IMAG.a.71
     """
     # Format / validate arguments
-    if checks:
-        ved = _validate_eigendata(emodes=emodes, evals=evals, mass=mass, check_ortho=(decomp_method=='project'))
+    if checks is not False:
+        ved = EigenData(emodes=emodes, evals=evals, mass=mass, checks=checks)
         emodes, evals, mass = ved.emodes, ved.evals, ved.mass
 
     data = np.asarray(data)

@@ -8,7 +8,7 @@ from typing import Tuple, TYPE_CHECKING
 from warnings import warn
 import numpy as np
 from scipy.spatial.distance import cdist
-from neuromodes.eigen import _validate_eigendata
+from neuromodes.eigen import EigenData
 from neuromodes.mesh import mask_laplacian
 
 if TYPE_CHECKING:   
@@ -25,7 +25,7 @@ def decompose(
     emodes: NDArray[floating],
     method: str = 'project',
     mass: csc_matrix | None = None,
-    checks: bool = True,
+    checks: bool | str = True,
 ) -> NDArray[floating]:
     """
     Calculate the decomposition of the given data onto a basis set.
@@ -76,56 +76,45 @@ def decompose(
         raise ValueError(f"Invalid method '{method}'; must be 'project' or 'regress'.")
     
     if method == 'regress' and mass is not None:
-        if checks:  # Skip warning for EigenSolver, where mass is always passed in
+        if checks is True or checks == 'ortho':  # Skip warning for EigenSolver, where mass is always passed in
             warn("mass is ignored when method='regress'.")
     
-    if checks:
-        ved = _validate_eigendata(emodes=emodes, mass=mass, check_ortho=(method == 'project'))
-        emodes, mass = ved.emodes, ved.mass 
+    if checks is not False: 
+        ved = EigenData(emodes=emodes, mass=mass, data=data, checks=checks)
+        emodes, mass, data = ved.emodes, ved.mass, ved.data
 
     n_verts, n_modes = emodes.shape
-    data = np.asarray(data)
-    if data.ndim == 1:
-        data = data[:, np.newaxis]
-    if data.ndim != 2 or data.shape[0] != n_verts:
-        raise ValueError("data must have shape (n_verts,) or (n_verts, n_maps), where n_verts is "
-                         f"the number of rows in emodes ({n_verts}).")
-
+    data_dims = data.shape[1:]
+    data_r = data.reshape(n_verts, -1)
+    
     data_finite = np.isfinite(data)
-    if data_finite.all():
-        # Standard decomposition
-        return _calc_beta(data, emodes, method, mass)
+    if data_finite.all(): # Standard decomposition
+        beta_r = _calc_beta(data_r, emodes, method, mass)
+    else: # Handle NaNs and Infs by masking out afflicted vertices (separately for each NaN/Inf pattern)
+        masks, mask_indices = np.unique(data_finite, axis=1, return_inverse=True)
+        beta_r = np.empty((n_modes, data_r.shape[1]))
+        for i, mask in enumerate(masks.T):
+            # Get indices of maps with this NaN/Inf pattern
+            # Remove verts with NaNs/Inf in this group from data and emodes
+            # Calculate beta coefficients for subset of data
+            map_indices = np.where(mask_indices == i)[0]
+            beta_r[:, map_indices] = _calc_beta(
+                data = data_r[mask, :][:, map_indices], 
+                emodes = emodes[mask, :], 
+                method = method,
+                mass = mask_laplacian(stiffness=None, mass=mass, mask=mask)[1]
+            )
     
-    # Handle NaNs and Infs by masking out afflicted vertices
-    warn(nan_warning)
-    
-    # Decompose separarely for each NaN/Inf pattern
-    masks, mask_indices = np.unique(data_finite, axis=1, return_inverse=True)
-
-    beta = np.empty((n_modes, data.shape[1]))
-    for i, mask in enumerate(masks.T):
-        # Get indices of maps with this NaN/Inf pattern
-        map_indices = np.where(mask_indices == i)[0]
-
-        # Remove verts with NaNs/Inf in this group from data and emodes
-        data_masked = data[mask, :][:, map_indices]
-        emodes_masked = emodes[mask, :]
-        mass_masked = mask_laplacian(stiffness=None, mass=mass, mask=mask)[1]
-        # mass_masked = mass[mask, :][:, mask] if mass is not None else None # TODO: recalculate diagonal?
-
-        # Calculate beta coefficients for subset of data
-        beta[:, map_indices] = _calc_beta(data_masked, emodes_masked, method, mass_masked)
-    
-    return beta
+    return np.reshape(beta_r, (n_modes,) + data_dims)
 
 def reconstruct(
-    data: NDArray,
+    data: ArrayLike,
     emodes: NDArray,
     method: str = 'project',
     mass: csc_matrix | None = None,
     mode_counts: ArrayLike | None = None,
     metric: _MetricCallback | _MetricKind | None = 'correlation',
-    checks: bool = True,
+    checks: bool | str = True,
     **cdist_kwargs
 ) -> Tuple[NDArray[floating], NDArray[floating], list[NDArray[floating]]]:
     """
@@ -192,8 +181,8 @@ def reconstruct(
     extreme beta values. This appears particularly prevalent when using the ``'regress'`` method.
     """
     # Format / validate arguments
-    if checks:
-        ved = _validate_eigendata(emodes=emodes, mass=mass, check_ortho=(method == 'project'))
+    if checks is not False:
+        ved = EigenData(emodes=emodes, mass=mass, checks=checks)
         emodes, mass = ved.emodes, ved.mass
 
     n_verts, n_modes = emodes.shape
@@ -274,7 +263,7 @@ def reconstruct_timeseries(
     mass: csc_matrix | None = None,
     mode_counts: ArrayLike | None = None,
     metric: _MetricCallback | _MetricKind | None = 'correlation',
-    checks: bool = True,
+    checks: bool | str = True,
     **cdist_kwargs
 ) -> Tuple[NDArray[floating], NDArray[floating], NDArray[floating], NDArray[floating],
            list[NDArray[floating]]]:

@@ -9,7 +9,7 @@ from warnings import warn
 import numpy as np
 from scipy.integrate import solve_ivp
 from scipy.sparse import csc_matrix, linalg, eye, diags
-from neuromodes.eigen import _validate_eigendata
+from neuromodes.eigen import EigenData
 from neuromodes.basis import decompose
 
 if TYPE_CHECKING:
@@ -19,7 +19,7 @@ def simulate_waves(
     emodes: NDArray,
     evals: NDArray,
     nt: int | None = None,
-    ext_input: ArrayLike | None = None,
+    ext_input: NDArray | None = None,
     dt: float = 1e-4,
     r: float = 17.4,
     gamma: float = 116.0,
@@ -27,8 +27,8 @@ def simulate_waves(
     decomp_method: str = "project",
     mass: csc_matrix | None = None,
     speed_limits: tuple[float, float] | None = (0, 150),
-    scaled_hetero: ArrayLike | None = None,
-    checks: bool = True,
+    scaled_hetero: NDArray | None = None,
+    checks: bool | str = True,
     seed: int | None = None,
     cache_input: bool = False,
 ) -> NDArray:
@@ -127,12 +127,12 @@ def simulate_waves(
         activity in the cerebral cortex. Physical Review E. https://doi.org/10.1103/physreve.56.826
     """
     # Format / validate arguments
-    if checks:
-        ved = _validate_eigendata(
+    if checks is not False:
+        ved = EigenData(
             emodes=emodes, evals=evals, mass=mass, scaled_hetero=scaled_hetero,
-            check_ortho=(decomp_method=='project')
+            data = ext_input, checks=checks
             )
-        emodes, evals, mass = ved.emodes, ved.evals, ved.mass
+        emodes, evals, mass, ext_input = ved.emodes, ved.evals, ved.mass, ved.data
         scaled_hetero = ved.scaled_hetero if scaled_hetero is not None else scaled_hetero
         
     r = float(r)
@@ -162,7 +162,6 @@ def simulate_waves(
         raise ValueError(f"Invalid PDE method '{pde_method}'; must be 'fourier' or 'ode'.")
 
     if ext_input is not None:
-        ext_input = np.asarray_chkfinite(ext_input)
         if nt is not None:
             warn("nt is ignored when ext_input is provided.")
         if seed is not None:
@@ -200,7 +199,7 @@ def bold_transform(
     pde_method: str = "fourier",
     decomp_method: str = "project",
     mass: csc_matrix | None = None,
-    checks: bool = True,
+    checks: bool | str = True,
     **balloon_params
 ) -> NDArray:
     """
@@ -742,7 +741,7 @@ def _simulate_waves_fem(
     gamma = float(gamma)
 
     if checks:
-        ved = _validate_eigendata(mass=mass, stiffness=stiffness)
+        ved = EigenData(mass=mass, stiffness=stiffness)
         mass, stiffness = ved.mass, ved.stiffness
     else: 
         mass = csc_matrix(mass)
@@ -868,7 +867,7 @@ def _analytical_fc(
     np.ndarray
         Analytical FC matrix of shape ``(n_verts, n_verts)``.
     """
-    ved = _validate_eigendata(emodes=emodes, evals=evals, check_ortho=False)
+    ved = EigenData(emodes=emodes, evals=evals, checks=False)
     emodes, evals = ved.emodes, ved.evals
     mode_vars = 1.0 / (2 * gamma * (1 + r**2 * evals))
     cov = emodes @ (mode_vars[:, np.newaxis] * emodes.T)

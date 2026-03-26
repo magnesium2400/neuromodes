@@ -129,7 +129,7 @@ def test_simulate_waves_reproducibility_fourier(solver):
 
 def test_simulate_waves_invalid_input_shape(solver):
 
-    with pytest.raises(ValueError, match=r"n_verts is the number of rows in emodes \(3619\)."):
+    with pytest.raises(ValueError, match=r"data.*first dimension.*3619"):
         solver.simulate_waves(ext_input=np.ones((4002, 1000)))
 
 def test_simulate_waves_invalid_pde_method(solver):
