@@ -203,8 +203,8 @@ class EigenSolver(Solver):
         lump: bool = False,
         atol: float = 1e-3,
         rtol: float = 1e-5,
-        sigma: float | None = -0.01,
-        seed: int | Generator | None = None, 
+        sigma: float = -0.01, # EASIEST way is to hard-code this to LaPy default (2026/03)
+        seed: int | Generator | None = 0, 
         v0: ArrayLike | None = None
     ) -> EigenSolver:
         """
