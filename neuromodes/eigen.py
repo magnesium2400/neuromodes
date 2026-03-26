@@ -182,7 +182,7 @@ class EigenSolver(Solver):
             u1, u2, _, _ = self.geometry.curvature_tria()
 
             # Map hetero from vertices to triangles by averaging
-            hetero_tria = self.geometry.map_data_to_tfunc(self.hetero)
+            hetero_tria = self.geometry.map_vfunc_to_tfunc(self.hetero)
 
             # Construct isotropic diffusion tensor by using hetero for both u1 and u2 directions
             hetero_mat = np.stack((hetero_tria, hetero_tria), axis=1)
@@ -269,6 +269,7 @@ class EigenSolver(Solver):
                 raise ValueError(f"v0 must have shape (n_verts,) = {(self.n_verts,)}.")
 
         # Solve the eigenvalue problem
+        # can't pass sigma = None to LaPy
         evals, emodes = self.eigs(k=n_modes, sigma=sigma, v0=v0, rng=seed)
 
         # Validate results
@@ -501,9 +502,9 @@ def scale_hetero(
     return hetero_scaled
 
 def standardize_emodes(
-    emodes: ArrayLike,
+    emodes: NDArray,
     checks: bool = True
-) -> NDArray[floating]:
+) -> NDArray:
     """
     Flips the modes' signs such that the first element of each eigenmode has positive amplitude. 
     Note that the sign of each mode is arbitrary--standardisation is only helpful to compare sets of
@@ -524,18 +525,14 @@ def standardize_emodes(
         each mode set to be positive.
     """
     if checks:
-        emodes = _validate_eigenvars(emodes=emodes)[0]
-
-    # Find the sign of each mode's amplitude at the first vertex
-    signs = np.sign(emodes[0, :])
-    signs[signs == 0] = 1  # Treat zero as positive (unlikely case)
-    
+        emodes = _validate_eigendata(emodes=emodes).emodes
+   
     # Flip modes where the first element is negative
-    return emodes * signs
+    return emodes * np.copysign(1, np.sign(np.asarray(emodes)[0, :]))
 
 def is_orthonormal_basis(
-    emodes: ArrayLike,
-    mass: spmatrix | ArrayLike | None = None,
+    emodes: NDArray,
+    mass: spmatrix | NDArray | None = None,
     atol: float = 1e-03,
     rtol: float = 1e-05,
     checks: bool = True
@@ -576,11 +573,13 @@ def is_orthonormal_basis(
     or provided eigenmodes.
     """
     # Format / validate arguments
-    if checks:
-        emodes, _, mass = _validate_eigenvars(emodes=emodes, mass=mass, check_ortho=False)[:3] # type: np.ndarray, np.ndarray, spmatrix
+    if checks: 
+        ved = _validate_eigendata(emodes=emodes, mass=mass, check_ortho=False)
+        emodes = ved.emodes
+        mass = ved.mass if mass is not None else None
 
     # Check Euclidean or mass-orthonormality
-    prod = emodes.T @ emodes if mass is None else emodes.T @ mass @ emodes
+    prod = emodes.T @ emodes if mass is None else emodes.T @ (mass @ emodes)
     identity = np.eye(emodes.shape[1])
     return np.allclose(prod, identity, rtol=rtol, atol=atol, equal_nan=False)
 
@@ -610,7 +609,20 @@ def get_eigengroup_inds(
 
     return idx
 
-def _validate_eigenvars(
+class EigenData:
+    emodes: NDArray[np.floating]
+    evals: NDArray[np.floating]
+    mass: spmatrix 
+    stiffness: spmatrix
+    scaled_hetero: NDArray[np.floating]
+
+    def __init__(self, **kwargs):
+        # Only set attributes that are not None
+        for key, value in kwargs.items():
+            if value is not None:
+                setattr(self, key, value)    
+
+def _validate_eigendata(
     emodes: ArrayLike | None = None,
     evals: ArrayLike | None = None,
     mass: spmatrix | ArrayLike | None = None,
@@ -618,9 +630,8 @@ def _validate_eigenvars(
     scaled_hetero: ArrayLike | None = None,
     data: ArrayLike | None = None,
     check_ortho: bool = True, 
-    verbose: bool = False
-) -> Tuple[NDArray[floating] | None, NDArray[floating] | None, spmatrix | NDArray[floating] | None,
-           spmatrix | NDArray[floating] | None, NDArray[floating] | None, NDArray[floating] | None]:
+    verbose: bool = False # TODO : output sizes/data as they are checked
+) -> EigenData:
     """
     Ensure correct shapes and types for common eigenmode-related variables, and check orthonormality
     (Euclidean or mass-orthonormality) of the provided modes if specified.
@@ -683,6 +694,7 @@ def _validate_eigenvars(
         if np.abs(evals[0]) > 1e-6:
             warn(f"The first eigenvalue is expected to be close to zero, received {evals[0]}.")
 
+    # TODO : add lump input and parameter (confirm that mass is diagonal if lump=True)
     if mass is not None:
         if isinstance(mass, spmatrix):
             mass_shape = mass.get_shape()
@@ -736,4 +748,11 @@ def _validate_eigenvars(
                 "the 'regress' method for decomposition, or set checks=False."
             )
 
-    return emodes, evals, mass, stiffness, scaled_hetero, data
+    # Return the strict container
+    return EigenData(
+        emodes=emodes, 
+        evals=evals, 
+        mass=mass, 
+        stiffness=stiffness, 
+        scaled_hetero=scaled_hetero
+    )
