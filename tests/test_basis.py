@@ -11,17 +11,23 @@ def solver():
     hetero = np.random.default_rng(0).standard_normal(size=len(medmask))
     return EigenSolver(surf, mask=medmask, hetero=hetero).solve(n_modes=10, seed=0)
 
-def test_decompose_eigenmodes(solver):
-    emodes = solver.emodes
-
+def test_decompose_eigenmodes_1d(solver):
     for i in range(solver.n_modes):
-        data = emodes[:, i]  # Use an eigenmode as data
-        beta = decompose(data, emodes, mass=solver.mass)
+        data = solver.emodes[:, i]  # Use an eigenmode as data
+        beta = decompose(data, solver.emodes, mass=solver.mass)
 
         # The mode should load onto only itself due to orthogonality
         beta_expected = np.zeros((solver.n_modes,))
         beta_expected[i] = 1
-        assert np.allclose(beta, beta_expected, atol=1e-4), f'Decomposition of mode {i} failed.'
+        assert np.allclose(beta, beta_expected, atol=1e-4), \
+            f'Decomposition of mode {i} failed.'
+
+def test_decompose_eigenmodes_2d(solver):
+    emodes = solver.emodes
+    beta = decompose(data=emodes, emodes=emodes, mass=solver.mass)
+    beta_expected = np.eye(solver.n_modes)
+    assert np.allclose(beta, beta_expected, atol=1e-4), \
+        f'Decomposition of modes onto themselves failed.'
 
 def test_decompose_invalid_data_shape(solver):
 

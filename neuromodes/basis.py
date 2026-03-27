@@ -21,14 +21,14 @@ nan_warning = ("data contains NaNs and/or Infs; these will be disregarded during
                "masking corresponding vertices from data and emodes.")
 
 def decompose(
-    data: NDArray,
-    emodes: NDArray[floating],
-    method: str = 'project',
-    mass: csc_matrix | None = None,
-    mode_counts: int | List | Tuple | NDArray | None = None,
-    mode_ids: List | Tuple | None = None,
-    checks: bool | str = True,
-) -> NDArray[floating]:
+    data,
+    emodes,
+    method = 'project',
+    mass = None,
+    mode_counts = None,
+    mode_ids = None,
+    checks = True,
+):
     """
     Calculate the decomposition of the given data onto a basis set.
 
@@ -50,7 +50,7 @@ def decompose(
         The mass matrix of shape ``(n_verts, n_verts)`` used for the decomposition when method is
         ``'project'``. If vectors are orthonormal in Euclidean space, leave as ``None``. See
         :func:`eigen.is_orthonormal_basis` for more details. Default is ``None``.
-    checks : bool, optional
+    checks : str or bool, optional
         Whether to verify types, shapes, and orthonormality of ``emodes`` and ``mass`` before
         decomposition. Default is ``True``.
 
@@ -73,8 +73,6 @@ def decompose(
     unexpected behaviour, such as extreme values in affected areas of the reconstructed data, or
     extreme beta values. This appears particularly prevalent when using the ``'regress'`` method. 
     """
-
-
     # Format / validate inputs
     if method not in ['project', 'regress']:
         raise ValueError(f"Invalid method '{method}'; must be 'project' or 'regress'.")
@@ -90,55 +88,53 @@ def decompose(
     # mode_counts is just shorthand for mode_ids
     # If mode_counts is provided, reformat into mode_ids
     squeeze_output = False
-    if mode_ids is None and mode_counts is None:
+    if mode_ids is None and mode_counts is None:                # if both unspecified, generate list
         mode_ids = (np.arange(emodes.shape[1]),)
         squeeze_output = True
-    elif mode_counts is not None: 
+    elif mode_counts is not None:                               # if counts provided, convert to list 
         if isinstance(mode_counts, int):
             mode_counts = [mode_counts]
             squeeze_output = True
         mode_ids = [np.arange(mc) for mc in mode_counts]
-    if not isinstance(mode_ids, (list, tuple)):
+    if not isinstance(mode_ids, (list, tuple)):                 # check that ids are in a list/tuple
         raise ValueError("mode_ids must be a list or tuple of arrays of mode indices.")
-    n_counts = len(mode_ids)
+    n_modes = [len(x) for x in mode_ids]
 
     # Manipulate input/output shapes
-    n_verts, n_modes = emodes.shape
-    input_shape = data.shape                                        # (n_verts, ...)
-    output_shape = (n_modes,) + input_shape[1:] + (n_counts,)       # (n_modes, ..., n_counts)
-    data_reshaped = data.reshape(n_verts, -1)                       # (n_verts, n_maps_all)
-    if data_reshaped.ndim == 1: data_reshaped = data_reshaped[:,np.newaxis]
-    output_reshaped = np.empty((n_modes, data_reshaped.shape[1], n_counts))   # (n_modes, n_maps_all, n_counts)
-    
+    output_shapes = [(i,) + data.shape[1:] for i in n_modes]
+    output = [np.empty(shape) for shape in output_shapes]
+
     # TODO : only need to decompose once (with n=max modes) if using orthogonal method
     # Handle NaNs and Infs by masking out afflicted vertices (separately for each NaN/Inf pattern)
+    data_reshaped = data.reshape(data.shape[0], -1) # guaranteed 2d
     data_finite = np.isfinite(data_reshaped)
     masks, mask_indices = np.unique(data_finite, axis=1, return_inverse=True)
-    for j in range(n_counts):
+    for j in range(len(mode_ids)):
+        tmp = np.empty((n_modes[j], data_reshaped.shape[1]))
         for i, mask in enumerate(masks.T):
             # Get indices of maps with this NaN/Inf pattern
             # Remove verts with NaNs/Inf in this group from data and emodes
             # Calculate beta coefficients for subset of data
             map_indices = np.where(mask_indices == i)[0]
-            output_reshaped[:, map_indices, j] = _calc_beta(
+            tmp[:, map_indices] = _calc_beta(
                 data = data_reshaped[:, map_indices], 
                 emodes = emodes[:, mode_ids[j]], 
                 method = method,
                 mass = mass, 
                 mask = mask
             )
-    
-    output = np.reshape(output_reshaped, output_shape)
+        output[j] = tmp.reshape(output_shapes[j])
+
     if squeeze_output:
-        output = np.squeeze(output, axis=-1)
+        output = output[0]
     return output
 
 def reconstruct(
-    data: ArrayLike,
+    data: NDArray,
     emodes: NDArray,
     method: str = 'project',
     mass: csc_matrix | None = None,
-    mode_counts: ArrayLike | None = None,
+    mode_counts: List | Tuple | None = None,
     metric: _MetricCallback | _MetricKind | None = 'correlation',
     checks: bool | str = True,
     **cdist_kwargs
