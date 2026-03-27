@@ -25,6 +25,7 @@ def decompose(
     emodes: NDArray[floating],
     method: str = 'project',
     mass: csc_matrix | None = None,
+    mode_counts: ArrayLike | None = None,
     checks: bool | str = True,
 ) -> NDArray[floating]:
     """
@@ -75,37 +76,39 @@ def decompose(
     if method not in ['project', 'regress']:
         raise ValueError(f"Invalid method '{method}'; must be 'project' or 'regress'.")
     
-    if method == 'regress' and mass is not None:
-        if checks is True or checks == 'ortho':  # Skip warning for EigenSolver, where mass is always passed in
+    # Skip warning for EigenSolver, where mass is always passed in
+    if (method == 'regress') and (mass is not None) and (checks is True or checks == 'ortho'):  
             warn("mass is ignored when method='regress'.")
     
     if checks is not False: 
         ved = EigenData(emodes=emodes, mass=mass, data=data, checks=checks)
         emodes, mass, data = ved.emodes, ved.mass, ved.data
 
+    # Manipulate input/output shapes
     n_verts, n_modes = emodes.shape
-    data_dims = data.shape[1:]
-    data_r = data.reshape(n_verts, -1)
+    input_shape = data.shape                                        # (n_verts, ...)
+    output_shape = (n_modes,) + input_shape[1:]                     # (n_modes, ...)
+    data_reshaped = data.reshape(n_verts, -1)                       # (n_verts, n_maps_all)
+    if data_reshaped.ndim == 1: data_reshaped = data_reshaped[:,np.newaxis]
+    output_reshaped = np.empty((n_modes, data_reshaped.shape[1]))   # (n_modes, n_maps_all)
     
-    data_finite = np.isfinite(data)
-    if data_finite.all(): # Standard decomposition
-        beta_r = _calc_beta(data_r, emodes, method, mass)
-    else: # Handle NaNs and Infs by masking out afflicted vertices (separately for each NaN/Inf pattern)
-        masks, mask_indices = np.unique(data_finite, axis=1, return_inverse=True)
-        beta_r = np.empty((n_modes, data_r.shape[1]))
-        for i, mask in enumerate(masks.T):
-            # Get indices of maps with this NaN/Inf pattern
-            # Remove verts with NaNs/Inf in this group from data and emodes
-            # Calculate beta coefficients for subset of data
-            map_indices = np.where(mask_indices == i)[0]
-            beta_r[:, map_indices] = _calc_beta(
-                data = data_r[mask, :][:, map_indices], 
-                emodes = emodes[mask, :], 
-                method = method,
-                mass = mask_laplacian(stiffness=None, mass=mass, mask=mask)[1]
-            )
+    # Handle NaNs and Infs by masking out afflicted vertices (separately for each NaN/Inf pattern)
+    data_finite = np.isfinite(data_reshaped)
+    masks, mask_indices = np.unique(data_finite, axis=1, return_inverse=True)
+    for i, mask in enumerate(masks.T):
+        # Get indices of maps with this NaN/Inf pattern
+        # Remove verts with NaNs/Inf in this group from data and emodes
+        # Calculate beta coefficients for subset of data
+        map_indices = np.where(mask_indices == i)[0]
+        output_reshaped[:, map_indices] = _calc_beta(
+            data = data_reshaped[mask, :][:, map_indices], 
+            emodes = emodes[mask, :], 
+            method = method,
+            mass = mask_laplacian(stiffness=None, mass=mass, mask=mask)[1]
+        )
     
-    return np.reshape(beta_r, (n_modes,) + data_dims)
+    output = np.reshape(output_reshaped, output_shape)
+    return output
 
 def reconstruct(
     data: ArrayLike,
@@ -420,13 +423,14 @@ def _calc_beta(
     data: NDArray[floating],
     emodes: NDArray[floating],
     method: str,
-    mass: csc_matrix | NDArray[floating] | None,
+    mass: csc_matrix | None,
 ) -> NDArray[floating]:
     """Helper function to perform decomposition after validating arguments and masking NaNs/Infs."""
-    if method == 'project':
-        if mass is None:
-            return emodes.T @ data
+    if method == 'project' and mass is not None:
         return emodes.T @ mass @ data
-
-    # method == 'regress'
-    return np.linalg.lstsq(emodes, data, rcond=None)[0]
+    elif method == 'project' and mass is None:
+        return emodes.T @ data
+    elif method == 'regress':
+        return np.linalg.lstsq(emodes, data, rcond=None)[0]
+    else:
+        raise ValueError(f"Invalid method '{method}'; must be 'project' or 'regress'.")
