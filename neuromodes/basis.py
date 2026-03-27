@@ -92,31 +92,50 @@ def decompose(
     # Manipulate input/output shapes
     output_shapes = [(i,) + data.shape[1:] for i in n_modes]
     beta = [np.empty(shape) for shape in output_shapes]
-
-    # TODO : only need to decompose once (with n=max modes) if using orthogonal method
-    # Handle NaNs and Infs by masking out afflicted vertices (separately for each NaN/Inf pattern)
     data_reshaped = data.reshape(data.shape[0], -1) # guaranteed 2d
+    
+    # Handle NaNs and Infs by masking out afflicted vertices (separately for each NaN/Inf pattern)
     data_finite = np.isfinite(data_reshaped)
     masks, mask_indices = np.unique(data_finite, axis=1, return_inverse=True)
-    for j in range(len(mode_ids)):
-        tmp = np.empty((n_modes[j], data_reshaped.shape[1]))
+
+    if method == 'project': 
+        # Find the unique mode IDs requested, and the inverse mapping back to mode_ids
+        unique_mids, inv = np.unique(np.concatenate(mode_ids), return_inverse=True)
+        inv = np.split(inv, np.cumsum([len(m) for m in mode_ids[:-1]])) # back in the same list pattern as mode_ids
+        
+        # For each nan/inf pattern, get the beta values for all the unique modes
+        beta_all = np.empty((len(unique_mids), data_reshaped.shape[1]))
         for i, mask in enumerate(masks.T):
-            # Get indices of maps with this NaN/Inf pattern
-            # Remove verts with NaNs/Inf in this group from data and emodes
-            # Calculate beta coefficients for subset of data
             map_indices = np.where(mask_indices == i)[0]
-            tmp[:, map_indices] = _calc_beta(
+            beta_all[:, map_indices] = _calc_beta(
                 data = data_reshaped[:, map_indices], 
-                emodes = emodes[:, mode_ids[j]], 
+                emodes = emodes[:, unique_mids],
                 method = method,
                 mass = mass, 
                 mask = mask
             )
-        beta[j] = tmp.reshape(output_shapes[j])
+        # Map the unique results back to the specific mode_ids requested
+        for j, idxs in enumerate(inv):
+            beta[j] = beta_all[idxs, :].reshape(output_shapes[j])
 
-    if squeeze_output:
-        beta = beta[0]
-    return beta
+    elif method == 'regress':
+        for j in range(len(mode_ids)):
+            beta_current = np.empty((n_modes[j], data_reshaped.shape[1]))
+            for i, mask in enumerate(masks.T):
+                # Get indices of maps with this NaN/Inf pattern
+                # Remove verts with NaNs/Inf in this group from data and emodes
+                # Calculate beta coefficients for subset of data
+                map_indices = np.where(mask_indices == i)[0]
+                beta_current[:, map_indices] = _calc_beta(
+                    data = data_reshaped[:, map_indices], 
+                    emodes = emodes[:, mode_ids[j]], 
+                    method = method,
+                    mass = mass, 
+                    mask = mask
+                )
+            beta[j] = beta_current.reshape(output_shapes[j])
+
+    return beta[0] if squeeze_output else beta # convert back to array if mode_counts was None/scalar
 
 def reconstruct(
     data: NDArray,
@@ -430,16 +449,17 @@ def _calc_beta(
 def _process_mode_ids(mode_counts, mode_ids, n_modes) -> Tuple[List|Tuple, bool]: 
     # mode_counts is just shorthand for mode_ids
     # If mode_counts is provided, reformat into mode_ids
-    squeeze_output = False
-    if mode_ids is None and mode_counts is None:                # if both unspecified, generate list
-        mode_ids = (np.arange(n_modes),)
-        squeeze_output = True
-    elif mode_counts is not None:                               # if counts provided, convert to list 
-        if isinstance(mode_counts, int):
-            mode_counts = [mode_counts]
-            squeeze_output = True
-        mode_ids = [np.arange(mc) for mc in mode_counts]
-    if not isinstance(mode_ids, (list, tuple)):                 # check that ids are in a list/tuple
+    if isinstance(mode_ids, (list, tuple)):
+        output = mode_ids
+    elif mode_ids is not None: 
         raise ValueError("mode_ids must be a list or tuple of arrays of mode indices.")
+    elif mode_counts is None:
+        output = (np.arange(n_modes),)
+    elif isinstance(mode_counts, int):
+        output = (np.arange(mode_counts),)
+    else: 
+        output = [np.arange(mc) for mc in mode_counts]
     
-    return mode_ids, squeeze_output
+    squeeze_output = (mode_ids is None) and (mode_counts is None or isinstance(mode_counts, int))
+
+    return output, squeeze_output
