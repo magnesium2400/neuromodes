@@ -35,8 +35,8 @@ def decompose(
     Parameters
     ----------
     data : array-like
-        The input data array of shape ``(n_verts,)`` or ``(n_verts, n_maps)``, where ``n_verts`` is
-        the number of vertices and ``n_maps`` is the number of maps.
+        The input data array of shape ``(n_verts, ...)``, where ``n_verts`` is the number of
+        vertices and ``n_maps`` is the number of maps.
     emodes : array-like
         The vectors array of shape ``(n_verts, n_modes)``, where ``n_modes`` is the number of basis
         vectors.
@@ -56,8 +56,9 @@ def decompose(
 
     Returns
     -------
-    numpy.ndarray
-        The beta coefficients array of shape ``(n_modes, n_maps, nq)``, obtained from the decomposition.
+    numpy.ndarray or List
+        The beta coefficients array of shape ``(n_modes, ...)`` or ``List of (n_modes, ...)``
+        arrays, obtained from the decomposition.
     
     Raises
     ------
@@ -85,19 +86,7 @@ def decompose(
         ved = EigenData(emodes=emodes, mass=mass, data=data, checks=checks)
         emodes, mass, data = ved.emodes, ved.mass, ved.data
 
-    # mode_counts is just shorthand for mode_ids
-    # If mode_counts is provided, reformat into mode_ids
-    squeeze_output = False
-    if mode_ids is None and mode_counts is None:                # if both unspecified, generate list
-        mode_ids = (np.arange(emodes.shape[1]),)
-        squeeze_output = True
-    elif mode_counts is not None:                               # if counts provided, convert to list 
-        if isinstance(mode_counts, int):
-            mode_counts = [mode_counts]
-            squeeze_output = True
-        mode_ids = [np.arange(mc) for mc in mode_counts]
-    if not isinstance(mode_ids, (list, tuple)):                 # check that ids are in a list/tuple
-        raise ValueError("mode_ids must be a list or tuple of arrays of mode indices.")
+    mode_ids, squeeze_output = _process_mode_ids(mode_counts, mode_ids, emodes.shape[1])
     n_modes = [len(x) for x in mode_ids]
 
     # Manipulate input/output shapes
@@ -135,8 +124,9 @@ def reconstruct(
     method: str = 'project',
     mass: csc_matrix | None = None,
     mode_counts: List | Tuple | None = None,
+    mode_ids: List | Tuple | None = None,
     metric: _MetricCallback | _MetricKind | None = 'correlation',
-    checks: bool | str = True,
+    checks: bool | str | None = None,
     **cdist_kwargs
 ) -> Tuple[NDArray[floating], NDArray[floating], list[NDArray[floating]]]:
     """
@@ -146,7 +136,7 @@ def reconstruct(
     Parameters
     ----------
     data : array-like
-        The input data array of shape ``(n_verts,)`` or ``(n_verts, n_maps)``, where ``n_verts`` is
+        The input data array of shape ``(n_verts, ...)``, where ``n_verts`` is
         the number of vertices and ``n_maps`` is the number of brain maps.
     emodes : array-like
         The vectors array of shape ``(n_verts, n_modes)``, where ``n_modes`` is the number of
@@ -179,13 +169,13 @@ def reconstruct(
     Returns
     -------
     recon : numpy.ndarray
-        The reconstructed data array of shape ``(n_verts, n_recons, n_maps)``, where ``n_recons`` is
+        The reconstructed data array of shape ``(n_verts, ..., n_recons)``, where ``n_recons`` is
         the number of different reconstructions ordered in ``mode_counts``. Each slice is the
         independent reconstruction of each map. Note that if ``mode_counts`` includes any constant
         vector (e.g., the first geometric eigenmode), the reconstructions will be constant for that
         value of ``mode_counts`` (this may also result in warnings/nans for ``recon_error``). 
     recon_error : numpy.ndarray
-        The reconstruction error array of shape ``(n_recons, n_maps)``. Each value represents the
+        The reconstruction error array of shape ``(..., n_recons)``. Each value represents the
         reconstruction error of one map. If ``metric`` is None, this will be empty. 
     beta : list of numpy.ndarray
         A list of beta coefficients calculated for each vector.
@@ -203,78 +193,80 @@ def reconstruct(
     extreme beta values. This appears particularly prevalent when using the ``'regress'`` method.
     """
     # Format / validate arguments
-    if checks is not False:
-        ved = EigenData(emodes=emodes, mass=mass, checks=checks)
-        emodes, mass = ved.emodes, ved.mass
-
-    n_verts, n_modes = emodes.shape
-    data = np.asarray(data) # chkfinite in decompose
-    if data.ndim == 1:
-        data = data[:, np.newaxis]
-    n_maps = data.shape[1]
-    
-    if mode_counts is None:
-        mode_counts = np.arange(n_modes) + 1
-    else:
-        mode_counts = np.asarray(mode_counts)
-        if (mode_counts.ndim != 1 or (mode_counts != mode_counts.astype(int)).any()
-            or mode_counts.min() < 1 or mode_counts.max() > n_modes):
-            raise ValueError("mode_counts must be a 1D array-like of integers within the range "
-                             f"[1, n_modes = {n_modes}].")
-    n_recons = len(mode_counts)
-
-    # Decompose maps to get beta coefficients
-    if method == 'project':
-        # only need to decompose once (with n=max modes) if using orthogonal method
-        tmp = decompose(data, emodes[:, :np.max(mode_counts)], mass=mass,
-                        method=method, checks=checks)
-        beta = [tmp[:mq, :] for mq in mode_counts]
-    else:  # method == 'regress' (TODO: just add mode_counts to decompose() to clean this up?)
-        data_finite = np.isfinite(data)
-        if data_finite.all():
-            beta = [
-                decompose(data, emodes[:, :mq], mass=None, method=method, checks=False)
-                for mq in mode_counts
-            ]
+    if checks is None:
+        if method == 'regress':
+            checks = 'shape'
         else:
-            # Handle NaNs/Infs by masking out afflicted vertices
-            warn(nan_warning)
+            checks = True
+    if checks is not False:
+        ved = EigenData(emodes=emodes, mass=mass, data=data, checks=checks)
+        emodes, mass, data = ved.emodes, ved.mass, ved.data
+
+    # mode_counts is just shorthand for mode_ids
+    # If mode_counts is provided, reformat into mode_ids
+    mode_ids, squeeze_output = _process_mode_ids(mode_counts, mode_ids, emodes.shape[1])
+
+    n_recons = len(mode_ids)
+
+    beta = decompose(data, emodes, method=method, mass=mass, mode_ids=mode_ids, checks=False)
+    
+    # 4. Standardize shapes for math
+    # data_2d: (n_verts, n_maps)
+    data_2d = data.reshape(data.shape[0], -1)
+    n_maps = data_2d.shape[1]
+    
+    # Prepare outputs
+    # recon: (n_verts, n_maps, n_recons)
+    recon_flat = np.empty((data_2d.shape[0], n_maps, n_recons))
+    recon_error_flat = np.full((n_maps, n_recons), np.nan)
+
+    for i in range(n_maps):
+        # target_map: (1, n_verts)
+        target_map = data_2d[:, [i]].T
+        
+        # Calculate all reconstructions for this map index 'i' across all mode_ids
+        current_recons = []
+        for j in range(n_recons):
+            # 1. Force beta[j] to be 2D: (n_modes, n_maps)
+            # 2. Slice the i-th column: (n_modes, 1)
+            # 3. Multiply by emodes: (n_verts, n_modes) @ (n_modes, 1) -> (n_verts, 1)
+            # b_j = np.atleast_2d(beta[j])
+
             
-            # Decompose separarely for each NaN/Inf pattern
-            masks, mask_indices = np.unique(data_finite, axis=1, return_inverse=True)
+            # If beta was originally (n_modes,), atleast_2d makes it (1, n_modes)
+            # We need it to be (n_modes, n_maps). 
+            # Logic: If beta is (n_modes, n_maps), index [:, [i]] works.
+            # If beta is (1, n_modes), we transpose and index [:, [0]].
+            # if b_j.shape[0] == 1 and b_j.shape[1] == len(mode_ids[j]):
+            #     b_j = b_j.T
+                
+            b_j = beta[j]
+            b_j = b_j[:,np.newaxis] if b_j.ndim == 1 else b_j
+            recon_j = emodes[:, mode_ids[j]] @ b_j[:, [i]]
+            current_recons.append(recon_j.ravel()) # flatten to 1D for column_stack
 
-            beta = [np.empty((mq, data.shape[1])) for mq in mode_counts]
-            for i, mask in enumerate(masks.T):
-                # Get indices of maps with this NaN/Inf pattern
-                map_indices = np.where(mask_indices == i)[0]
+        # map_recons: (n_verts, n_recons)
+        map_recons = np.column_stack(current_recons)
+        
+        # Store for output
+        recon_flat[:, i, :] = map_recons
+        
+        # cdist compare (1, n_verts) vs (n_recons, n_verts)
+        recon_error_flat[i, :] = cdist(target_map, map_recons.T, metric=metric, **cdist_kwargs)
 
-                # Remove verts with NaNs/Inf in this group from data and emodes
-                data_masked = data[mask, :][:, map_indices]
-                emodes_masked = emodes[mask, :]
+    # 6. Re-inflate shapes to original dimensions
+    # recon: (n_verts, x, y, ..., n_recons)
+    final_recon_shape = data.shape + (n_recons,)
+    recon = recon_flat.reshape(final_recon_shape)
+    
+    # recon_error: (x, y, ..., n_recons)
+    final_error_shape = data.shape[1:] + (n_recons,)
+    recon_error = recon_error_flat.reshape(final_error_shape)
 
-                # Calculate beta coefficients for subset of data
-                for i, mq in enumerate(mode_counts):
-                    beta[i][:, map_indices] = decompose(data_masked, emodes_masked[:, :mq], method,
-                                                         mass=None, checks=False)
-
-    # Reconstruct maps from beta coefficients
-    recon = np.empty((n_verts, n_recons, n_maps))
-    for i in range(n_recons):
-        recon[:, i, :] = emodes[:, :mode_counts[i]] @ beta[i]
-
-    # Score reconstructions
-    recon_error = np.empty((n_recons, n_maps))
-    if metric is not None:
-        for i in range(n_maps):
-            recons = recon[:, :, i]
-            empirical = data[:, [i]]
-
-            # Handle NaNs/Infs
-            if method == 'regress' and not (mask := data_finite[:, i]).all():
-                recons = recons[mask, :]
-                empirical = empirical[mask, :]
-
-            recon_error[:, i] = cdist(recons.T, empirical.T, metric=metric, **cdist_kwargs)[:, 0]
+    if squeeze_output:
+        recon = np.squeeze(recon, axis=-1)
+        recon_error = np.squeeze(recon_error, axis=-1)
+        beta = beta[0]
 
     return recon, recon_error, beta
 
@@ -284,6 +276,7 @@ def reconstruct_timeseries(
     method: str = 'project',
     mass: csc_matrix | None = None,
     mode_counts: ArrayLike | None = None,
+    mode_ids: ArrayLike | None = None,
     metric: _MetricCallback | _MetricKind | None = 'correlation',
     checks: bool | str = True,
     **cdist_kwargs
@@ -357,10 +350,14 @@ def reconstruct_timeseries(
         If ``timeseries`` does not have shape ``(n_verts, n_timepoints)``.
     """
     # Format / validate arguments
-    if checks:
-        timeseries = np.asarray_chkfinite(timeseries)
+    if checks is not False:
+        ved = EigenData(emodes=emodes, mass=mass, data=timeseries, checks=checks)
+        emodes, mass, timeseries = ved.emodes, ved.mass, ved.data
+        # timeseries = np.asarray_chkfinite(timeseries)
     if np.ndim(timeseries) != 2:
         raise ValueError("timeseries must have shape (n_verts, n_timepoints).")
+
+    mode_ids, squeeze_output = _process_mode_ids(mode_counts, mode_ids, emodes.shape[1])
     
     # Use reconstruct to get independent reconstructions
     recon, recon_error, beta = reconstruct(
@@ -373,15 +370,20 @@ def reconstruct_timeseries(
         checks=checks
     )
 
+    # TODO : fix the relative sizings of inputs and outputs here
+    if squeeze_output:
+        recon = recon[:,:,np.newaxis]
+
+
     # Calculate FC of original timeseries
     fc = calc_vec_fc(timeseries)
     n_edges = len(fc)
 
     # Calculate FC of reconstructed timeseries
-    n_recons = recon.shape[1]
+    n_recons = recon.shape[-1]
     fc_recon = np.empty((n_edges, n_recons))
     for i in range(n_recons):
-        fc_recon[:, i] = calc_vec_fc(recon[:, i, :])
+        fc_recon[:, i] = calc_vec_fc(recon[..., i])
 
     # Score FC of reconstructions    
     fc_recon_error = cdist(
@@ -457,3 +459,20 @@ def _calc_beta(
         return np.linalg.lstsq(e, d, rcond=None)[0]
     else:
         raise ValueError(f"Invalid method '{method}'; must be 'project' or 'regress'.")
+
+def _process_mode_ids(mode_counts, mode_ids, n_modes): 
+    # mode_counts is just shorthand for mode_ids
+    # If mode_counts is provided, reformat into mode_ids
+    squeeze_output = False
+    if mode_ids is None and mode_counts is None:                # if both unspecified, generate list
+        mode_ids = (np.arange(n_modes),)
+        squeeze_output = True
+    elif mode_counts is not None:                               # if counts provided, convert to list 
+        if isinstance(mode_counts, int):
+            mode_counts = [mode_counts]
+            squeeze_output = True
+        mode_ids = [np.arange(mc) for mc in mode_counts]
+    if not isinstance(mode_ids, (list, tuple)):                 # check that ids are in a list/tuple
+        raise ValueError("mode_ids must be a list or tuple of arrays of mode indices.")
+    
+    return mode_ids, squeeze_output

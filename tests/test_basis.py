@@ -109,42 +109,56 @@ def gen_eigenmap(solver):
 
     return eigenmaps, weights
 
+def test_reconstruct_project(solver):
+    recon, _, beta = reconstruct(solver.emodes, solver.emodes, mass=solver.mass)
+    assert np.allclose(recon, solver.emodes,
+                       atol=1e-5), 'Final reconstructions do not match input modes.'
+    assert np.allclose(beta, np.eye(solver.n_modes), atol=1e-5), \
+        'Beta values do not match expected identity matrix when reconstructing modes onto themselves.'
+    
+def test_reconstruct_regress(solver):
+    recon, _, beta = reconstruct(solver.emodes, solver.emodes, method='regress')
+    assert np.allclose(recon, solver.emodes,
+                       atol=1e-5), 'Final reconstructions do not match input modes.'
+    assert np.allclose(beta, np.eye(solver.n_modes), atol=1e-5), \
+        'Beta values do not match expected identity matrix when reconstructing modes onto themselves.'
+
 def test_reconstruct_mode_superposition(solver, gen_eigenmap):
     eigenmaps, weights = gen_eigenmap
 
-    recon, correlation_error, beta = reconstruct(eigenmaps, solver.emodes, mass=solver.mass)
+    recon, correlation_error, beta = reconstruct(eigenmaps, solver.emodes, mass=solver.mass, mode_counts=np.arange(solver.n_modes)+1)
 
     # Correlation error should decrease from 1 to 0 when using mode 1 only versus all relevant modes
-    assert np.allclose(recon[:,-1,:], eigenmaps,
+    assert np.allclose(recon[:,:,-1], eigenmaps,
                        atol=1e-5), 'Final reconstructions do not match input maps.'
-    assert np.allclose(correlation_error[-1,:], 0,
+    assert np.allclose(correlation_error[:,-1], 0,
                        atol=1e-5), 'Correlation error is not close to 0 when using all modes.'
 
     assert np.allclose(beta[-1], weights, atol=1e-4), \
         'Beta values do not match input mode weights when using all modes.'
 
     # Euclidean error should be 0 when using all modes
-    _, euclidean_error, _ = reconstruct(eigenmaps, solver.emodes, mass=solver.mass, metric='euclidean')
-    assert np.allclose(euclidean_error[-1,:], 0,
+    _, euclidean_error, _ = reconstruct(eigenmaps, solver.emodes, mass=solver.mass, mode_counts=np.arange(solver.n_modes)+1, metric='euclidean')
+    assert np.allclose(euclidean_error[:,-1], 0,
                        atol=1e-5), 'Euclidean error is not close to 0 when using all modes.'
 
     # Reconstruct using the first 5 modes, then the first 2 modes
     _, correlation_error_modesq, _ = reconstruct(eigenmaps, solver.emodes, mass=solver.mass, mode_counts=[5,2])
-    assert np.allclose(correlation_error_modesq[0,:], correlation_error[4,:]), \
+    assert np.allclose(correlation_error_modesq[:,0], correlation_error[:,4]), \
         'Reconstruction scores do not match for 5 modes.'
-    assert np.allclose(correlation_error_modesq[1,:], correlation_error[1,:]), \
+    assert np.allclose(correlation_error_modesq[:,1], correlation_error[:,1]), \
         'Reconstruction scores do not match for 2 modes.'
 
 def test_reconstruct_regress_method(solver, gen_eigenmap):
     eigenmaps, _ = gen_eigenmap
 
-    _, correlation_error, _ = reconstruct(eigenmaps, solver.emodes, method='regress', checks=False, metric='correlation')
-    _, euclidean_error, _ = reconstruct(eigenmaps, solver.emodes, method='regress', checks=False, metric='euclidean')
+    _, correlation_error, _ = reconstruct(eigenmaps, solver.emodes, method='regress', checks=False, metric='correlation', mode_counts=np.arange(solver.n_modes)+1)
+    _, euclidean_error, _ = reconstruct(eigenmaps, solver.emodes, method='regress', checks=False, metric='euclidean', mode_counts=np.arange(solver.n_modes)+1)
 
     # Errors should strictly decrease when adding modes
-    assert np.all(np.diff(correlation_error[1:,:], axis=0) < 0), \
+    assert np.all(np.diff(correlation_error, axis=1) < 0), \
         'Correlation error does not strictly decrease when adding modes.'
-    assert np.all(np.diff(euclidean_error, axis=0) < 0), \
+    assert np.all(np.diff(euclidean_error, axis=1) < 0), \
         'Euclidean error does not strictly decrease when adding modes.'
 
 # When mode_counts contains 1 (e.g. when mode_counts is None, the default), the timeseries is
@@ -167,16 +181,16 @@ def test_reconstruct_mode_superposition_timeseries(solver, gen_eigenmap):
 
     # Treat eigenmaps as timepoints of activity
     fc_recon, correlation_error, recon, recon_error, beta = reconstruct_timeseries(
-        eigen_ts, solver.emodes, method='regress', checks=False, metric='correlation')
+        eigen_ts, solver.emodes, method='regress', checks=False, metric='correlation', mode_counts=np.arange(solver.n_modes)+1)
     
     # check shapes
     assert fc_recon.shape == (solver.n_verts*(solver.n_verts-1)/2, solver.n_modes), \
         'fc_recon has incorrect shape.'
     assert correlation_error.shape == (solver.n_modes,), \
         'fc_recon_error has incorrect shape.'
-    assert recon.shape == (solver.n_verts, solver.n_modes, eigen_ts.shape[1]), \
+    assert recon.shape == (solver.n_verts, eigen_ts.shape[1], solver.n_modes), \
         'recon has incorrect shape.'
-    assert recon_error.shape == (solver.n_modes, eigen_ts.shape[1]), \
+    assert recon_error.shape == (eigen_ts.shape[1], solver.n_modes), \
         'recon_error has incorrect shape.'
     assert beta[0].shape == (1, eigen_ts.shape[1]), \
         'beta[0] has incorrect shape.'
@@ -185,7 +199,7 @@ def test_reconstruct_mode_superposition_timeseries(solver, gen_eigenmap):
 
     # Use another metric for fc recon error
     _, euclidean_error, _, _, _ = reconstruct_timeseries(
-        eigen_ts, solver.emodes, method='regress', checks=False, metric='euclidean')
+        eigen_ts, solver.emodes, method='regress', checks=False, metric='euclidean', mode_counts=np.arange(solver.n_modes)+1)
     mse = euclidean_error / fc.size  # Convert to MSE
     
     assert np.allclose(np.tanh(fc_recon[:,-1]), np.tanh(fc), atol=1e-5), \
@@ -199,7 +213,7 @@ def test_reconstruct_real_map_32k(solver_32k):
 
     # Load FC gradient from Margulies 2016 PNAS
     map = fetch_map('fcgradient1')[solver_32k.mask]
-    _, recon_score, _ = reconstruct(map, emodes, mass=solver_32k.mass)
+    _, recon_score, _ = reconstruct(map, emodes, mass=solver_32k.mass, mode_counts=np.arange(solver_32k.n_modes)+1)
 
     # Correlation error should strictly decrease from 1, but not reach 0
     assert np.all(np.diff(recon_score) < 0), 'Reconstruction error does not strictly decrease.'

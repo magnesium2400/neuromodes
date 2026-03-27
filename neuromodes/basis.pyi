@@ -54,3 +54,8 @@ def decompose(
     mode_ids: List | Tuple,
     checks: str | bool = ...
 ) -> List[NDArray]: ...
+
+
+
+
+
