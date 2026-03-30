@@ -3,7 +3,7 @@ Module for computing geometric eigenmodes of brain structures from surface meshe
 """
 
 from __future__ import annotations
-from typing import Tuple, TYPE_CHECKING
+from typing import Tuple, Literal, TYPE_CHECKING
 from warnings import warn
 from lapy import Solver
 import numpy as np
@@ -82,7 +82,7 @@ class EigenSolver(Solver):
         normalize: bool = False,
         hetero: ArrayLike | None = None,
         alpha: float | None = None, # default to 1.0 if hetero given (and remains None)
-        scaling: str | None = None  # default to "sigmoid" if hetero given (and remains None)
+        scaling: Literal['sigmoid', 'exponential'] | None = None  # default to "sigmoid" if hetero given (and remains None)
     ):
         # Read in surface mesh
         geometry = read_surf(geometry)
@@ -452,7 +452,7 @@ class EigenSolver(Solver):
 def scale_hetero(
     hetero: ArrayLike,
     alpha: float = 1.0,
-    scaling: str = "sigmoid"
+    scaling: Literal['sigmoid', 'exponential'] = "sigmoid"
 ) -> NDArray[floating]:
     """
     Scales a heterogeneity map using specified normalization and scaling functions.

@@ -5,7 +5,7 @@ This module provides functions for generating null brain maps that preserve spat
 autocorrelation structure through random rotation of geometric eigenmodes.
 """
 from __future__ import annotations
-from typing import TYPE_CHECKING
+from typing import Literal, TYPE_CHECKING
 from warnings import warn
 import numpy as np
 from scipy.stats import special_ortho_group
@@ -22,12 +22,12 @@ def eigenstrap(
     emodes: ArrayLike,
     evals: ArrayLike, 
     n_nulls: int = 1000,
-    resample: str | None = None,
-    residual: str | None = None,
+    resample: Literal['exact', 'affine', 'mean', 'range'] | None = None,
+    residual: Literal['add', 'permute'] | None = None,
     randomize: bool = False,
     n_groups: int | None = None,
-    rotation_method: str = 'qr',
-    decomp_method: str = 'project',
+    rotation_method: Literal['qr', 'scipy'] = 'qr',
+    decomp_method: Literal['project', 'regress'] = 'project',
     mass: spmatrix | ArrayLike | None = None,
     seed: int | ArrayLike | None = None,
     checks: bool = True,

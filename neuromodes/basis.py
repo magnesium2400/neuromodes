@@ -4,7 +4,7 @@ geometric eigenmodes.
 """
 
 from __future__ import annotations
-from typing import Tuple, TYPE_CHECKING
+from typing import Tuple, Literal, TYPE_CHECKING
 from warnings import warn
 import numpy as np
 from scipy.sparse import spmatrix
@@ -22,7 +22,7 @@ nan_warning = ("data contains NaNs and/or Infs; these will be disregarded during
 def decompose(
     data: ArrayLike,
     emodes: ArrayLike,
-    method: str = 'project',
+    method: Literal['project', 'regress'] = 'project',
     mass: spmatrix | ArrayLike | None = None,
     checks: bool = True,
 ) -> NDArray[floating]:
@@ -119,7 +119,7 @@ def decompose(
 def reconstruct(
     data: ArrayLike,
     emodes: ArrayLike,
-    method: str = 'project',
+    method: Literal['project', 'regress'] = 'project',
     mass: spmatrix | ArrayLike | None = None,
     mode_counts: ArrayLike | None = None,
     metric: _MetricCallback | _MetricKind | None = 'correlation',
@@ -268,7 +268,7 @@ def reconstruct(
 def reconstruct_timeseries(
     timeseries: ArrayLike,
     emodes: ArrayLike,
-    method: str = 'project',
+    method: Literal['project', 'regress'] = 'project',
     mass: spmatrix | ArrayLike | None = None,
     mode_counts: ArrayLike | None = None,
     metric: _MetricCallback | _MetricKind | None = 'correlation',
@@ -399,6 +399,7 @@ def calc_norm_power(
         element represents the proportion of power contributed by the corresponding orthogonal
         vector to each brain map.
     """
+    # TODO: add option to normalize by total power if all modes were used (map.T @ mass @ map)
     beta_sq = np.asarray_chkfinite(beta)**2
     total_power = np.sum(beta_sq, axis=0)
 
