@@ -11,25 +11,25 @@ from scipy.spatial.distance import cdist
 from neuromodes.eigen import EigenData
 from neuromodes.mesh import mask_mass
 
-if TYPE_CHECKING:   
-    from numpy import floating
+if TYPE_CHECKING:
     from numpy.typing import NDArray
     from scipy.spatial.distance import _MetricCallback, _MetricKind 
     from scipy.sparse import csc_matrix
     from neuromodes.eigen import _CheckKind
+    from neuromodes.basis import _DecompositionKind, _IntSequenceKind, _SeqSequenceKind
 
 nan_warning = ("data contains NaNs and/or Infs; these will be disregarded during decomposition by "
                "masking corresponding vertices from data and emodes.")
 
 def decompose(
-    data: NDArray,
-    emodes: NDArray,
-    method: str = 'project',
+    data: NDArray[np.floating],
+    emodes: NDArray[np.floating],
+    method: _DecompositionKind = 'project',
     mass: csc_matrix | None = None,
-    mode_counts: list | tuple | NDArray | None = None,
-    mode_ids: list | tuple | NDArray | None = None,
+    mode_counts: _IntSequenceKind | int | None = None,
+    mode_ids: _SeqSequenceKind | None = None,
     checks: _CheckKind = None,  
-) -> NDArray[floating] | list[NDArray]:
+) -> NDArray[np.floating] | list[NDArray[np.floating]]:
     """
     Calculate the decomposition of the given data onto a basis set.
 
@@ -97,7 +97,7 @@ def decompose(
 
     # Manipulate input/output shapes
     output_shapes = [(i,) + data.shape[1:] for i in n_modes]
-    beta = [np.empty(shape) for shape in output_shapes]
+    beta = [np.empty(shape, dtype=data.dtype) for shape in output_shapes]
     data_reshaped = data.reshape(data.shape[0], -1) # guaranteed 2d
     
     # Handle NaNs and Infs by masking out afflicted vertices (separately for each NaN/Inf pattern)
@@ -133,7 +133,7 @@ def decompose(
     elif method == 'regress':
         # Have to loop over each set of mode indices
         for j in range(len(mode_ids)):
-            beta_current = np.empty((n_modes[j], data_reshaped.shape[1]))
+            beta_current = np.empty((n_modes[j], data_reshaped.shape[1]), dtype=data.dtype)
             # as well as each NaN patter
             for i, mask in enumerate(masks.T):
                 # Get indices of maps with this NaN/Inf pattern
@@ -154,14 +154,14 @@ def decompose(
 def reconstruct(
     data: NDArray,
     emodes: NDArray,
-    method: str = 'project',
+    method: _DecompositionKind = 'project',
     mass: csc_matrix | None = None,
-    mode_counts: list | tuple | NDArray | None = None,
-    mode_ids: list | tuple | NDArray | None = None,
+    mode_counts: _IntSequenceKind | int | None = None,
+    mode_ids: _SeqSequenceKind | None = None,
     checks: _CheckKind = None,
     metric: _MetricCallback | _MetricKind | None = 'correlation',
     **cdist_kwargs
-) -> tuple[NDArray[floating], NDArray[floating], list | NDArray]:
+) -> tuple[NDArray[np.floating], NDArray[np.floating], list[NDArray[np.floating]] | NDArray[np.floating]]:
     """
     Calculate and score the reconstruction of the given independent data using the provided
     orthogonal vectors (e.g., geometric eigenmodes).
@@ -275,15 +275,15 @@ def reconstruct(
 def reconstruct_timeseries(
     timeseries: NDArray,
     emodes: NDArray,
-    method: str = 'project',
+    method: _DecompositionKind = 'project',
     mass: csc_matrix | None = None,
-    mode_counts: list | tuple | NDArray | None = None,
-    mode_ids: list | tuple | NDArray | None = None,
+    mode_counts: _IntSequenceKind | int | None = None,
+    mode_ids: _SeqSequenceKind | None = None,
     metric: _MetricCallback | _MetricKind | None = 'correlation',
     checks: _CheckKind = None,
     **cdist_kwargs
-) -> tuple[NDArray[floating], NDArray[floating], NDArray[floating], NDArray[floating],
-           list | NDArray]:
+) -> tuple[NDArray[np.floating], NDArray[np.floating], NDArray[np.floating], NDArray[np.floating],
+           list[NDArray[np.floating]] | NDArray[np.floating]]:
     """
     Calculate and score the reconstruction of the given timeseries data using the provided
     orthogonal vectors (e.g., geometric eigenmodes).
@@ -408,22 +408,21 @@ def reconstruct_timeseries(
 
 def calc_norm_power(
     beta: NDArray
-) -> NDArray[floating]:
+) -> NDArray[np.floating]:
     """
     Transform beta coefficients from a decomposition into normalised power.
 
     Parameters
     ----------
     beta : array-like
-        The beta coefficients array of shape ``(n_modes,)`` or ``(n_modes, n_maps)``, where
-        ``n_modes`` is the number of orthogonal vectors and ``n_maps`` is the number of brain maps.
+        The beta coefficients array of shape ``(n_modes,...)``, where ``n_modes`` is the number of
+        orthogonal vectors and the remaining dimensions are the number of brain maps.
 
     Returns
     -------
     numpy.ndarray
-        The normalized power array of shape ``(n_modes,)`` or ``(n_modes, n_maps)``, where each
-        element represents the proportion of power contributed by the corresponding orthogonal
-        vector to each brain map.
+        The normalized power array of shape ``(n_modes,...)``, where each element represents the
+        proportion of power contributed by the corresponding orthogonal vector to each brain map.
     """
     beta_sq = np.asarray_chkfinite(beta)**2
     total_power = np.sum(beta_sq, axis=0)
@@ -432,7 +431,7 @@ def calc_norm_power(
 
 def calc_vec_fc(
     timeseries: NDArray
-) -> NDArray[floating]:
+) -> NDArray[np.floating]:
     """
     Compute Fisher-z-transformed vectorized functional connectivity from timeseries data.
     
@@ -452,12 +451,12 @@ def calc_vec_fc(
     return np.arctanh(vec_fc)
 
 def _calc_beta(
-    data: NDArray[floating],
-    emodes: NDArray[floating],
+    data: NDArray[np.floating],
+    emodes: NDArray[np.floating],
     method: str,
     mass: csc_matrix | None,
     mask: NDArray
-) -> NDArray[floating]:
+) -> NDArray[np.floating]:
     """Helper function to perform decomposition after validating arguments and masking NaNs/Infs."""
     d = data[mask, :]
     e = emodes[mask, :]
@@ -472,10 +471,10 @@ def _calc_beta(
         raise ValueError(f"Invalid method '{method}'; must be 'project' or 'regress'.")
 
 def _process_mode_ids(
-    mode_counts: int | list | tuple | NDArray | None,
-    mode_ids: list | tuple | NDArray | None,
+    mode_counts: _IntSequenceKind | int | None,
+    mode_ids: _SeqSequenceKind | None,
     n_modes: int
-) -> tuple[list|tuple | NDArray, bool]: 
+) -> tuple[_SeqSequenceKind, bool]: 
     # mode_counts is just shorthand for mode_ids
     # If mode_counts is provided, reformat into mode_ids
     if mode_counts is not None and mode_ids is not None:

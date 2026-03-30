@@ -8,12 +8,17 @@ from typing import TYPE_CHECKING
 from warnings import warn
 import numpy as np
 from scipy.integrate import solve_ivp
-from scipy.sparse import csc_matrix, linalg, eye, diags
+from scipy.sparse import linalg, eye, diags
 from neuromodes.eigen import EigenData
 from neuromodes.basis import decompose
 
 if TYPE_CHECKING:
+    from typing import Literal
     from numpy.typing import NDArray, ArrayLike
+    from scipy.sparse import csc_matrix
+    from neuromodes.eigen import _CheckKind
+    from neuromodes.basis import _DecompositionKind
+    _PDEKind = Literal["fourier", "ode"]
 
 def simulate_waves(
     emodes: NDArray,
@@ -23,12 +28,12 @@ def simulate_waves(
     dt: float = 1e-4,
     r: float = 17.4,
     gamma: float = 116.0,
-    pde_method: str = "fourier",
-    decomp_method: str = "project",
+    pde_method: _PDEKind = "fourier",
+    decomp_method: _DecompositionKind = "project",
     mass: csc_matrix | None = None,
     speed_limits: tuple[float, float] | None = (0, 150),
     scaled_hetero: NDArray | None = None,
-    checks: bool | str = True,
+    checks: _CheckKind = True,
     seed: int | None = None,
     cache_input: bool = False,
 ) -> NDArray:
@@ -196,10 +201,10 @@ def bold_transform(
     activity: ArrayLike,
     dt: float,
     emodes: ArrayLike,
-    pde_method: str = "fourier",
-    decomp_method: str = "project",
+    pde_method: _PDEKind = "fourier",
+    decomp_method: _DecompositionKind = "project",
     mass: csc_matrix | None = None,
-    checks: bool | str = True,
+    checks: _CheckKind = True,
     **balloon_params
 ) -> NDArray:
     """

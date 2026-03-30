@@ -3,39 +3,31 @@ from typing import Any, overload, TypeAlias, Literal
 import numpy as np
 from lapy import Solver, TriaMesh
 from nibabel.gifti.gifti import GiftiImage
-from numpy import floating
 from numpy.random import Generator
 from numpy.typing import NDArray, ArrayLike
 from scipy.sparse import csc_matrix
-from scipy.spatial.distance import _MetricCallback, _MetricKind
 
-from neuromodes.basis import (_DecompositionKind, _IntSequenceKind, _MetricCallbackKind, 
+from neuromodes.basis import (_DecompositionKind, _IntSequenceKind, _SeqSequenceKind, _MetricCallbackKind, 
                               _ReconList, _ReconSingle, 
                               _ReconTSSingle, _ReconTSList)
 
-# ==========================================
-# TYPE ALIASES (DRY)
-# ==========================================
-FloatArray: TypeAlias = NDArray[floating]
-ListArray: TypeAlias = list[FloatArray]
 _CheckKind: TypeAlias = bool | Literal['maps', 'ortho', 'shape', 'data'] | None
-
 
 # ==========================================
 # CLASSES
 # ==========================================
 
 class EigenSolver(Solver):
-    geometry: Any  # Can be TriaMesh or similar internally
+    geometry: str | Path | GiftiImage | TriaMesh | dict  # Can be TriaMesh or similar internally
     n_verts: int
     mask: NDArray[np.bool_] | None
-    hetero: FloatArray | None
+    hetero: NDArray[np.floating] | None
     use_cholmod: bool
     stiffness: csc_matrix
     mass: csc_matrix
     n_modes: int
-    evals: FloatArray
-    emodes: FloatArray
+    evals: NDArray[np.floating]
+    emodes: NDArray[np.floating]
     _scaling: str | None
     _alpha: float | None
 
@@ -79,7 +71,7 @@ class EigenSolver(Solver):
         mode_counts: int | None = ...,
         mode_ids: None = ...,
         checks: _CheckKind = ...
-    ) -> FloatArray: ...
+    ) -> NDArray[np.floating]: ...
 
     # 2. mode_counts is Sequence -> List of Arrays
     @overload
@@ -91,7 +83,7 @@ class EigenSolver(Solver):
         mode_counts: _IntSequenceKind,
         mode_ids: None = ...,
         checks: _CheckKind = ...
-    ) -> ListArray: ...
+    ) -> list[NDArray[np.floating]]: ...
 
     # 3. mode_ids is Sequence -> List of Arrays
     @overload
@@ -101,9 +93,9 @@ class EigenSolver(Solver):
         method: _DecompositionKind = ...,
         *,
         mode_counts: None = ...,
-        mode_ids: _IntSequenceKind,
+        mode_ids: _SeqSequenceKind,
         checks: _CheckKind = ...
-    ) -> ListArray: ...
+    ) -> list[NDArray[np.floating]]: ...
 
     # %% RECONSTRUCT
     # 1. mode_counts is None or int -> Tuple with Single Array
@@ -142,7 +134,7 @@ class EigenSolver(Solver):
         method: _DecompositionKind = ...,
         *,
         mode_counts: None = ...,
-        mode_ids: _IntSequenceKind,
+        mode_ids: _SeqSequenceKind,
         checks: _CheckKind = ...,
         metric: _MetricCallbackKind = ...,
         **cdist_kwargs
@@ -185,35 +177,35 @@ class EigenSolver(Solver):
         method: _DecompositionKind = ...,
         *,
         mode_counts: None = ...,
-        mode_ids: _IntSequenceKind,
+        mode_ids: _SeqSequenceKind,
         checks: _CheckKind = ...,
         metric: _MetricCallbackKind = ...,
         **cdist_kwargs
     ) -> _ReconTSList: ...
 
     # --- OTHER WRAPPERS ---
-    def model_connectome(self, **kwargs: Any) -> FloatArray: ...
-    def simulate_waves(self, **kwargs: Any) -> FloatArray: ...
-    def bold_transform(self, activity: ArrayLike, dt: float, **kwargs: Any) -> FloatArray: ...
+    def model_connectome(self, **kwargs: Any) -> NDArray[np.floating]: ...
+    def simulate_waves(self, **kwargs: Any) -> NDArray[np.floating]: ...
+    def bold_transform(self, activity: ArrayLike, dt: float, **kwargs: Any) -> NDArray[np.floating]: ...
     def eigenstrap(self, data: NDArray, **kwargs: Any) -> NDArray: ...
 
 
 class EigenData:
-    emodes: FloatArray
-    evals: FloatArray
+    emodes: NDArray[np.floating]
+    evals: NDArray[np.floating]
     mass: csc_matrix
     stiffness: csc_matrix
-    scaled_hetero: FloatArray
-    data: FloatArray
+    scaled_hetero: NDArray[np.floating]
+    data: NDArray[np.floating]
 
     def __init__(
         self,
-        emodes: FloatArray | None = ...,
-        evals: FloatArray | None = ...,
+        emodes: NDArray[np.floating] | None = ...,
+        evals: NDArray[np.floating] | None = ...,
         mass: csc_matrix | None = ...,
         stiffness: csc_matrix | None = ...,
-        scaled_hetero: FloatArray | None = ...,
-        data: FloatArray | None = ...,
+        scaled_hetero: NDArray[np.floating] | None = ...,
+        data: NDArray[np.floating] | None = ...,
         checks: _CheckKind = ...
     ) -> None: ...
 
@@ -228,7 +220,7 @@ def scale_hetero(
     hetero: ArrayLike,
     alpha: float = ...,
     scaling: Literal["exponential", "sigmoid"] = ...
-) -> FloatArray: ...
+) -> NDArray[np.floating]: ...
 
 def standardize_emodes(
     emodes: NDArray,

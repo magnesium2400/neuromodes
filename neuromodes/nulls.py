@@ -18,12 +18,11 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
     from neuromodes.basis import _DecompositionKind
     from neuromodes.eigen import _CheckKind
-    FloatArray : TypeAlias = NDArray[floating]
 
 def eigenstrap(
-    data: NDArray,
-    emodes: FloatArray,
-    evals: FloatArray, 
+    data: NDArray[floating],
+    emodes: NDArray[floating],
+    evals: NDArray[floating], 
     n_nulls: int = 1000,
     resample: str | None = None,
     residual: str | None = None,
