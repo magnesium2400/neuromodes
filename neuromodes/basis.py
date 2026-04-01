@@ -424,6 +424,7 @@ def calc_norm_power(
         The normalized power array of shape ``(n_modes,...)``, where each element represents the
         proportion of power contributed by the corresponding orthogonal vector to each brain map.
     """
+    # TODO: add option to normalize by total power if all modes were used (map.T @ mass @ map)
     beta_sq = np.asarray_chkfinite(beta)**2
     total_power = np.sum(beta_sq, axis=0)
 

@@ -4,7 +4,7 @@ surfaces.
 """
 
 from __future__ import annotations
-from typing import TYPE_CHECKING
+from typing import Literal, TYPE_CHECKING
 from warnings import warn
 import numpy as np
 from scipy.integrate import solve_ivp
@@ -734,9 +734,11 @@ def _simulate_waves_fem(
     Full FEM version of ``simulate_waves()``, for validating the eigenmode expansion approach.
     """
     # Format / validate arguments
+    parallel = False
     if n_jobs > 1 or n_jobs == -1:
         try:
             from joblib import Parallel, delayed
+            parallel = True
         except ImportError:
             warn("joblib is not installed; parallel computation of frequencies will be disabled. "
                 "Neuromodes can be installed with the 'cache' extra to include joblib as a "
@@ -819,7 +821,7 @@ def _simulate_waves_fem(
 
     # Compute activity at each frequency
     # Parallelise if joblib is available and n_jobs > 1
-    if 'Parallel' in globals():
+    if parallel:
         phi_freqs = Parallel(n_jobs=n_jobs, verbose=verbose)(
             delayed(_solve_fem_freq)(
                     # Construct frequency-specific operator for wave equation
