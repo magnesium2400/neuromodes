@@ -3,7 +3,7 @@ Module for reading, validating, manipulating, and creating meshes of brain struc
 """
 
 from __future__ import annotations
-from typing import overload, Tuple, TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, TypeVar
 import numpy as np
 
 if TYPE_CHECKING:

@@ -3,7 +3,7 @@ Module for computing geometric eigenmodes of brain structures from surface meshe
 """
 
 from __future__ import annotations
-from typing import Any, TYPE_CHECKING
+from typing import Any, Literal, TYPE_CHECKING
 from warnings import warn
 from dataclasses import dataclass
 from lapy import Solver
@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from numpy.random import Generator
     from numpy.typing import NDArray, ArrayLike
     from scipy.sparse import csc_matrix
+    _FloatArray = NDArray[floating]
 
 class EigenSolver(Solver):
     """
@@ -319,7 +320,7 @@ class EigenSolver(Solver):
             by values obtained from solving the Laplace equation.
         
         """
-        # Format / validate arguments
+        # Format / validate arguments (TODO: use EigenData)
         data = np.asarray(data)
         if self.mask is not None and data.shape[0] == len(self.mask):
             data = data[self.mask]
@@ -734,7 +735,7 @@ class EigenData:
             all_inputs.append('mass')
             if mass is not None and check_shape:
                 if mass.ndim != 2 or mass.shape[0] != mass.shape[1]: # type: ignore[union-attr]
-                    raise ValueError(f"mass must be a square matrix.")
+                    raise ValueError("mass must be a square matrix.")
             _set('mass', mass)
 
         if stiffness is not _MISSING:
@@ -750,7 +751,7 @@ class EigenData:
                 scaled_hetero = np.asarray_chkfinite(scaled_hetero)
                 if check_shape:
                     if scaled_hetero.ndim != 1:
-                        raise ValueError(f"scaled_hetero must have shape (n_verts,).")
+                        raise ValueError("scaled_hetero must have shape (n_verts,).")
             _set('scaled_hetero', scaled_hetero)
 
         n_verts = None

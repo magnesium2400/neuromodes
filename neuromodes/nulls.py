@@ -5,7 +5,7 @@ This module provides functions for generating null brain maps that preserve spat
 autocorrelation structure through random rotation of geometric eigenmodes.
 """
 from __future__ import annotations
-from typing import TYPE_CHECKING, TypeAlias
+from typing import Literal, TYPE_CHECKING
 from warnings import warn
 import numpy as np
 from scipy.stats import special_ortho_group

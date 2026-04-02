@@ -102,7 +102,6 @@ def decompose(
     
     # Handle NaNs and Infs by masking out afflicted vertices (separately for each NaN/Inf pattern)
     data_finite = np.isfinite(data_reshaped)
-    # masks, mask_indices = np.unique(data_finite, axis=1, return_inverse=True)
     if np.all(data_finite):
         masks = np.ones((data_reshaped.shape[0], 1), dtype=bool)
         mask_indices = np.zeros(data_reshaped.shape[1], dtype=int)
