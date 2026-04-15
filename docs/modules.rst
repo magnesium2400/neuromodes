@@ -70,7 +70,6 @@ API Reference
    decompose
    reconstruct
    reconstruct_timeseries
-   calc_norm_power
    calc_vec_fc
 
 .. _ref_waves:

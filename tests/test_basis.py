@@ -1,7 +1,6 @@
 import numpy as np
 import pytest
-from neuromodes.basis import (decompose, reconstruct, reconstruct_timeseries, calc_norm_power,
-                              calc_vec_fc)
+from neuromodes.basis import decompose, reconstruct, reconstruct_timeseries, calc_vec_fc
 from neuromodes.eigen import EigenSolver
 from neuromodes.io import fetch_surf, fetch_map
 
@@ -27,7 +26,7 @@ def test_decompose_eigenmodes_2d(solver):
     beta = decompose(data=emodes, emodes=emodes, mass=solver.mass)
     beta_expected = np.eye(solver.n_modes)
     assert np.allclose(beta, beta_expected, atol=1e-4), \
-        f'Decomposition of modes onto themselves failed.'
+        'Decomposition of modes onto themselves failed.'
     
 def test_decompose_eigenmodes_3d(solver):
     emodes = solver.emodes
@@ -35,7 +34,7 @@ def test_decompose_eigenmodes_3d(solver):
     beta = decompose(data=data, emodes=emodes, mass=solver.mass)
     beta_expected = np.stack((np.eye(solver.n_modes), np.eye(solver.n_modes)), axis=2)
     assert np.allclose(beta, beta_expected, atol=1e-4), \
-        f'Decomposition of modes onto themselves failed for 3D data.'
+        'Decomposition of modes onto themselves failed for 3D data.'
 
 def test_decompose_invalid_data_shape(solver):
 
@@ -99,7 +98,7 @@ def test_decompose_nans(solver_32k):
     modes_noise = np.concatenate([solver_32k.emodes, noise], axis=0)
 
     # emodes/mass get masked according to the nans/infs in data, leading to original beta values
-    with pytest.warns(UserWarning, match="values detected in data"):
+    with pytest.warns(UserWarning, match="data contains NaNs and/or Infs"):
         beta_masked = decompose(data_naninfs, modes_noise, method='regress', checks='maps')
     assert np.allclose(beta, beta_masked, atol=1e-4), \
         'Beta values for project method are not close when data contains NaNs/Infs'
@@ -238,19 +237,6 @@ def test_reconstruct_massless(solver):
     with pytest.raises(ValueError, match="do not form an orthonormal basis set in Euclidean space"):
         reconstruct(np.ones(solver.n_verts), solver.emodes)
 
-def test_calc_norm_power():
-    # Dummy coefficients
-    beta = np.array([[-3, 4], [1.5, 2], [0, 0.1]])
-
-    norm_power = calc_norm_power(beta)
-
-    # Check that powers are non-negative
-    assert np.all(norm_power >= 0), 'Normalized powers contain negative values.'
-
-    # Check that columns sum to 1
-    assert np.allclose(np.sum(norm_power, axis=0), 1, atol=1e-8), \
-        'Normalized powers do not sum to 1.'
-
 class TestShape: 
     def test_decompose_1d(self, solver):
         for i in range(solver.n_modes):
@@ -346,7 +332,7 @@ class TestShape:
         mode_ids = [np.random.default_rng().choice(solver.n_modes, size=k, replace=False) for k in n_modes]
         recon, _, _ = reconstruct(solver.emodes[:, 0], solver.emodes, mass=solver.mass, mode_ids=mode_ids)
         assert recon.shape == (solver.n_verts, len(mode_ids)), \
-            f'Reconstruction shape does not match expected shape for 1D data with mode IDs.'
+            'Reconstruction shape does not match expected shape for 1D data with mode IDs.'
             
     def test_reconstruct_2d_mode_counts(self, solver):
         mode_counts = np.random.default_rng().integers(1, solver.n_modes+1, size=10)

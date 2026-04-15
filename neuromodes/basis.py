@@ -18,9 +18,6 @@ if TYPE_CHECKING:
     from neuromodes.eigen import _CheckKind
     from neuromodes.basis import _DecompositionKind, _IntSequenceKind, _SeqSequenceKind
 
-nan_warning = ("data contains NaNs and/or Infs; these will be disregarded during decomposition by "
-               "masking corresponding vertices from data and emodes.")
-
 def decompose(
     data: NDArray[np.floating],
     emodes: NDArray[np.floating],
@@ -105,8 +102,17 @@ def decompose(
     if np.all(data_finite):
         masks = np.ones((data_reshaped.shape[0], 1), dtype=bool)
         mask_indices = np.zeros(data_reshaped.shape[1], dtype=int)
-    else:
+    elif method == 'regress':
+        if checks is True or checks == 'maps':
+            warn("data contains NaNs and/or Infs; these will be disregarded during decomposition by"
+                " masking corresponding vertices from data and emodes. This may lead to extreme "
+                "values in affected areas of the reconstructed data. Consider instead interpolating"
+                " missing data prior to decomposition via EigenSolver.inpaint().")
         masks, mask_indices = np.unique(data_finite, axis=1, return_inverse=True)
+    else:  # method == 'project'
+        raise ValueError("data contains NaNs/Infs; consider interpolating missing data prior to "
+                         "decomposition via EigenSolver.inpaint() or set method='regress' to mask "
+                         "out afflicted vertices during decomposition.")
 
     if method == 'project': 
         # Find the unique mode IDs requested, and the inverse mapping back to mode_ids
@@ -114,15 +120,12 @@ def decompose(
         inv = np.split(inv, np.cumsum([len(m) for m in mode_ids[:-1]])) # back in the same list pattern as mode_ids
         
         # For each nan/inf pattern, get the beta values for all the unique modes
-        beta_all = np.empty((len(unique_mids), data_reshaped.shape[1]))
-        for i, mask in enumerate(masks.T):
-            map_indices = np.where(mask_indices == i)[0]
-            beta_all[:, map_indices] = _calc_beta(
-                data = data_reshaped[:, map_indices], 
-                emodes = emodes[:, unique_mids],
-                method = method,
-                mass = mass, 
-                mask = mask
+        beta_all = _calc_beta(
+            data = data_reshaped, 
+            emodes = emodes[:, unique_mids],
+            method = method,
+            mass = mass,
+            mask = masks[:, 0]
             )
         
         # Map the unique results back to the specific mode_ids requested
@@ -133,7 +136,7 @@ def decompose(
         # Have to loop over each set of mode indices
         for j in range(len(mode_ids)):
             beta_current = np.empty((n_modes[j], data_reshaped.shape[1]), dtype=data.dtype)
-            # as well as each NaN patter
+            # as well as each NaN pattern
             for i, mask in enumerate(masks.T):
                 # Get indices of maps with this NaN/Inf pattern
                 # Remove verts with NaNs/Inf in this group from data and emodes
@@ -404,30 +407,6 @@ def reconstruct_timeseries(
         beta = beta[0]
 
     return fc_recon, fc_recon_error, recon, recon_error, beta
-
-def calc_norm_power(
-    beta: NDArray
-) -> NDArray[np.floating]:
-    """
-    Transform beta coefficients from a decomposition into normalised power.
-
-    Parameters
-    ----------
-    beta : array-like
-        The beta coefficients array of shape ``(n_modes,...)``, where ``n_modes`` is the number of
-        orthogonal vectors and the remaining dimensions are the number of brain maps.
-
-    Returns
-    -------
-    numpy.ndarray
-        The normalized power array of shape ``(n_modes,...)``, where each element represents the
-        proportion of power contributed by the corresponding orthogonal vector to each brain map.
-    """
-    # TODO: add option to normalize by total power if all modes were used (map.T @ mass @ map)
-    beta_sq = np.asarray_chkfinite(beta)**2
-    total_power = np.sum(beta_sq, axis=0)
-
-    return beta_sq / total_power
 
 def calc_vec_fc(
     timeseries: NDArray

@@ -11,7 +11,7 @@ from neuromodes.basis import (_DecompositionKind, _IntSequenceKind, _SeqSequence
                               _ReconList, _ReconSingle, 
                               _ReconTSSingle, _ReconTSList)
 
-_CheckKind: TypeAlias = bool | Literal['maps', 'ortho', 'shape', 'data'] | None
+_CheckKind: TypeAlias = bool | Literal['maps', 'ortho', 'shape', 'evals'] | None
 
 # ==========================================
 # CLASSES

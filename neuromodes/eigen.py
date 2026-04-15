@@ -300,7 +300,8 @@ class EigenSolver(Solver):
     def inpaint(
         self,
         data: NDArray[floating],
-        method: Literal['harmonic', 'biharmonic', 'nearest'] = 'harmonic'  # TODO: add RBF?
+        method: Literal['harmonic', 'biharmonic', 'nearest'] = 'biharmonic',  # TODO: add RBF?
+        smoothing_fwhm: float | None = None
     ) -> NDArray[floating]:
         """
         Inpaints missing values (NaNs) in the provided brain map(s).
@@ -313,7 +314,11 @@ class EigenSolver(Solver):
             n_maps is the number of brain maps. Missing values should be represented as NaNs.
         method : str, optional
             The method to use for inpainting, either 'harmonic' or 'biharmonic'. Default is
-            'harmonic'.
+            'biharmonic'.
+        smoothing_fwhm : float, optional
+            If provided, applies Gaussian smoothing with the specified full-width at half-maximum
+            (in millimeters) to the inpainted map(s) after inpainting. Default is ``None`` (no
+            smoothing).
 
         Returns
         -------
@@ -340,7 +345,7 @@ class EigenSolver(Solver):
         if method not in ['harmonic', 'biharmonic', 'nearest']:
             raise ValueError("method must be either 'harmonic', 'biharmonic', or 'nearest'.")
         
-        if is_data_vector := (data.ndim == 1):
+        if squeeze_output := (data.ndim == 1):
             data = data[:, np.newaxis]
 
         masks = ~np.isnan(data)  # TODO: test behaviour of each method when a nanless map is present
@@ -434,62 +439,7 @@ class EigenSolver(Solver):
 
                 data_out[nan_inds, i] = data[source[nan_inds], i]
     
-        if is_data_vector:
-            data_out = data_out[:, 0]
-        return data_out
-
-    # TODO: decide whether to keep / merge with GMH's wavelength estimation functions?
-    def rayleigh_quotient(
-        self,
-        data: NDArray[floating]
-    ) -> float | NDArray[floating]:
-        """
-        Computes the Rayleigh quotient of the provided data with respect to the stiffness and mass
-        matrices of the Laplace-Beltrami operator. This can be interpreted as a measure of the
-        spatial frequency of the data, with higher values indicating higher-frequency content.
-
-        Parameters
-        ----------
-        data : array-like
-            The brain map(s) for which to compute the Rayleigh quotient, with shape ``(n_verts,)``
-            or ``(n_verts, n_maps)``, where n_verts is the number of vertices in the mesh (after
-            masking, if applicable) and n_maps is the number of brain maps.
-
-        Returns
-        -------
-        float | numpy.ndarray
-            The Rayleigh quotient(s) corresponding to the input brain map(s), with shape ``(n_maps,)``.
-        
-        """
-        # Format / validate arguments (TODO: use EigenData)
-        data = np.asarray(data)
-        if self.mask is not None and data.shape[0] == len(self.mask):
-            data = data[self.mask]
-        elif data.shape[0] != self.n_verts:
-            err_str = f"the number of vertices in the provided geometry ({self.n_verts})"
-            if self.mask is not None:
-                err_str += f" or the masked geometry ({self.mask.sum()})"
-            raise ValueError(f"First dimension of data must have length matching {err_str}.")
-
-        if np.isinf(data).any():
-            raise ValueError("data contains infinite values.")
-        
-        if data.ndim > 2:  # TODO
-            raise NotImplementedError("No thank you!!")
-        
-        if is_data_vector := (data.ndim == 1):
-            data = data[:, np.newaxis]
-
-        if not (hasattr(self, 'mass') and hasattr(self, 'stiffness')):
-            self.compute_lbo()
-
-        numer = data.T @ self.stiffness @ data
-        denom = data.T @ self.mass @ data
-        rayleighs = numer / denom
-
-        if is_data_vector:
-            rayleighs = rayleighs[0]
-        return rayleighs
+        return data_out[:, 0] if squeeze_output else data_out
 
     def _check_for_emodes(self) -> None:
         if not hasattr(self, 'emodes'):
