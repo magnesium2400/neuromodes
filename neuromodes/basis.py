@@ -4,27 +4,72 @@ geometric eigenmodes.
 """
 
 from __future__ import annotations
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast, overload
 from warnings import warn
 import numpy as np
+from scipy.sparse import eye, issparse, csc_matrix
 from scipy.spatial.distance import cdist
 from neuromodes.eigen import EigenData
 
 if TYPE_CHECKING:
+    from typing import Any, TypeAlias, Literal
+    from collections.abc import Sequence
     from numpy.typing import NDArray
-    from scipy.spatial.distance import _MetricCallback, _MetricKind 
-    from scipy.sparse import csc_matrix
+    from scipy.spatial.distance import _MetricCallback, _MetricKind
     from neuromodes.eigen import _CheckKind
-    from neuromodes.basis import _DecompositionKind, _IntSequenceKind, _SeqSequenceKind
+    # from neuromodes.basis import _DecompositionKind, _IntSequenceKind, _SeqSequenceKind
+
+    _IntSequenceKind: TypeAlias = Sequence[int] | NDArray[np.integer]
+    _SeqSequenceKind: TypeAlias = Sequence[_IntSequenceKind] | NDArray[Any]
+    _DecompositionKind: TypeAlias = Literal['project', 'regress']
+
+@overload
+def decompose(
+    data: NDArray[np.floating],
+	emodes: NDArray[np.floating],
+	method: _DecompositionKind = ...,
+	*,
+    mass: csc_matrix | None = ...,
+	mode_counts: int | None = ...,
+	mode_ids: None = ...,
+	checks: _CheckKind = ...
+) -> NDArray[np.floating]: ...
+
+# 2. mode_counts is Sequence -> List of Arrays
+@overload
+def decompose(
+    data: NDArray[np.floating],
+	emodes: NDArray[np.floating],
+	method: _DecompositionKind = ...,
+	*,
+    mass: csc_matrix | None = ...,
+	mode_counts: _IntSequenceKind,
+	mode_ids: None = ...,
+	checks: _CheckKind = ...
+) -> list[NDArray[np.floating]]: ...
+
+# 3. mode_ids is Sequence -> List of Arrays
+@overload
+def decompose(
+    data: NDArray[np.floating],
+	emodes: NDArray[np.floating],
+	method: _DecompositionKind = ...,
+	*,
+    mass: csc_matrix | None = ...,
+	mode_counts: None = ...,
+	mode_ids: _SeqSequenceKind,
+	checks: _CheckKind = ...
+) -> list[NDArray[np.floating]]: ...
 
 def decompose(
     data: NDArray[np.floating],
     emodes: NDArray[np.floating],
     method: _DecompositionKind = 'project',
+    *,
     mass: csc_matrix | None = None,
     mode_counts: _IntSequenceKind | int | None = None,
     mode_ids: _SeqSequenceKind | None = None,
-    checks: _CheckKind = None,  
+    checks: _CheckKind | None = None,  
 ) -> NDArray[np.floating] | list[NDArray[np.floating]]:
     """
     Calculate the decomposition of the given data onto a basis set.
@@ -75,10 +120,6 @@ def decompose(
     if method not in ['project', 'regress']:
         raise ValueError(f"Invalid method '{method}'; must be 'project' or 'regress'.")
     
-    # Skip warning for EigenSolver, where mass is always passed in
-    if (method == 'regress') and (mass is not None) and (checks is True or checks == 'ortho'):  
-            warn("mass is ignored when method='regress'.")
-    
     if checks is None:
         if method == 'regress':
             checks = 'maps'
@@ -87,6 +128,10 @@ def decompose(
     if checks is not False: 
         ved = EigenData(emodes=emodes, mass=mass, data=data, checks=checks)
         emodes, mass, data = ved.emodes, ved.mass, ved.data
+
+    if mass is None: 
+        warn("No mass matrix provided; assuming that area at each vertex is 1")
+        mass = csc_matrix(eye(emodes.shape[0], format='csc', dtype=cast(type[float], data.dtype)))
 
     mode_ids, squeeze_output = _process_mode_ids(mode_counts, mode_ids, emodes.shape[1])
     n_modes = [len(x) for x in mode_ids]
@@ -103,7 +148,7 @@ def decompose(
         mask_indices = np.zeros(data_reshaped.shape[1], dtype=int)
     elif method == 'regress':
         if checks is True or checks == 'maps':
-            warn("data contains NaNs and/or Infs; these will be disregarded during decomposition by"
+            warn("NaN/Inf values detected in data; these will be disregarded during decomposition by"
                 " masking corresponding vertices from data and emodes. This may lead to extreme "
                 "values in affected areas of the reconstructed data. Consider instead interpolating"
                 " missing data prior to decomposition via EigenSolver.inpaint().")
@@ -153,16 +198,15 @@ def decompose(
     return beta[0] if squeeze_output else beta # convert back to array if mode_counts was None/scalar
 
 def reconstruct(
-    data: NDArray,
     emodes: NDArray,
+    data: NDArray | None = None,
+    coefficients: list[NDArray] | NDArray | None = None,
     method: _DecompositionKind = 'project',
     mass: csc_matrix | None = None,
     mode_counts: _IntSequenceKind | int | None = None,
     mode_ids: _SeqSequenceKind | None = None,
-    checks: _CheckKind = None,
-    metric: _MetricCallback | _MetricKind | None = 'correlation',
-    **cdist_kwargs
-) -> tuple[NDArray[np.floating], NDArray[np.floating], list[NDArray[np.floating]] | NDArray[np.floating]]:
+    checks: _CheckKind | None = None
+) -> NDArray[np.floating]:
     """
     Calculate and score the reconstruction of the given independent data using the provided
     orthogonal vectors (e.g., geometric eigenmodes).
@@ -235,177 +279,79 @@ def reconstruct(
     if checks is not False:
         ved = EigenData(emodes=emodes, mass=mass, data=data, checks=checks)
         emodes, mass, data = ved.emodes, ved.mass, ved.data
+
+    # This should stay here as it needs to be run in both coefficients and data modes
     mode_ids, squeeze_output = _process_mode_ids(mode_counts, mode_ids, emodes.shape[1])
 
-    # Prepare inputs and outputs in right shapes
-    n_recons = len(mode_ids)
-    recon_output_shape = data.shape + (n_recons,)
-    error_output_shape = data.shape[1:] + (n_recons,)
+    # Validate that exactly one of coefficients/data is provided & decompose if only data is provided
+    if coefficients is not None and data is not None:
+        raise ValueError("Exactly one of 'coefficients' or 'data' must be provided.")
+    elif coefficients is not None:
+        if isinstance(coefficients, np.ndarray): # equivalent to `if squeeze_output`, but keeps pyright happy
+            coefficients = [coefficients]
+    elif data is not None: # coefficients will never be squeezed in this case (as mode_ids is passed)
+        coefficients = decompose(data, emodes, method=method, mass=mass, mode_ids=mode_ids, checks=False)
+    else: # neither provided (this order keeps pyright happy)
+        raise ValueError("Exactly one of 'coefficients' or 'data' must be provided.")
+    n_recons = len(coefficients)
 
-    data_2d = data.reshape(data.shape[0], -1)
-    recon_flat_shape = data_2d.shape + (n_recons,) # the flat data will just be np.reshaped into the size above
-    error_flat_shape = (data_2d.shape[1],) + (n_recons,)
-
-    # Main computation
-    # a. Decomposition
-    beta = decompose(data, emodes, method=method, mass=mass, mode_ids=mode_ids, checks=False)
-
-    # b. Reconstructions: Need to loop over recons as betas are different sizes
-    recon_flat = np.empty(recon_flat_shape, dtype=data.dtype)
+    # Main computation 
+    recon_flat_shape = (emodes.shape[0], int(np.prod(coefficients[0].shape[1:])), n_recons)
+    recon_flat = np.empty(recon_flat_shape, dtype=coefficients[0].dtype)
     for j, mids in enumerate(mode_ids):
-        recon_flat[:, :, j] = emodes[:, mids] @ beta[j].reshape(len(mids), -1) # convert to col vec if 1D
-
-    # c. Errors: Need to loop over maps for cdist
-    recon_error_flat = np.full(error_flat_shape, None, dtype=data.dtype)
-    if metric is not None:
-        for i in range(data_2d.shape[1]):
-            recon_error_flat[i, :] = cdist(data_2d[:, [i]].T, recon_flat[:, i, :].T, 
-                                           metric=metric, **cdist_kwargs)
+        recon_flat[:, :, j] = emodes[:, mids] @ coefficients[j].reshape(len(mids), -1) # convert to col vec if 1D
 
     # Reshape outputs
-    recon = recon_flat.reshape(recon_output_shape)
-    recon_error = recon_error_flat.reshape(error_output_shape)
-
     if squeeze_output: 
-        recon = np.squeeze(recon, axis=-1)
-        recon_error = np.squeeze(recon_error, axis=-1)
-        beta = beta[0]
+        recon_output_shape = (emodes.shape[0],) + coefficients[0].shape[1:] 
+    else: 
+        recon_output_shape = (emodes.shape[0],) + coefficients[0].shape[1:] + (n_recons,)
+    recon = recon_flat.reshape(recon_output_shape)
 
-    return recon, recon_error, beta
+    return recon
 
-def reconstruct_timeseries(
-    timeseries: NDArray,
-    emodes: NDArray,
-    method: _DecompositionKind = 'project',
+def reconstruction_error(
+    data: NDArray,
+    recon: NDArray,
     mass: csc_matrix | None = None,
-    mode_counts: _IntSequenceKind | int | None = None,
-    mode_ids: _SeqSequenceKind | None = None,
-    metric: _MetricCallback | _MetricKind | None = 'correlation',
-    checks: _CheckKind = None,
+    metric: _MetricCallback | _MetricKind = 'correlation',
+    checks: _CheckKind = 'maps',
     **cdist_kwargs
-) -> tuple[NDArray[np.floating], NDArray[np.floating], NDArray[np.floating], NDArray[np.floating],
-           list[NDArray[np.floating]] | NDArray[np.floating]]:
-    """
-    Calculate and score the reconstruction of the given timeseries data using the provided
-    orthogonal vectors (e.g., geometric eigenmodes).
+) -> NDArray[np.floating]:
+    # Format / validate checks
+    if checks is not False: 
+        ved = EigenData(emodes=None, mass=mass, data=data, checks=checks)
+        mass, data = ved.mass, ved.data
+        ved = EigenData(emodes=None, mass=None, data=recon, checks=checks)
+        recon = ved.data
 
-    Parameters
-    ----------
-    timeseries : array-like
-        The input timeseries array of shape ``(n_verts, n_timepoints)``, where ``n_verts`` is the
-        number of vertices and ``n_timepoints`` is the number of timepoints.
-    emodes : array-like
-        The vectors array of shape ``(n_verts, n_modes)``, where ``n_modes`` is the number of
-        orthogonal vectors.
-    method : str, optional
-        The method used for the decomposition, either ``'project'`` to project data into a
-        mass-orthonormal space or ``'regress'`` for least-squares fitting. Note that the beta values
-        from ``'regress'`` tend towards those from ``'project'`` when more basis vectors are
-        provided. For a non-orthonormal basis set, ``'regress'`` must be used. Default is
-        ``'project'``.
-    mass : array-like, optional
-        The mass matrix of shape ``(n_verts, n_verts)`` used for the decomposition when method is
-        ``'project'``. If vectors are orthonormal in Euclidean space, leave as ``None``. See
-        :func:`eigen.is_orthonormal_basis` for more details. Default is ``None``.
-    mode_counts : array-like, optional
-        The sequence of vectors to be used for reconstruction. For example, ``mode_counts =
-        np.array([10,20,30])`` will run three analyses: with the first 10 vectors, with the first 20
-        vectors, and with the first 30 vectors. Default is ``None``, which uses all vectors
-        provided.
-    metric : str, optional
-        The metric used for calculating reconstruction error. Should be one of the options from
-        ``scipy.spatial.distance.cdist``, or ``None`` if no scoring is required. Default is
-        ``'correlation'``.
-    checks : bool, optional
-        Whether to verify types, shapes, and orthonormality of ``emodes`` and ``mass`` before
-        reconstruction. Default is ``True``.
-    **cdist_kwargs
-        Additional keyword arguments to pass to ``scipy.spatial.distance.cdist``.
-
-    Returns
-    -------
-    fc_recon : numpy.ndarray
-        The reconstructed functional connectivity array of shape ``(n_edges, n_recons)``, where
-        ``n_edges = n_verts*(n_verts-1)/2`` and ``n_recons`` is the number of different
-        reconstructions ordered in ``mode_counts``. The FC matrix returned is r-to-z (arctanh)
-        transformed and vectorized. Note that if ``mode_counts`` includes any constant vector (e.g.,
-        the first geometric eigenmode), the reconstructions will be constant for that value of
-        ``mode_counts`` (this may also result in warnings/nans for ``recon_error``). 
-    fc_recon_error : numpy.ndarray
-        The functional reconstruction accuracy of shape ``(n_recons,)``. If ``metric`` is ``None``,
-        this will be empty.
-    recon : numpy.ndarray
-        The reconstructed timeseries array of shape ``(n_verts, n_recons, n_timepoints)``, where
-        ``n_recons`` is the number of different reconstructions ordered in ``mode_counts``. Each
-        slice is the independent reconstruction of each timepoint. Note that if ``mode_counts``
-        includes any constant vector (e.g., the first geometric eigenmode), the reconstructions will
-        be constant for that value of ``mode_counts`` (this may also result in warnings/nans for
-        ``recon_error``).
-    recon_error : numpy.ndarray
-        The reconstruction error array of shape ``(n_recons, n_timepoints)``. Each value represents
-        the reconstruction error at one timepoint. If ``metric`` is ``None``, this will be empty. 
-    beta : list of numpy.ndarray
-        A list of beta coefficients calculated for each vector.
-    
-    Raises
-    ------
-    ValueError
-        If ``timeseries`` does not have shape ``(n_verts, n_timepoints)``.
-    """
-    # Format / validate arguments
-    if checks is None:
-        if method == 'regress':
-            checks = 'maps'
-        else:
-            checks = True
-    if checks is not False:
-        ved = EigenData(emodes=emodes, mass=mass, data=timeseries, checks=checks)
-        emodes, mass, timeseries = ved.emodes, ved.mass, ved.data
-    if timeseries.ndim != 2:
-        raise ValueError("timeseries must have shape (n_verts, n_timepoints).")
-
-    mode_ids, squeeze_output = _process_mode_ids(mode_counts, mode_ids, emodes.shape[1])
-    
-    # Use reconstruct to get independent reconstructions
-    recon, recon_error, beta = reconstruct(
-        timeseries,
-        emodes, 
-        method=method,
-        mass=mass,
-        mode_ids=mode_ids,
-        metric=metric,
-        checks=False, 
-        **cdist_kwargs
-    )
-
-    # Calculate FC of original timeseries
-    fc = calc_vec_fc(timeseries)
-    n_edges = len(fc)
-    n_recons = len(beta)
-
-    # Calculate FC of reconstructed timeseries
-    fc_recon = np.full((n_edges,) + recon.shape[2:], None, dtype=timeseries.dtype)
-    for i in range(n_recons):
-        fc_recon[:, i] = calc_vec_fc(recon[..., i])
-
-    # Score FC of reconstructions
-    fc_recon_error = np.full(n_recons, None, dtype=timeseries.dtype)
-    if metric is not None:
-        fc_recon_error = cdist(
-            fc_recon.T,
-            fc[np.newaxis, :],
-            metric=metric,
-            **cdist_kwargs
-            )[:, 0]
-    
+    # Get and check data/recon shapes
+    data_shape = data.shape
+    recon_shape = recon.shape
+    squeeze_output = len(data_shape) == len(recon_shape)
     if squeeze_output:
-        fc_recon = np.squeeze(fc_recon, axis=-1)
-        fc_recon_error = np.squeeze(fc_recon_error, axis=-1)
-        recon = np.squeeze(recon, axis=-1)
-        recon_error = np.squeeze(recon_error, axis=-1)
-        beta = beta[0]
+        if data_shape != recon_shape:
+            raise ValueError(f"data and recon must have the same shape; got {data_shape} and {recon_shape}.")
+        n_recons = 1
+    else: 
+        if data_shape != recon_shape[:-1]:
+            raise ValueError(f"data and recon must have the same shape except for the last dimension; got {data_shape} and {recon_shape}.")
+        n_recons = recon_shape[-1]
 
-    return fc_recon, fc_recon_error, recon, recon_error, beta
+    w = mass.diagonal() if mass is not None else np.ones(data.shape[0])
+
+    # Main computation
+    data_2d = data.reshape(data.shape[0], -1)
+    recon_3d = recon.reshape(recon.shape[0], -1, n_recons)
+
+    error_flat_shape = (data_2d.shape[1],) + (n_recons,)
+    recon_error_flat = np.empty(error_flat_shape, dtype=data.dtype)
+    for i in range(data_2d.shape[1]):
+        recon_error_flat[i, :] = cdist(data_2d[:, [i]].T, recon_3d[:, i, :].T, 
+                                        w=w, metric=metric, **cdist_kwargs)
+    
+    recon_error = recon_error_flat.reshape(recon.shape[1:])
+    return recon_error
 
 def calc_vec_fc(
     timeseries: NDArray
@@ -432,14 +378,15 @@ def _calc_beta(
     data: NDArray[np.floating],
     emodes: NDArray[np.floating],
     method: str,
-    mass: csc_matrix | None,
+    mass: csc_matrix,
     mask: NDArray
 ) -> NDArray[np.floating]:
     """Helper function to perform decomposition after validating arguments and masking NaNs/Infs."""
     if method == 'project':
-        return emodes.T @ data if mass is None else emodes.T @ (mass @ data)
+        return emodes.T @ (mass @ data)
     elif method == 'regress':
-        return np.linalg.lstsq(emodes[mask, :], data[mask, :], rcond=None)[0]
+        w = np.sqrt(mass.diagonal())[mask, np.newaxis]
+        return np.linalg.lstsq(w * emodes[mask, :], w * data[mask, :], rcond=None)[0]
     
     raise ValueError(f"Invalid method '{method}'; must be 'project' or 'regress'.")
 

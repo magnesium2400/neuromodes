@@ -3,7 +3,7 @@ Module for computing geometric eigenmodes of brain structures from surface meshe
 """
 
 from __future__ import annotations
-from typing import Any, Literal, TYPE_CHECKING
+from typing import TYPE_CHECKING, overload
 from warnings import warn
 from dataclasses import dataclass
 from lapy import Solver
@@ -13,12 +13,16 @@ from neuromodes.mesh import mask_mesh, check_surf
 
 if TYPE_CHECKING:
     from pathlib import Path
+    from typing import Any, Literal, TypeAlias
     from lapy import TriaMesh
     from nibabel.gifti.gifti import GiftiImage
     from numpy import floating
     from numpy.random import Generator
     from numpy.typing import NDArray, ArrayLike
     from scipy.sparse import csc_matrix
+
+    _CheckKind: TypeAlias = bool | Literal['maps', 'ortho', 'shape', 'evals']
+    from neuromodes.basis import _IntSequenceKind, _SeqSequenceKind
 
 class EigenSolver(Solver):
     """
@@ -299,12 +303,42 @@ class EigenSolver(Solver):
     def _check_for_emodes(self) -> None:
         if not hasattr(self, 'emodes'):
             raise ValueError("Eigenmodes not found. Please run the solve() method first.")
-    
+        
+    # 1. mode_counts is None or int -> Single Array 
+    @overload
+    def decompose(
+        self,
+        data: NDArray,
+        *,
+        mode_counts: int | None = ...,
+        mode_ids: None = ...
+    ) -> NDArray[np.floating]: ...
+
+    # 2. mode_counts is Sequence -> List of Arrays
+    @overload
+    def decompose(
+        self,
+        data: NDArray,
+        *,
+        mode_counts: _IntSequenceKind,
+        mode_ids: None = ...
+    ) -> list[NDArray[np.floating]]: ...
+
+    # 3. mode_ids is Sequence -> List of Arrays
+    @overload
+    def decompose(
+        self,
+        data: NDArray,
+        *,
+        mode_counts: None = ...,
+        mode_ids: _SeqSequenceKind
+    ) -> list[NDArray[np.floating]]: ...
+
     def decompose(
         self,
         data: NDArray,
         **kwargs
-    ) -> NDArray[floating]:
+    ) -> NDArray[np.floating] | list[NDArray[np.floating]]:
         """
         This is a wrapper for :func:`~neuromodes.basis.decompose`. Note that ``emodes``, ``mass``,
         and ``checks`` are passed automatically by the ``EigenSolver`` instance.
@@ -325,7 +359,7 @@ class EigenSolver(Solver):
         self,
         data: NDArray,
         **kwargs
-    ) -> tuple[NDArray[floating], NDArray[floating], list[NDArray[floating]]]:
+    ) -> NDArray[floating]:
         """
         This is a wrapper for :func:`~neuromodes.basis.reconstruct`. Note that ``emodes``, ``mass``,
         and ``checks`` are passed automatically by the ``EigenSolver`` instance.
@@ -342,24 +376,23 @@ class EigenSolver(Solver):
             **kwargs
         )
     
-    def reconstruct_timeseries(
+    def reconstruction_error(
         self,
-        timeseries: NDArray,
+        data: NDArray,
+        recon: NDArray,
         **kwargs
-    ) -> tuple[NDArray[floating], NDArray[floating], NDArray[floating], NDArray[floating],
-               list[NDArray[floating]]]:
+    ) -> NDArray[floating]:
         """
-        This is a wrapper for :func:`~neuromodes.basis.reconstruct_timeseries`. Note that
-        ``emodes``, ``mass``, and ``checks`` are passed automatically by the ``EigenSolver``
-        instance.
+        This is a wrapper for :func:`~neuromodes.basis.reconstruction_error`. Note that ``mass``
+        and ``checks`` are passed automatically by the ``EigenSolver`` instance.
         """
-        from neuromodes.basis import reconstruct_timeseries
-
+        from neuromodes.basis import reconstruction_error
+        
         self._check_for_emodes()
             
-        return reconstruct_timeseries(
-            timeseries=timeseries,
-            emodes=self.emodes,
+        return reconstruction_error(
+            data=data,
+            recon=recon,
             mass=self.mass,
             checks='maps',
             **kwargs
@@ -556,7 +589,7 @@ def is_orthonormal_basis(
     mass: csc_matrix | None = None,
     atol: float = 1e-03,
     rtol: float = 1e-05,
-    checks: bool | str = 'shape'
+    checks: _CheckKind = 'shape'
 ) -> bool:
     """
     Check if a set of vectors is orthonormal in Euclidean space (i.e., ``emodes.T @ emodes == I``,
@@ -647,7 +680,7 @@ class EigenData:
         stiffness: csc_matrix | None = _MISSING, # type: ignore[assignment]
         scaled_hetero: NDArray[floating] | None = _MISSING, # type: ignore[assignment]
         data: NDArray[floating] | None = _MISSING, # type: ignore[assignment]
-        checks: bool | str = True
+        checks: _CheckKind = True
     ):  # TODO: add mask?
 
         # Local helper to bypass 'frozen' restriction during initialization
