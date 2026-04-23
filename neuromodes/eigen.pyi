@@ -1,8 +1,8 @@
 from pathlib import Path
 from typing import Any, overload, TypeAlias, Literal
-import numpy as np
 from lapy import Solver, TriaMesh
 from nibabel.gifti.gifti import GiftiImage
+from numpy import floating, integer, bool_
 from numpy.random import Generator
 from numpy.typing import NDArray, ArrayLike
 from scipy.sparse import csc_matrix
@@ -20,14 +20,14 @@ _CheckKind: TypeAlias = bool | Literal['maps', 'ortho', 'shape', 'evals'] | None
 class EigenSolver(Solver):
     geometry: str | Path | GiftiImage | TriaMesh | dict  # Can be TriaMesh or similar internally
     n_verts: int
-    mask: NDArray[np.bool_] | None
-    hetero: NDArray[np.floating] | None
+    mask: NDArray[bool_] | None
+    hetero: NDArray[floating] | None
     use_cholmod: bool
     stiffness: csc_matrix
     mass: csc_matrix
     n_modes: int
-    evals: NDArray[np.floating]
-    emodes: NDArray[np.floating]
+    evals: NDArray[floating]
+    emodes: NDArray[floating]
     _scaling: str | None
     _alpha: float | None
 
@@ -65,44 +65,44 @@ class EigenSolver(Solver):
     @overload
     def decompose(
         self,
-        data: NDArray,
+        data: NDArray[floating],
         method: _DecompositionKind = ...,
         *,
         mode_counts: int | None = ...,
         mode_ids: None = ...,
         checks: _CheckKind = ...
-    ) -> NDArray[np.floating]: ...
+    ) -> NDArray[floating]: ...
 
     # 2. mode_counts is Sequence -> List of Arrays
     @overload
     def decompose(
         self,
-        data: NDArray,
+        data: NDArray[floating],
         method: _DecompositionKind = ...,
         *,
         mode_counts: _IntSequenceKind,
         mode_ids: None = ...,
         checks: _CheckKind = ...
-    ) -> list[NDArray[np.floating]]: ...
+    ) -> list[NDArray[floating]]: ...
 
     # 3. mode_ids is Sequence -> List of Arrays
     @overload
     def decompose(
         self,
-        data: NDArray,
+        data: NDArray[floating],
         method: _DecompositionKind = ...,
         *,
         mode_counts: None = ...,
         mode_ids: _SeqSequenceKind,
         checks: _CheckKind = ...
-    ) -> list[NDArray[np.floating]]: ...
+    ) -> list[NDArray[floating]]: ...
 
     # %% RECONSTRUCT
     # 1. mode_counts is None or int -> Tuple with Single Array
     @overload
     def reconstruct(
         self,
-        data: NDArray,
+        data: NDArray[floating],
         method: _DecompositionKind = ...,
         *,
         mode_counts: int | None = ...,
@@ -116,7 +116,7 @@ class EigenSolver(Solver):
     @overload
     def reconstruct(
         self,
-        data: NDArray,
+        data: NDArray[floating],
         method: _DecompositionKind = ...,
         *,
         mode_counts: _IntSequenceKind,
@@ -130,7 +130,7 @@ class EigenSolver(Solver):
     @overload
     def reconstruct(
         self,
-        data: NDArray,
+        data: NDArray[floating],
         method: _DecompositionKind = ...,
         *,
         mode_counts: None = ...,
@@ -145,7 +145,7 @@ class EigenSolver(Solver):
     @overload
     def reconstruct_timeseries(
         self,
-        timeseries: NDArray,
+        timeseries: NDArray[floating],
         method: _DecompositionKind = ...,
         *,
         mode_counts: int | None = ...,
@@ -159,7 +159,7 @@ class EigenSolver(Solver):
     @overload
     def reconstruct_timeseries(
         self,
-        timeseries: NDArray,
+        timeseries: NDArray[floating],
         method: _DecompositionKind = ...,
         *,
         mode_counts: _IntSequenceKind,
@@ -173,7 +173,7 @@ class EigenSolver(Solver):
     @overload
     def reconstruct_timeseries(
         self,
-        timeseries: NDArray,
+        timeseries: NDArray[floating],
         method: _DecompositionKind = ...,
         *,
         mode_counts: None = ...,
@@ -184,28 +184,28 @@ class EigenSolver(Solver):
     ) -> _ReconTSList: ...
 
     # --- OTHER WRAPPERS ---
-    def compute_gem(self, **kwargs: Any) -> NDArray[np.floating]: ...
-    def sim_nft_waves(self, **kwargs: Any) -> NDArray[np.floating]: ...
-    def balloon_model(self, activity: ArrayLike, dt: float, **kwargs: Any) -> NDArray[np.floating]: ...
-    def eigenstrap(self, data: NDArray, **kwargs: Any) -> NDArray: ...
+    def compute_gem(self, **kwargs: Any) -> NDArray[floating]: ...
+    def sim_nft_waves(self, **kwargs: Any) -> NDArray[floating]: ...
+    def balloon_model(self, activity: ArrayLike, dt: float, **kwargs: Any) -> NDArray[floating]: ...
+    def eigenstrap(self, data: NDArray[floating], **kwargs: Any) -> NDArray[floating]: ...
 
 
 class EigenData:
-    emodes: NDArray[np.floating]
-    evals: NDArray[np.floating]
+    emodes: NDArray[floating]
+    evals: NDArray[floating]
     mass: csc_matrix
     stiffness: csc_matrix
-    scaled_hetero: NDArray[np.floating]
-    data: NDArray[np.floating]
+    scaled_hetero: NDArray[floating]
+    data: NDArray[floating]
 
     def __init__(
         self,
-        emodes: NDArray[np.floating] | None = ...,
-        evals: NDArray[np.floating] | None = ...,
+        emodes: NDArray[floating] | None = ...,
+        evals: NDArray[floating] | None = ...,
         mass: csc_matrix | None = ...,
         stiffness: csc_matrix | None = ...,
-        scaled_hetero: NDArray[np.floating] | None = ...,
-        data: NDArray[np.floating] | None = ...,
+        scaled_hetero: NDArray[floating] | None = ...,
+        data: NDArray[floating] | None = ...,
         checks: _CheckKind = ...
     ) -> None: ...
 
@@ -220,15 +220,15 @@ def scale_hetero(
     hetero: ArrayLike,
     alpha: float = ...,
     scaling: Literal["exponential", "sigmoid"] = ...
-) -> NDArray[np.floating]: ...
+) -> NDArray[floating]: ...
 
 def standardize_emodes(
-    emodes: NDArray,
+    emodes: NDArray[floating],
     checks: bool = ...
-) -> NDArray: ...
+) -> NDArray[floating]: ...
 
 def is_orthonormal_basis(
-    emodes: NDArray,
+    emodes: NDArray[floating],
     mass: csc_matrix | None = ...,
     atol: float = ...,
     rtol: float = ...,
@@ -237,4 +237,4 @@ def is_orthonormal_basis(
 
 def get_eigengroup_inds(
     n_modes: int
-) -> list[NDArray]: ...
+) -> list[NDArray[integer]]: ...

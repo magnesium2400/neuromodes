@@ -1,4 +1,4 @@
-import numpy as np
+from numpy import floating, integer
 from typing import overload, TypeAlias, Literal, Any
 from collections.abc import Sequence
 from numpy.typing import NDArray
@@ -9,16 +9,16 @@ from neuromodes.eigen import _CheckKind
 
 # %% TYPE ALIASES
 # Types for reconstruct (Tuple of 3)
-_ReconSingle: TypeAlias = tuple[NDArray[np.floating], NDArray[np.floating], NDArray[np.floating]]
-_ReconList: TypeAlias = tuple[NDArray[np.floating], NDArray[np.floating], list[NDArray[np.floating]]]
+_ReconSingle: TypeAlias = tuple[NDArray[floating], NDArray[floating], NDArray[floating]]
+_ReconList: TypeAlias = tuple[NDArray[floating], NDArray[floating], list[NDArray[floating]]]
 
 # Types for reconstruct_timeseries (Tuple of 5)
-_ReconTSSingle: TypeAlias = tuple[NDArray[np.floating], NDArray[np.floating], NDArray[np.floating], NDArray[np.floating], NDArray[np.floating]]
-_ReconTSList: TypeAlias = tuple[NDArray[np.floating], NDArray[np.floating], NDArray[np.floating], NDArray[np.floating], list[NDArray[np.floating]]]
+_ReconTSSingle: TypeAlias = tuple[NDArray[floating], NDArray[floating], NDArray[floating], NDArray[floating], NDArray[floating]]
+_ReconTSList: TypeAlias = tuple[NDArray[floating], NDArray[floating], NDArray[floating], NDArray[floating], list[NDArray[floating]]]
 
 # Generic Types for inputs
 _MetricCallbackKind: TypeAlias = _MetricCallback | _MetricKind | None
-_IntSequenceKind: TypeAlias = Sequence[int] | NDArray[np.integer]
+_IntSequenceKind: TypeAlias = Sequence[int] | NDArray[integer]
 _SeqSequenceKind: TypeAlias = Sequence[_IntSequenceKind] | NDArray[Any]
 _DecompositionKind: TypeAlias = Literal['project', 'regress']
 
@@ -26,48 +26,48 @@ _DecompositionKind: TypeAlias = Literal['project', 'regress']
 # 1. mode_counts is None or int -> Single Array 
 @overload
 def decompose(
-    data: NDArray[np.floating],
-	emodes: NDArray[np.floating],
+    data: NDArray[floating],
+	emodes: NDArray[floating],
 	method: _DecompositionKind = ...,
 	*,
     mass: csc_matrix | None = ...,
 	mode_counts: int | None = ...,
 	mode_ids: None = ...,
 	checks: _CheckKind = ...
-) -> NDArray[np.floating]: ...
+) -> NDArray[floating]: ...
 
 # 2. mode_counts is Sequence -> List of Arrays
 @overload
 def decompose(
-    data: NDArray[np.floating],
-	emodes: NDArray[np.floating],
+    data: NDArray[floating],
+	emodes: NDArray[floating],
 	method: _DecompositionKind = ...,
 	*,
     mass: csc_matrix | None = ...,
 	mode_counts: _IntSequenceKind,
 	mode_ids: None = ...,
 	checks: _CheckKind = ...
-) -> list[NDArray[np.floating]]: ...
+) -> list[NDArray[floating]]: ...
 
 # 3. mode_ids is Sequence -> List of Arrays
 @overload
 def decompose(
-    data: NDArray[np.floating],
-	emodes: NDArray[np.floating],
+    data: NDArray[floating],
+	emodes: NDArray[floating],
 	method: _DecompositionKind = ...,
 	*,
     mass: csc_matrix | None = ...,
 	mode_counts: None = ...,
 	mode_ids: _IntSequenceKind,
 	checks: _CheckKind = ...
-) -> list[NDArray[np.floating]]: ...
+) -> list[NDArray[floating]]: ...
 
 # %% RECONSTRUCT
 # 1. mode_counts is None or int -> Tuple with Single Array
 @overload
 def reconstruct(
-    data: NDArray[np.floating],
-	emodes: NDArray[np.floating],
+    data: NDArray[floating],
+	emodes: NDArray[floating],
 	method: _DecompositionKind = ...,
 	*,
     mass: csc_matrix | None = ...,
@@ -81,8 +81,8 @@ def reconstruct(
 # 2. mode_counts is Sequence -> Tuple with List of Arrays
 @overload
 def reconstruct(
-    data: NDArray[np.floating],
-	emodes: NDArray[np.floating],
+    data: NDArray[floating],
+	emodes: NDArray[floating],
 	method: _DecompositionKind = ...,
 	*,
     mass: csc_matrix | None = ...,
@@ -96,8 +96,8 @@ def reconstruct(
 # 3. Mode IDs -> Tuple with List of Arrays
 @overload
 def reconstruct(
-    data: NDArray[np.floating],
-	emodes: NDArray[np.floating],
+    data: NDArray[floating],
+	emodes: NDArray[floating],
 	method: _DecompositionKind = ...,
 	*,
     mass: csc_matrix | None = ...,
@@ -112,8 +112,8 @@ def reconstruct(
 # 1. mode_counts is None or int -> Tuple with Single Array
 @overload
 def reconstruct_timeseries(
-    timeseries: NDArray[np.floating],
-	emodes: NDArray[np.floating],
+    timeseries: NDArray[floating],
+	emodes: NDArray[floating],
 	method: _DecompositionKind = ...,
 	*,
     mass: csc_matrix | None = ...,
@@ -127,8 +127,8 @@ def reconstruct_timeseries(
 # 2. mode_counts is Sequence -> Tuple with List of Arrays
 @overload
 def reconstruct_timeseries(
-    timeseries: NDArray[np.floating],
-	emodes: NDArray[np.floating],
+    timeseries: NDArray[floating],
+	emodes: NDArray[floating],
 	method: _DecompositionKind = ...,
 	*,
     mass: csc_matrix | None = ...,
@@ -142,8 +142,8 @@ def reconstruct_timeseries(
 # 3. Mode IDs -> Tuple with List of Arrays
 @overload
 def reconstruct_timeseries(
-    timeseries: NDArray[np.floating],
-	emodes: NDArray[np.floating],
+    timeseries: NDArray[floating],
+	emodes: NDArray[floating],
 	method: _DecompositionKind = ...,
 	*,
     mass: csc_matrix | None = ...,
@@ -155,4 +155,4 @@ def reconstruct_timeseries(
 ) -> _ReconTSList: ...
 
 # %% OTHERS
-def calc_vec_fc(timeseries: NDArray[np.floating]) -> NDArray[np.floating]: ...
+def calc_vec_fc(timeseries: NDArray[floating]) -> NDArray[floating]: ...

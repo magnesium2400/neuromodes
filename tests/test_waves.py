@@ -5,8 +5,8 @@ import numpy as np
 import pytest
 from neuromodes.io import fetch_surf, fetch_map
 from neuromodes.eigen import EigenSolver
-from neuromodes.waves import (sim_nft_waves, calc_wave_speed, get_balloon_params, _gen_noise,
-                              _sim_nft_waves_fem, _analytical_fc)
+from neuromodes.waves import (sim_nft_waves, calc_wave_speed, _gen_noise, _sim_nft_waves_fem,
+                              _analytical_fc)
 
 @pytest.fixture(scope="module")
 def solver():
@@ -91,8 +91,8 @@ def test_sim_nft_waves_methods_bold(solver):
     # Check that Fourier and ODE methods produce similar BOLD signal at selected timepoints
     activity_fourier = solver.sim_nft_waves(nt=nt, dt=dt, seed=seed)
     activity_ode = solver.sim_nft_waves(nt=nt, dt=dt, seed=seed, pde_method='ode')
-    bold_fourier = solver.bold_transform(activity_fourier, dt=dt)
-    bold_ode = solver.bold_transform(activity_ode, dt=dt, pde_method='ode')
+    bold_fourier = solver.balloon_model(activity_fourier, dt=dt)
+    bold_ode = solver.balloon_model(activity_ode, dt=dt, pde_method='ode')
 
     # Methods converge to r=.98 by t=500, but this takes too long to run, so just anchor the test
     # to a lower value to catch if the alignment ever drops (TODO: add to validation?)
@@ -148,7 +148,7 @@ def test_sim_nft_waves_ode_balloon_overflow(solver):
 
     with pytest.raises(RuntimeError, match="message: Required step size is less than spacing"):
         activity = solver.sim_nft_waves(dt=dt, nt=10, pde_method='ode')
-        solver.bold_transform(activity, pde_method='ode', dt=dt)
+        solver.balloon_model(activity, pde_method='ode', dt=dt)
 
 def test_sim_nft_waves_cached(solver):
     # Get CACHE_DIR
@@ -179,16 +179,11 @@ def test_sim_nft_waves_balloon_param(solver):
     dt = 1e-2
 
     activity = solver.sim_nft_waves(nt=nt, dt=dt)
-    bold_default = solver.bold_transform(activity, dt=dt)
-    bold_custom = solver.bold_transform(activity, dt=dt, rho=0.5)
+    bold_default = solver.balloon_model(activity, dt=dt)
+    bold_custom = solver.balloon_model(activity, dt=dt, rho=0.5)
 
     assert not np.allclose(bold_default, bold_custom), \
         "BOLD signals with different balloon model parameters match unexpectedly."
-    
-def test_get_balloon_params():
-    # Check an invalid override
-    with pytest.raises(ValueError, match="'rho' must be positive."):
-        _ = get_balloon_params(rho=0)
 
 def test_calc_wave_speed(solver):
 
@@ -204,7 +199,7 @@ def test_calc_wave_speed(solver):
 def test_analytical_fc(solver):
     sim_ts = solver.sim_nft_waves(nt=1000, dt=0.1, seed=0)
     # Check that simulated FC from waves aligns with the analytical FC
-    ana_fc = _analytical_fc(solver.emodes, solver.evals, r=17.4, gamma=116)
+    ana_fc = _analytical_fc(solver.emodes, solver.evals, r=17.4)
     sim_fc = np.corrcoef(sim_ts)
     mse = np.mean((ana_fc - sim_fc)**2)
     assert mse < 0.01, f"Analytical FC does not align with simulated FC (MSE={mse:.4f})."

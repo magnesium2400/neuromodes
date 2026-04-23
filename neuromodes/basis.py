@@ -11,21 +11,23 @@ from scipy.spatial.distance import cdist
 from neuromodes.eigen import EigenData
 
 if TYPE_CHECKING:
+    from numpy import floating
     from numpy.typing import NDArray
     from scipy.spatial.distance import _MetricCallback, _MetricKind 
     from scipy.sparse import csc_matrix
     from neuromodes.eigen import _CheckKind
-    from neuromodes.basis import _DecompositionKind, _IntSequenceKind, _SeqSequenceKind
+    from neuromodes.basis import (_DecompositionKind, _IntSequenceKind, _SeqSequenceKind,
+                                  _ReconSingle, _ReconList, _ReconTSSingle, _ReconTSList)
 
 def decompose(
-    data: NDArray[np.floating],
-    emodes: NDArray[np.floating],
+    data: NDArray[floating],
+    emodes: NDArray[floating],
     method: _DecompositionKind = 'project',
     mass: csc_matrix | None = None,
     mode_counts: _IntSequenceKind | int | None = None,
     mode_ids: _SeqSequenceKind | None = None,
     checks: _CheckKind = None,  
-) -> NDArray[np.floating] | list[NDArray[np.floating]]:
+) -> NDArray[floating] | list[NDArray[floating]]:
     """
     Calculate the decomposition of the given data onto a basis set.
 
@@ -153,8 +155,8 @@ def decompose(
     return beta[0] if squeeze_output else beta # convert back to array if mode_counts was None/scalar
 
 def reconstruct(
-    data: NDArray,
-    emodes: NDArray,
+    data: NDArray[floating],
+    emodes: NDArray[floating],
     method: _DecompositionKind = 'project',
     mass: csc_matrix | None = None,
     mode_counts: _IntSequenceKind | int | None = None,
@@ -162,7 +164,7 @@ def reconstruct(
     checks: _CheckKind = None,
     metric: _MetricCallback | _MetricKind | None = 'correlation',
     **cdist_kwargs
-) -> tuple[NDArray[np.floating], NDArray[np.floating], list[NDArray[np.floating]] | NDArray[np.floating]]:
+) -> _ReconSingle | _ReconList:
     """
     Calculate and score the reconstruction of the given independent data using the provided
     orthogonal vectors (e.g., geometric eigenmodes).
@@ -274,8 +276,8 @@ def reconstruct(
     return recon, recon_error, beta
 
 def reconstruct_timeseries(
-    timeseries: NDArray,
-    emodes: NDArray,
+    timeseries: NDArray[floating],
+    emodes: NDArray[floating],
     method: _DecompositionKind = 'project',
     mass: csc_matrix | None = None,
     mode_counts: _IntSequenceKind | int | None = None,
@@ -283,8 +285,7 @@ def reconstruct_timeseries(
     metric: _MetricCallback | _MetricKind | None = 'correlation',
     checks: _CheckKind = None,
     **cdist_kwargs
-) -> tuple[NDArray[np.floating], NDArray[np.floating], NDArray[np.floating], NDArray[np.floating],
-           list[NDArray[np.floating]] | NDArray[np.floating]]:
+) -> _ReconTSSingle | _ReconTSList:
     """
     Calculate and score the reconstruction of the given timeseries data using the provided
     orthogonal vectors (e.g., geometric eigenmodes).
@@ -408,8 +409,8 @@ def reconstruct_timeseries(
     return fc_recon, fc_recon_error, recon, recon_error, beta
 
 def calc_vec_fc(
-    timeseries: NDArray
-) -> NDArray[np.floating]:
+    timeseries: NDArray[floating]
+) -> NDArray[floating]:
     """
     Compute Fisher-z-transformed vectorized functional connectivity from timeseries data.
     
@@ -429,12 +430,12 @@ def calc_vec_fc(
     return np.arctanh(vec_fc)
 
 def _calc_beta(
-    data: NDArray[np.floating],
-    emodes: NDArray[np.floating],
+    data: NDArray[floating],
+    emodes: NDArray[floating],
     method: str,
     mass: csc_matrix | None,
     mask: NDArray
-) -> NDArray[np.floating]:
+) -> NDArray[floating]:
     """Helper function to perform decomposition after validating arguments and masking NaNs/Infs."""
     if method == 'project':
         return emodes.T @ data if mass is None else emodes.T @ (mass @ data)

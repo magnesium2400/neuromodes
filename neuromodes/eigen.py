@@ -15,10 +15,11 @@ if TYPE_CHECKING:
     from pathlib import Path
     from lapy import TriaMesh
     from nibabel.gifti.gifti import GiftiImage
-    from numpy import floating
+    from numpy import floating, integer, bool_
     from numpy.random import Generator
-    from numpy.typing import NDArray, ArrayLike
+    from numpy.typing import NDArray
     from scipy.sparse import csc_matrix
+    from neuromodes.basis import _ReconSingle, _ReconList, _ReconTSSingle, _ReconTSList
 
 class EigenSolver(Solver):
     """
@@ -79,9 +80,9 @@ class EigenSolver(Solver):
     def __init__(
         self,
         geometry: str | Path | GiftiImage | TriaMesh | dict,
-        mask: ArrayLike | None = None,
+        mask: NDArray[bool_] | None = None,
         normalize: bool = False,
-        hetero: ArrayLike | None = None,
+        hetero: NDArray[floating] | None = None,
         alpha: float | None = None, # default to 1.0 if hetero given (and remains None)
         scaling: Literal['sigmoid', 'exponential'] | None = None  # default to "sigmoid" if hetero given (and remains None)
     ):
@@ -206,7 +207,7 @@ class EigenSolver(Solver):
         rtol: float = 1e-5,
         sigma: float = -0.01, # EASIEST way is to hard-code this to LaPy default (2026/03)
         seed: int | Generator | None = 0, 
-        v0: ArrayLike | None = None
+        v0: NDArray[floating] | None = None
     ) -> EigenSolver:
         """
         Solves the generalized eigenvalue problem for the Laplace-Beltrami operator and compute
@@ -302,7 +303,7 @@ class EigenSolver(Solver):
     
     def decompose(
         self,
-        data: NDArray,
+        data: NDArray[floating],
         **kwargs
     ) -> NDArray[floating]:
         """
@@ -323,9 +324,9 @@ class EigenSolver(Solver):
     
     def reconstruct(
         self,
-        data: NDArray,
+        data: NDArray[floating],
         **kwargs
-    ) -> tuple[NDArray[floating], NDArray[floating], list[NDArray[floating]]]:
+    ) -> _ReconSingle | _ReconList:
         """
         This is a wrapper for :func:`~neuromodes.basis.reconstruct`. Note that ``emodes``, ``mass``,
         and ``checks`` are passed automatically by the ``EigenSolver`` instance.
@@ -344,10 +345,9 @@ class EigenSolver(Solver):
     
     def reconstruct_timeseries(
         self,
-        timeseries: NDArray,
+        timeseries: NDArray[floating],
         **kwargs
-    ) -> tuple[NDArray[floating], NDArray[floating], NDArray[floating], NDArray[floating],
-               list[NDArray[floating]]]:
+    ) -> _ReconTSSingle | _ReconTSList:
         """
         This is a wrapper for :func:`~neuromodes.basis.reconstruct_timeseries`. Note that
         ``emodes``, ``mass``, and ``checks`` are passed automatically by the ``EigenSolver``
@@ -408,7 +408,7 @@ class EigenSolver(Solver):
     
     def balloon_model(
         self,
-        activity: ArrayLike,
+        activity: NDArray[floating],
         dt: float,
         **kwargs
     ) -> NDArray[floating]:
@@ -431,7 +431,7 @@ class EigenSolver(Solver):
     
     def unmask_data(
         self,
-        data: ArrayLike,
+        data: NDArray[floating],
         **kwargs
     ) -> NDArray[floating]:
         """
@@ -451,9 +451,9 @@ class EigenSolver(Solver):
     
     def eigenstrap(
         self,
-        data: NDArray,
+        data: NDArray[floating],
         **kwargs
-    ) -> NDArray:
+    ) -> NDArray[floating]:
         """
         This is a wrapper for :func:`~neuromodes.nulls.eigenstrap`. Note that `emodes`, `evals`,
         `mass`, and `checks` are passed automatically by the `EigenSolver` instance.
@@ -472,7 +472,7 @@ class EigenSolver(Solver):
         )
 
 def scale_hetero(
-    hetero: ArrayLike,
+    hetero: NDArray[floating],
     alpha: float = 1.0,
     scaling: Literal['sigmoid', 'exponential'] = "sigmoid"
 ) -> NDArray[floating]:
@@ -523,9 +523,9 @@ def scale_hetero(
     return hetero_scaled
 
 def standardize_emodes(
-    emodes: NDArray,
+    emodes: NDArray[floating],
     checks: bool = True
-) -> NDArray:
+) -> NDArray[floating]:
     """
     Flips the modes' signs such that the first element of each eigenmode has positive amplitude. 
     Note that the sign of each mode is arbitrary--standardisation is only helpful to compare sets of
@@ -552,7 +552,7 @@ def standardize_emodes(
     return emodes * np.copysign(1, np.sign(np.asarray(emodes)[0, :]))
 
 def is_orthonormal_basis(
-    emodes: NDArray,
+    emodes: NDArray[floating],
     mass: csc_matrix | None = None,
     atol: float = 1e-03,
     rtol: float = 1e-05,
@@ -605,7 +605,7 @@ def is_orthonormal_basis(
 
 def get_eigengroup_inds(
     n_modes: int,
-    ) -> list[NDArray]:
+    ) -> list[NDArray[integer]]:
     """
     Identify eigengroups based on ordering of spherical harmonics. Each eigengroup 
     contains the next 2k+1 modes, where k is the eigengroup number (starting from 0). If
