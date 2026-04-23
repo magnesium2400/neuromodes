@@ -395,17 +395,17 @@ def _model_wave_fourier(
     input_coeffs_padded = np.concatenate([np.zeros_like(input_coeffs), input_coeffs], axis=1)
 
     # Apply inverse Fourier transform to get frequency-domain representation of the causal signal.
-    input_coeffs_f = np.fft.fftshift(np.fft.ifft(input_coeffs_padded, axis=1), axes=1)
+    input_coeffs_f = np.fft.rfft(input_coeffs_padded, axis=1)
 
     # Frequencies for full signal
-    omega = 2 * np.pi * np.fft.fftshift(np.fft.fftfreq(2*nt, d=dt))
+    omega = -2 * np.pi * np.fft.rfftfreq(2*nt, d=dt)
 
     # Compute transfer function and apply it to frequency-domain input
     H = gamma**2 / (-omega**2 - 2j * omega * gamma + gamma**2 * (1 + r**2 * evals[:, np.newaxis]))
     out_fft = H * input_coeffs_f
 
     # Inverse transform to time domain, implemented as forward FFT for causality
-    out_full = np.real(np.fft.fft(np.fft.ifftshift(out_fft, axes=1), axis=1))
+    out_full = np.fft.irfft(out_fft, n=2*nt, axis=1)
 
     # Return only the non-negative time part (t >= 0)
     return out_full[:, nt:]
@@ -607,7 +607,7 @@ def _model_balloon_fourier(
     nt = activity_coeffs.shape[1]
 
     # Calculate balloon model frequency response
-    omega = 2 * np.pi * np.fft.fftshift(np.fft.fftfreq(2*nt, d=dt))
+    omega = -2 * np.pi * np.fft.rfftfreq(2*nt, d=dt)
     beta = (rho + (1 - rho) * np.log(1 - rho)) / rho
     phi_hat_Fz = 1 / (-(omega + 1j * 0.5 * kappa) ** 2 + w_f ** 2)
     phi_hat_yF = V_0 * (alpha * (k2 + k3) * (1 - 1j * tau * omega) 
@@ -620,13 +620,13 @@ def _model_balloon_fourier(
                                             axis=1)
 
     # Apply Fourier transform (implemented as inverse FFT for causality)
-    activity_coeffs_f = np.fft.fftshift(np.fft.ifft(activity_coeffs_padded, axis=1), axes=1)
+    activity_coeffs_f = np.fft.rfft(activity_coeffs_padded, axis=1)
 
     # Apply frequency response (broadcast along time axis)
     out_fft = balloon_freq_response[np.newaxis, :] * activity_coeffs_f
 
     # Inverse transform back to timeseries (implemented as forward FFT for causality)
-    out_full = np.real(np.fft.fft(np.fft.ifftshift(out_fft, axes=1), axis=1))
+    out_full = np.fft.irfft(out_fft, axis=1)
 
     # Remove zero padding
     return out_full[:, nt:]
