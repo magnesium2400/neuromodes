@@ -394,17 +394,18 @@ def _model_wave_fourier(
     # This is required for the correct Green's function solution of the damped wave equation.
     input_coeffs_padded = np.concatenate([np.zeros_like(input_coeffs), input_coeffs], axis=1)
 
-    # Apply inverse Fourier transform to get frequency-domain representation of the causal signal.
+    # Frequency-domain representation of the causal signal
+    # Faster to use `rfft` here than `fftshift(ifft)` (original implementation)
     input_coeffs_f = np.fft.rfft(input_coeffs_padded, axis=1)
 
     # Frequencies for full signal
-    omega = -2 * np.pi * np.fft.rfftfreq(2*nt, d=dt)
+    omega = -2 * np.pi * np.fft.rfftfreq(2*nt, d=dt) # keep consistent with _model_balloon_fourier
 
     # Compute transfer function and apply it to frequency-domain input
-    H = gamma**2 / (-omega**2 - 2j * omega * gamma + gamma**2 * (1 + r**2 * evals[:, np.newaxis]))
+    H = gamma**2 / ((-omega**2 - 2j * omega * gamma) + gamma**2 * (1 + r**2 * evals[:, np.newaxis]))
     out_fft = H * input_coeffs_f
 
-    # Inverse transform to time domain, implemented as forward FFT for causality
+    # Inverse transform to time domain (irfft is fast)
     out_full = np.fft.irfft(out_fft, n=2*nt, axis=1)
 
     # Return only the non-negative time part (t >= 0)
@@ -619,14 +620,14 @@ def _model_balloon_fourier(
     activity_coeffs_padded = np.concatenate([np.zeros_like(activity_coeffs), activity_coeffs],
                                             axis=1)
 
-    # Apply Fourier transform (implemented as inverse FFT for causality)
+    # Apply Fourier transform (implemented as rfft for speed)
     activity_coeffs_f = np.fft.rfft(activity_coeffs_padded, axis=1)
 
     # Apply frequency response (broadcast along time axis)
     out_fft = balloon_freq_response[np.newaxis, :] * activity_coeffs_f
 
-    # Inverse transform back to timeseries (implemented as forward FFT for causality)
-    out_full = np.fft.irfft(out_fft, axis=1)
+    # Inverse transform back to timeseries (inverse of previous transform)
+    out_full = np.fft.irfft(out_fft, n=2*nt, axis=1)
 
     # Remove zero padding
     return out_full[:, nt:]
