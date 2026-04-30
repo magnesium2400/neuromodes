@@ -157,7 +157,6 @@ def correlationw(XA, XB, w, metric='pearsonr'):
 def compare_images(): 
     raise NotImplementedError("compare_images is not yet implemented.")
 
-
 def solvew(A, B, w):
     """
     Use method of normal equations to give area-weighted least squares error.
@@ -182,6 +181,11 @@ def pinv(A, w, rcond=1e-15):
     # W = _process_vertex_areas(w, A.shape[0])
     # return np.linalg.pinv(A.T @ W @ A, rcond=rcond) @ A.T @ W
 
+def pcaw(): 
+    raise NotImplementedError("pcaw is not yet implemented.")
+
+def dmew(): 
+    raise NotImplementedError("dmew is not yet implemented.")    
 
 def _mass_to_areas(w=None, n_verts=None) -> np.ndarray:
     mass = _process_vertex_areas(w=w, n_verts=n_verts)
@@ -229,3 +233,8 @@ def _process_vertex_areas(
         raise ValueError(f"Mass matrix has invalid shape: {output.shape} (should be ({n_verts}, {n_verts})).")
 
     return output
+
+
+
+def compare_correlation_matrices(): 
+    raise NotImplementedError("compare_correlation_matrices is not yet implemented.")
