@@ -102,15 +102,22 @@ class EigenSolver(Solver):
         check_surf(geometry)
 
         # Hetero inputs
-        if hetero is None or hetero.shape == (geometry.v.shape[0],):
-            self.hetero = hetero
+        if hetero is None:
+            self.hetero = None
+        elif hetero.ndim != 1:
+            raise ValueError("hetero must be a 1D array.")
+        elif hetero.shape == (geometry.v.shape[0],):
+            self.hetero = np.asarray_chkfinite(hetero)
         elif mask is not None and hetero.shape == (mask.shape[0],):
-            self.hetero = hetero[mask]
+            self.hetero = np.asarray_chkfinite(hetero[mask])
         else:
             err_str = f"the number of vertices in the provided mesh ({geometry.v.shape[0]})"
             if mask is not None:
                 err_str += f" or the masked mesh ({mask.sum()})"
             raise ValueError(f"hetero must be a 1D array with length matching {err_str}.")
+        
+        if self.hetero is not None and np.all(self.hetero == self.hetero[0]):
+            warn("Provided hetero is constant")
 
         # Assign attributes
         self.geometry = geometry

@@ -4,7 +4,7 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 from neuromodes.io import fetch_surf, fetch_map
-from neuromodes.eigen import EigenSolver
+from neuromodes.eigen import EigenSolver, scale_hetero
 from neuromodes.waves import (sim_nft_waves, calc_wave_speed, _gen_noise, _sim_nft_waves_fem,
                               _analytical_fc)
 
@@ -12,6 +12,7 @@ from neuromodes.waves import (sim_nft_waves, calc_wave_speed, _gen_noise, _sim_n
 def solver():
     mesh, medmask = fetch_surf(density='4k')
     hetero = fetch_map(data="myelinmap", density="4k")[medmask]
+    hetero = scale_hetero(hetero, scaling='sigmoid', alpha=1.0)
     return EigenSolver(mesh, mask=medmask, hetero=hetero).solve(n_modes=100, seed=0)
 
 def test_unusual_wave_speed(solver):

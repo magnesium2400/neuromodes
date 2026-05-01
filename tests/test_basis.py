@@ -44,7 +44,7 @@ def test_decompose_invalid_data_shape(solver):
 def test_decompose_nan_inf_data(solver):
     data = np.ones(solver.n_verts)
 
-    bad_emodes = emodes.copy()
+    bad_emodes = (solver.emodes).copy()
 
     bad_emodes[0,0] = np.nan
     with pytest.raises(ValueError, match="array must not contain infs or NaNs"):
@@ -219,7 +219,8 @@ def test_reconstruct_real_map_32k(solver_32k):
 
     # Load FC gradient from Margulies 2016 PNAS
     map = fetch_map('fcgradient1')[solver_32k.mask]
-    _, recon_score, _ = reconstruct(map, emodes, mass=solver_32k.mass, mode_counts=np.arange(solver_32k.n_modes)+1)
+    _, recon_score, _ = reconstruct(map, emodes, mass=solver_32k.mass, method='regress', metric='correlation', 
+                                    mode_counts=np.arange(solver_32k.n_modes)+1)
 
     # Correlation error should strictly decrease from 1, but not reach 0
     assert np.all(np.diff(recon_score[1:]) < 0), 'Reconstruction error does not strictly decrease.'

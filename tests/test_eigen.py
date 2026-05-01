@@ -10,12 +10,12 @@ from neuromodes.mesh import mask_mesh
 def surf_medmask_hetero():
     mesh, medmask = fetch_surf(density='4k')
     hetero = fetch_map(data="myelinmap", density="4k")
+    hetero = scale_hetero(hetero, scaling='sigmoid', alpha=0.5)
     return mesh, medmask, hetero
 
 def test_init_params(surf_medmask_hetero):
     surf, medmask, hetero = surf_medmask_hetero
-    _ = EigenSolver(surf, mask=medmask, hetero=hetero, alpha=0.5,
-                         scaling='exponential')
+    _ = EigenSolver(surf, mask=medmask, hetero=hetero)
     
 def test_premasked_surf(surf_medmask_hetero):
     surf, medmask, hetero = surf_medmask_hetero
@@ -47,13 +47,6 @@ def test_no_hetero(surf_medmask_hetero):
             f'Eigenmode {i} does not match the previously computed homogeneous result.'
         assert np.allclose(homogenous_solver.evals[i], prior_evals[i], rtol=0.1), \
             f'Eigenvalue {i} does not match the previously computed homogeneous result.'
-        
-def test_no_hetero_alpha_scaling(surf_medmask_hetero):
-    surf, medmask, _ = surf_medmask_hetero
-    with pytest.warns(UserWarning, match="alpha is ignored"):
-        EigenSolver(surf, mask=medmask, hetero=None, alpha=0.5)
-    with pytest.warns(UserWarning, match="scaling is ignored"):
-        EigenSolver(surf, mask=medmask, hetero=None, scaling='exponential')
 
 def test_invalid_hetero_shape(surf_medmask_hetero):
     surf, _, _ = surf_medmask_hetero
