@@ -16,7 +16,6 @@ if TYPE_CHECKING:
     from typing import Any, Literal, TypeAlias
     from lapy import TriaMesh
     from nibabel.gifti.gifti import GiftiImage
-    from numpy import floating, integer, bool_
     from numpy.random import Generator
     from numpy.typing import NDArray
     from scipy.sparse import csc_matrix
@@ -83,9 +82,9 @@ class EigenSolver(Solver):
     def __init__(
         self,
         geometry: str | Path | GiftiImage | TriaMesh | dict,
-        mask: NDArray[bool_] | None = None,
+        mask: NDArray[np.bool_] | None = None,
         normalize: bool = False,
-        hetero: NDArray[floating] | None = None,
+        hetero: NDArray[np.floating] | None = None,
         alpha: float | None = None, # default to 1.0 if hetero given (and remains None)
         scaling: Literal['sigmoid', 'exponential'] | None = None  # default to "sigmoid" if hetero given (and remains None)
     ):
@@ -210,7 +209,7 @@ class EigenSolver(Solver):
         rtol: float = 1e-5,
         sigma: float = -0.01, # EASIEST way is to hard-code this to LaPy default (2026/03)
         seed: int | Generator | None = 0, 
-        v0: NDArray[floating] | None = None
+        v0: NDArray[np.floating] | None = None
     ) -> EigenSolver:
         """
         Solves the generalized eigenvalue problem for the Laplace-Beltrami operator and compute
@@ -336,7 +335,7 @@ class EigenSolver(Solver):
 
     def decompose(
         self,
-        data: NDArray[floating],
+        data: NDArray[np.floating],
         **kwargs
     ) -> NDArray[np.floating] | list[NDArray[np.floating]]:
         """
@@ -357,9 +356,9 @@ class EigenSolver(Solver):
     
     def reconstruct(
         self,
-        data: NDArray[floating],
+        data: NDArray[np.floating],
         **kwargs
-    ) -> NDArray[floating]:
+    ) -> NDArray[np.floating]:
         """
         This is a wrapper for :func:`~neuromodes.basis.reconstruct`. Note that ``emodes``, ``mass``,
         and ``checks`` are passed automatically by the ``EigenSolver`` instance.
@@ -381,7 +380,7 @@ class EigenSolver(Solver):
         data: NDArray,
         recon: NDArray,
         **kwargs
-    ) -> NDArray[floating]:
+    ) -> NDArray[np.floating]:
         """
         This is a wrapper for :func:`~neuromodes.basis.reconstruction_error`. Note that ``mass``
         and ``checks`` are passed automatically by the ``EigenSolver`` instance.
@@ -401,7 +400,7 @@ class EigenSolver(Solver):
     def compute_gem(
         self,
         **kwargs
-    ) -> NDArray[floating]:
+    ) -> NDArray[np.floating]:
         """
         This is a wrapper for :func:`~neuromodes.network.compute_gem`. Note that ``emodes``,
         ``evals``, and ``checks`` are passed automatically by the ``EigenSolver`` instance.
@@ -420,7 +419,7 @@ class EigenSolver(Solver):
     def sim_nft_waves(
         self,
         **kwargs
-    ) -> NDArray[floating]:
+    ) -> NDArray[np.floating]:
         """
         This is a wrapper for :func:`~neuromodes.waves.sim_nft_waves`. Note that ``emodes``,
         ``evals``, ``mass``, ``scaled_hetero``, and ``checks`` are passed automatically by the
@@ -441,10 +440,10 @@ class EigenSolver(Solver):
     
     def balloon_model(
         self,
-        activity: NDArray[floating],
+        activity: NDArray[np.floating],
         dt: float,
         **kwargs
-    ) -> NDArray[floating]:
+    ) -> NDArray[np.floating]:
         """
         This is a wrapper for :func:`~neuromodes.waves.balloon_model`. Note that ``emodes``,
         ``mass``, and ``checks`` are passed automatically by the ``EigenSolver`` instance.
@@ -464,9 +463,9 @@ class EigenSolver(Solver):
     
     def unmask_data(
         self,
-        data: NDArray[floating],
+        data: NDArray[np.floating],
         **kwargs
-    ) -> NDArray[floating]:
+    ) -> NDArray[np.floating]:
         """
         This is a wrapper for :func:`~neuromodes.mesh.unmask_data`. Note that ``mask`` is passed
         automatically by the ``EigenSolver`` instance.
@@ -484,9 +483,9 @@ class EigenSolver(Solver):
     
     def eigenstrap(
         self,
-        data: NDArray[floating],
+        data: NDArray[np.floating],
         **kwargs
-    ) -> NDArray[floating]:
+    ) -> NDArray[np.floating]:
         """
         This is a wrapper for :func:`~neuromodes.nulls.eigenstrap`. Note that `emodes`, `evals`,
         `mass`, and `checks` are passed automatically by the `EigenSolver` instance.
@@ -505,10 +504,10 @@ class EigenSolver(Solver):
         )
 
 def scale_hetero(
-    hetero: NDArray[floating],
+    hetero: NDArray[np.floating],
     alpha: float = 1.0,
     scaling: Literal['sigmoid', 'exponential'] = "sigmoid"
-) -> NDArray[floating]:
+) -> NDArray[np.floating]:
     """
     Scales a heterogeneity map using specified normalization and scaling functions.
     
@@ -556,9 +555,9 @@ def scale_hetero(
     return hetero_scaled
 
 def standardize_emodes(
-    emodes: NDArray[floating],
+    emodes: NDArray[np.floating],
     checks: bool = True
-) -> NDArray[floating]:
+) -> NDArray[np.floating]:
     """
     Flips the modes' signs such that the first element of each eigenmode has positive amplitude. 
     Note that the sign of each mode is arbitrary--standardisation is only helpful to compare sets of
@@ -585,7 +584,7 @@ def standardize_emodes(
     return emodes * np.copysign(1, np.sign(np.asarray(emodes)[0, :]))
 
 def is_orthonormal_basis(
-    emodes: NDArray[floating],
+    emodes: NDArray[np.floating],
     mass: csc_matrix | None = None,
     atol: float = 1e-03,
     rtol: float = 1e-05,
@@ -665,21 +664,21 @@ def get_eigengroup_inds(
 _MISSING = object()  
 @dataclass(frozen=True, init=False)
 class EigenData:
-    emodes: NDArray[floating]
-    evals: NDArray[floating] 
+    emodes: NDArray[np.floating]
+    evals: NDArray[np.floating] 
     mass: csc_matrix
     stiffness: csc_matrix
-    scaled_hetero: NDArray[floating]
-    data: NDArray[floating]
+    scaled_hetero: NDArray[np.floating]
+    data: NDArray[np.floating]
 
     def __init__(
         self,
-        emodes: NDArray[floating] | None = _MISSING, # type: ignore[assignment]
-        evals: NDArray[floating] | None = _MISSING, # type: ignore[assignment] 
+        emodes: NDArray[np.floating] | None = _MISSING, # type: ignore[assignment]
+        evals: NDArray[np.floating] | None = _MISSING, # type: ignore[assignment] 
         mass: csc_matrix | None = _MISSING, # type: ignore[assignment]
         stiffness: csc_matrix | None = _MISSING, # type: ignore[assignment]
-        scaled_hetero: NDArray[floating] | None = _MISSING, # type: ignore[assignment]
-        data: NDArray[floating] | None = _MISSING, # type: ignore[assignment]
+        scaled_hetero: NDArray[np.floating] | None = _MISSING, # type: ignore[assignment]
+        data: NDArray[np.floating] | None = _MISSING, # type: ignore[assignment]
         checks: _CheckKind = True
     ):  # TODO: add mask?
 
