@@ -59,11 +59,12 @@ class TestEigenvalueConversion:
     @pytest.mark.parametrize('ctype', ['wavelength', 'fwhm'])
     def test_zero_division_handling(self, direction, ctype):
         """Tests that the context managers successfully handle division by zero."""
-        # Because of np.errstate, this should yield infinity without throwing an unhandled RuntimeWarning
-        evals = np.array([0.0, 1.0, 1.0, 2.0])
-        out = direction(evals, ctype)
-        assert np.isinf(out[0])
-        assert not np.isinf(out[1:]).any()
+        with pytest.warns(RuntimeWarning, match="divide by zero encountered in .*"):
+            # direction(0.0, ctype)
+            evals = np.array([0.0, 1.0, 1.0, 2.0])
+            out = direction(evals, ctype)
+            assert np.isinf(out[0])
+            assert not np.isinf(out[1:]).any()
 
 class TestModeGroupConversion:
     # First test perfect squares
@@ -163,7 +164,7 @@ class TestFWHM:
                 f"Estimated FWHM ({estimated_fwhm}) does not match expected FWHM ({float(expected_fwhm)}) for {data}"
 
     # Test that roi_mask runs without errors and produces different results than global FWHM (but
-    # doesn't text actual correctness)
+    # doesn't test actual correctness)
     # TODO : add correctness tests for method fem (what is ground truth)? 
     @pytest.mark.parametrize("method", ['wb', 'fem'])
     def test_roi_mask_execution(self, solver, method):
@@ -222,6 +223,7 @@ class TestTruncateEmodes:
         betas[0] = 0
         vfunc = solver.emodes @ betas 
 
+        # TODO: change to new reconstruct
         _, errors, _ = solver.reconstruct(data=vfunc)
 
         kmin = 3

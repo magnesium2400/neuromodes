@@ -20,7 +20,7 @@ def truncate_emodes(geometry: TriaMesh, vfunc, threshold,
 
     if threshold is None:
         if physical_threshold:
-            thresholds = estimate_fwhm(geometry, vf, output=threshold_method)
+            thresholds = _convert_spatial_scale(estimate_fwhm(geometry, vf), input='fwhm', output=threshold_method)
         else: 
             raise ValueError(f"Threshold must be provided for threshold_method={threshold_method}.")
     elif np.isscalar(threshold):
@@ -37,14 +37,16 @@ def truncate_emodes(geometry: TriaMesh, vfunc, threshold,
     if threshold_method == 'decompose':
         if emodes is None or mass is None:
             raise ValueError(f"emodes and mass must be provided when using threshold_method='{threshold_method}'.")
-        vf -= np.average(vf, weights=mass.diagonal(), axis=0)
         betas = decompose(vf, emodes=emodes, mass=mass, **threshold_kwargs)
-        ascending_data = np.cumsum(betas**2, axis=0)
+        ascending_data = np.cumsum(betas**2, axis=0) # user needs to demean if desired
         total_power = np.sum(vf * (mass @ vf), axis=0) # = np.diag(vf.T @ mass @ vf)
         thresholds = total_power * (1 - thresholds)
     elif threshold_method == 'reconstruct':
         if emodes is None or mass is None:
             raise ValueError(f"emodes and mass must be provided when using threshold_method='{threshold_method}'.")
+        # TODO : change to new reconstruct
+        # recons = reconstruct(data=vf, emodes=emodes, mass=mass)
+        # errors = reconstruction_error(vf, recon=recons, mass=mass, **threshold_kwargs)
         _, errors, _ = reconstruct(data=vf, emodes=emodes, mass=mass, **threshold_kwargs)
         ascending_data = -errors
         thresholds = -thresholds
@@ -55,7 +57,8 @@ def truncate_emodes(geometry: TriaMesh, vfunc, threshold,
     elif threshold_method == 'fwhm' or threshold_method == 'wavelength': 
         if evals is None:
             raise ValueError(f"evals must be provided when using threshold_method='{threshold_method}'.")
-        data = convert_from_eigenvalue(evals, output=threshold_method)
+        data = np.full(len(evals), np.inf) # default to inf for zero evals to avoid divide-by-zero issues
+        data[1:] = convert_from_eigenvalue(evals[1:], output=threshold_method)
         ascending_data = -np.broadcast_to(data[:, np.newaxis], (len(evals), n_maps))
         thresholds = -thresholds
     else: 
@@ -80,14 +83,14 @@ def truncate_emodes(geometry: TriaMesh, vfunc, threshold,
     else: 
         raise ValueError("Output must be either 'mode' or 'group'.")
     
-    return result if vfunc.ndim > 1 else result.item()
+    return result if vfunc.ndim > 1 else result.item() # type: ignore # result will only be scalar if vfunc.ndim=1
 
-def estimate_fwhm(surf: TriaMesh | Solver | EigenSolver, vfunc, method='fem', roi_mask=None, output='fwhm'):
+def estimate_fwhm(surf: TriaMesh | Solver | EigenSolver, vfunc, method='fem', roi_mask=None):
     if method == 'wb':
         if isinstance(surf, TriaMesh):
-            return _estimate_fwhm_wb(surf, vfunc, roi_mask=roi_mask, output=output)
+            return _estimate_fwhm_wb(surf, vfunc, roi_mask=roi_mask)
         elif isinstance(surf, EigenSolver): 
-            return _estimate_fwhm_wb(surf.geometry, vfunc, roi_mask=roi_mask, output=output) 
+            return _estimate_fwhm_wb(surf.geometry, vfunc, roi_mask=roi_mask) 
         elif isinstance(surf, Solver):
             raise TypeError("Solver instances cannot be used as they do not have a geometry attribute.")
         else:
@@ -100,12 +103,12 @@ def estimate_fwhm(surf: TriaMesh | Solver | EigenSolver, vfunc, method='fem', ro
             stiffness, mass = Solver._fem_tria(surf) # doesn't matter if lumped or not
         else:
             raise TypeError("For 'fem' method, geometry must be a Solver/EigenSolver/TriaMesh instance.")
-        return _estimate_fwhm_fem(stiffness, mass, vfunc, roi_mask=roi_mask, output=output)
+        return _estimate_fwhm_fem(stiffness, mass, vfunc, roi_mask=roi_mask)
     
     else:
         raise ValueError("Method must be either 'wb' or 'fem'.")
 
-def _estimate_fwhm_wb(geometry: TriaMesh, vfunc, roi_mask=None, output='fwhm'):
+def _estimate_fwhm_wb(geometry: TriaMesh, vfunc, roi_mask=None):
     """Equivalent to wb_command -metric-estimate-fwhm"""
     # Prelims
     rois = np.ones(len(geometry.v), dtype=bool) if roi_mask is None else np.asarray(roi_mask, dtype=bool)
@@ -117,46 +120,54 @@ def _estimate_fwhm_wb(geometry: TriaMesh, vfunc, roi_mask=None, output='fwhm'):
     rows, cols = rows[rows>cols], cols[rows>cols]  # Keep only upper triangle indices
 
     # Main computation
-    vg = np.var(vf, axis=0, ddof=0)                         # global variance
+    vg = np.var(vf, axis=0, ddof=0)                           # global variance
     vl = np.mean((vf[rows, ...] - vf[cols, ...])**2, axis=0)  # local variance
     
     # In accordance with wb_command, use whole mesh mean edge length (not just mask)
     lambda_eff = 4 * -np.log(1 - vl / (2 * vg)) / geometry.avg_edge_length()**2
-    return convert_from_eigenvalue(lambda_eff, output=output) # alternate expression, but same as wb_command
+    return convert_from_eigenvalue(lambda_eff, output='fwhm') # alternate expression, but same as wb_command
 
-def _estimate_fwhm_fem(stiffness, mass, vfunc, roi_mask=None, output='fwhm'):
+def _estimate_fwhm_fem(stiffness, mass, vfunc, roi_mask=None):
     if roi_mask is not None: # subset stiffness, mass, and vfunc to roi (set diags to correct values)
-        rois = np.asarray(roi_mask, dtype=bool)
-        S = stiffness[rois, :][:, rois]
-        S.setdiag(0)
-        S.setdiag(-np.asarray(S.sum(axis=1)).ravel())
-
-        M = mass[rois, :][:, rois]
-        M.setdiag(0)
-        M.setdiag(np.asarray(M.sum(axis=1)).ravel())
+        idx = np.asarray(roi_mask, dtype=bool)
+        vf = vfunc[idx, ...]
         
-        vf = vfunc[rois, ...]
+        S = stiffness[idx, :][:, idx]
+        S.setdiag(0)
+        S.setdiag(-np.asarray(S.sum(axis=0)).ravel())
+
+        M = mass[idx, :][:, idx]
+        m_sum = np.asarray(M.sum(axis=0)).ravel()
+        if M.nnz > M.shape[0]: # consistent
+            target_mass = np.asarray(mass[:, idx].sum(axis=0)).ravel()
+            M.setdiag(M.diagonal() + (target_mass - m_sum))
+        else: # lumped
+            M.setdiag(m_sum)
+
     else: 
         S, M, vf = stiffness, mass, vfunc
 
     # Vm = \Sigma_{i=1}^N \beta_i^2 (where \beta_i is the coefficient of mode i in the decomposition of vfunc)
     # Vs = \Sigma_{i=1}^N \beta_i^2 \lambda_i (where \lambda_i is the eigenvalue of mode i)
     # Vs/Vm = \lambda_{eff} where lambda is the effective eigenvalue of the map (weighted average)
-    # If the input is an mode i, then this reduces to \lambda_i for that mode
+    # If the input is a mode i, then this reduces to \lambda_i for that mode
+    # TODO: change to demeanw / stats.py etc
     vf -= np.average(vf, weights=M.diagonal(), axis=0) # set (mass-weighted) mean to 0
     Vm = vf * (M @ vf)
     Vs = vf * (S @ vf) - 0.5 * (S @ vf**2) # keep second term for correction on open meshes
     lambda_eff = np.sum(Vs, axis=0) / np.sum(Vm, axis=0)
-    return convert_from_eigenvalue(lambda_eff, output=output)
+    return convert_from_eigenvalue(lambda_eff, output='fwhm')
 
-def _estimate_fwhm_fem_local(stiffness, mass, vfunc, output='fwhm'):
+def _estimate_fwhm_fem_local(stiffness, mass, vfunc):
+    # TODO: change to demeanw / stats.py etc
     vf = vfunc - np.average(vfunc, weights=mass.diagonal(), axis=0) # set (mass-weighted) mean to 0
     Vm = vf * (mass @ vf)
     Vs = vf * (stiffness @ vf) - 0.5 * (stiffness @ vf**2)
     lambda_eff = Vs / Vm
-    return convert_from_eigenvalue(lambda_eff, output=output)
+    return convert_from_eigenvalue(lambda_eff, output='fwhm')
   
 # TODO : clarify that for inputs of the form n^2-1, all methods return n-1 
+# TODO : add overloads for int vs array inputs and int/float outputs
 def mode_to_group(mode_id: ArrayLike, method: str = 'ceil') -> Union[int, float, np.ndarray]:
     """
     Translates a linear mode index to its spherical harmonic group index.
@@ -181,15 +192,16 @@ def mode_to_group(mode_id: ArrayLike, method: str = 'ceil') -> Union[int, float,
     if method not in opts:
         raise ValueError(f"Method must be one of {list(opts.keys())}")
     func, outtype = opts[method]
-    
-    # Calcs
     mode_id_arr = np.asarray(mode_id)
     if not np.issubdtype(mode_id_arr.dtype, np.integer):
         warn("mode_id should be an integer or array of integers.")
-    result = func(np.sqrt(mode_id_arr + 1)).astype(outtype) - 1 
+    
+    # Calcs
+    result = func(np.sqrt(mode_id_arr + 1)).astype(outtype) - 1
     return result.item() if np.isscalar(mode_id) else result
 
-# TODO : clarify that for inputs of the form n, all methods return (n+1)^2-1=n(n+2) 
+# TODO : clarify that for inputs of the form n, all methods return (n+1)^2-1=n(n+2)
+# TODO : add overloads for int vs array inputs and int/float outputs
 def group_to_mode(group_id: ArrayLike, method: str = 'ceil') -> Union[int, float, np.ndarray]:
     """
     Translates a spherical harmonic group index back to a linear mode index.
@@ -224,11 +236,9 @@ def convert_to_eigenvalue(value, input, area=None):
     if input == 'eigenvalue': 
         return value
     elif input == 'wavelength':
-        with np.errstate(divide='ignore'):
-            return (2 * np.pi / value)**2
+        return (2 * np.pi / value)**2
     elif input == 'fwhm':
-        with np.errstate(divide='ignore'):
-            return 8 * np.log(2) / value**2
+        return 8 * np.log(2) / value**2
     elif input == 'group':
         if area is None:
             raise ValueError("Area must be provided when input is 'group'.")
@@ -244,11 +254,9 @@ def convert_from_eigenvalue(eigenvalue, output, area=None):
     if output == 'eigenvalue': 
         return eigenvalue
     elif output == 'wavelength':
-        with np.errstate(divide='ignore'):
-            return 2 * np.pi / np.sqrt(eigenvalue)
+        return 2 * np.pi / np.sqrt(eigenvalue)
     elif output == 'fwhm':
-        with np.errstate(divide='ignore'):
-            return np.sqrt(8 * np.log(2) / eigenvalue)
+        return np.sqrt(8 * np.log(2) / eigenvalue)
     elif output == 'group':
         if area is None:
             raise ValueError("Area must be provided when output is 'group'.")
@@ -259,3 +267,9 @@ def convert_from_eigenvalue(eigenvalue, output, area=None):
         return eigenvalue * area / (4 * np.pi)
     else:
         raise ValueError("Incorrect output specified")
+    
+# TODO : consider making public
+def _convert_spatial_scale(data, input, output, area=None):
+    """Convenience function to convert between spatial scale representations without needing to manually convert to eigenvalues."""
+    eigenvalue = convert_to_eigenvalue(data, input=input, area=area)
+    return convert_from_eigenvalue(eigenvalue, output=output, area=area)
