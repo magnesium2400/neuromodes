@@ -1,118 +1,170 @@
 """
-Module for expressing brain maps as linear combinations of orthogonal basis vectors.
+Module for expressing brain maps as linear combinations of orthogonal basis vectors, such as
+geometric eigenmodes.
 """
 
 from __future__ import annotations
-from typing import Union, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING
+from warnings import warn
 import numpy as np
-from scipy.sparse import spmatrix
 from scipy.spatial.distance import cdist
-from neuromodes.eigen import is_orthonormal_basis
+from neuromodes.eigen import EigenData
 
 if TYPE_CHECKING:
-    from numpy.typing import NDArray, ArrayLike
+    from numpy import floating
+    from numpy.typing import NDArray
     from scipy.spatial.distance import _MetricCallback, _MetricKind 
+    from scipy.sparse import csc_matrix
+    from neuromodes.eigen import _CheckKind
+    from neuromodes.basis import (_DecompositionKind, _IntSequenceKind, _SeqSequenceKind,
+                                  _ReconSingle, _ReconList, _ReconTSSingle, _ReconTSList)
 
 def decompose(
-    data: ArrayLike,
-    emodes: ArrayLike,
-    n_modes: Union[int, None] = None,
-    method: str = 'project',
-    mass: Union[spmatrix, ArrayLike, None] = None,
-    check_ortho: bool = True,
-) -> NDArray:
+    data: NDArray[floating],
+    emodes: NDArray[floating],
+    method: _DecompositionKind = 'project',
+    mass: csc_matrix | None = None,
+    mode_counts: _IntSequenceKind | int | None = None,
+    mode_ids: _SeqSequenceKind | None = None,
+    checks: _CheckKind = None,  
+) -> NDArray[floating] | list[NDArray[floating]]:
     """
     Calculate the decomposition of the given data onto a basis set.
 
     Parameters
     ----------
     data : array-like
-        The input data array of shape (n_verts, ...), where n_verts is the number of vertices.
+        The input data array of shape ``(n_verts, ...)``, where ``n_verts`` is the number of
+        vertices and ``n_maps`` is the number of maps.
     emodes : array-like
-        The vectors array of shape (n_verts, n_cols), where n_cols is the number of basis vectors.
-    n_modes : int, optional
-        The number of basis vectors to use for the decomposition. If `None`, all basis vectors are
-        used. Default is `None`.
+        The vectors array of shape ``(n_verts, n_modes)``, where ``n_modes`` is the number of basis
+        vectors.
     method : str, optional
-        The method used for the decomposition, either `'project'` to project data into a
-        mass-orthonormal space or `'regress'` for least-squares fitting. Note that the beta values
-        from `'regress'` tend towards those from `'project'` when more basis vectors are provided.
-        For a non-orthonormal basis set, `'regress'` must be used. Default is `'project'`.
+        The method used for the decomposition, either ``'project'`` to project data into a
+        mass-orthonormal space or ``'regress'`` for least-squares fitting. Note that the beta values
+        from ``'regress'`` tend towards those from ``'project'`` when more basis vectors are
+        provided. For a non-orthonormal basis set, ``'regress'`` must be used. Default is
+        ``'project'``.
     mass : array-like, optional
-        The mass matrix of shape (n_verts, n_verts) used for the decomposition when method is
-        `'project'`. If vectors are orthonormal in Euclidean space, leave as `None`. See
-        `eigen.is_orthonormal_basis` for more details. Default is `None`.
-    check_ortho : bool, optional
-        Whether to check if `emodes` are mass-orthonormal before using the `'project'` method.
-        Default is `True`.
+        The mass matrix of shape ``(n_verts, n_verts)`` used for the decomposition when method is
+        ``'project'``. If vectors are orthonormal in Euclidean space, leave as ``None``. See
+        :func:`eigen.is_orthonormal_basis` for more details. Default is ``None``.
+    checks : str or bool, optional
+        Whether to verify types, shapes, and orthonormality of ``emodes`` and ``mass`` before
+        decomposition. Default is ``True``.
 
     Returns
     -------
-    numpy.ndarray
-        The beta coefficients array of shape (n_modes, ...), obtained from the decomposition.
+    numpy.ndarray or list
+        The beta coefficients array of shape ``(n_modes, ...)`` or ``list of (n_modes, ...)``
+        arrays, obtained from the decomposition.
     
     Raises
     ------
     ValueError
-        If `emodes` does not have shape (n_verts, n_modes), where n_verts ≥ n_modes.
+        If ``data`` does not have shape ``(n_verts,)`` or ``(n_verts, n_maps)``.
     ValueError
-        If `data` does not have shape (n_verts, ...).
-    ValueError
-        If `method='project'` and `emodes` columns do not form an orthonormal basis set (when
-        `check_ortho=True`).
-    ValueError
-        If `method` is not 'project' or 'regress'.
+        If ``method`` is not ``'project'`` or ``'regress'``.
+
+    Notes
+    -----
+    If ``data`` contains NaNs or Infs, these will be disregarded during decomposition by masking
+    corresponding vertices from ``data``, ``emodes``, and ``mass``. Note that this can lead to
+    unexpected behaviour, such as extreme values in affected areas of the reconstructed data, or
+    extreme beta values. This appears particularly prevalent when using the ``'regress'`` method. 
     """
     # Format / validate inputs
-    emodes = np.asarray_chkfinite(emodes)
-    n_verts = emodes.shape[0]
-    if emodes.ndim != 2 or emodes.shape[0] < emodes.shape[1]:
-        raise ValueError("`emodes` must have shape (n_verts, n_modes), where n_modes <= n_verts.")
-
-    if n_modes is None: 
-        n_modes = emodes.shape[1]
-    else:
-        n_modes = int(n_modes)
-        if n_modes < 1 or n_modes > emodes.shape[1]:
-            raise ValueError(f"`n_modes` must be an integer between 1 and the number of columns in `emodes` ({emodes.shape[1]}).")
-    emodes_s = emodes[:, :n_modes] # selected emodes
-
-    data = np.asarray_chkfinite(data)
-    if data.shape[0] != n_verts:
-        raise ValueError("`data` must have shape (n_verts,...), where n_verts is "
-                         f"the number of rows in `emodes` ({n_verts}).")
+    if method not in ['project', 'regress']:
+        raise ValueError(f"Invalid method '{method}'; must be 'project' or 'regress'.")
     
-    if method == 'project':
-        if mass is not None and not isinstance(mass, spmatrix): # don't cast if sparse
-            mass = np.asarray_chkfinite(mass)
-        if check_ortho and not is_orthonormal_basis(emodes_s, mass):
-            err_str = "in Euclidean space" if mass is None else "with the provided mass matrix"
-            raise ValueError("The columns of `emodes` do not form an orthonormal basis set "
-                             f"{err_str}. Consider providing a suitable `mass` matrix or using "
-                             "`method='regress'`.")
-    elif method != 'regress':
-        raise ValueError(f"Invalid `method` '{method}'; must be 'project' or 'regress'.")
+    # Skip warning for EigenSolver, where mass is always passed in
+    if (method == 'regress') and (mass is not None) and (checks is True or checks == 'ortho'):  
+            warn("mass is ignored when method='regress'.")
+    
+    if checks is None:
+        if method == 'regress':
+            checks = 'maps'
+        else:
+            checks = True
+    if checks is not False: 
+        ved = EigenData(emodes=emodes, mass=mass, data=data, checks=checks)
+        emodes, mass, data = ved.emodes, ved.mass, ved.data
 
-    # Decomposition
-    data_r = data.reshape(n_verts, -1) # data reshaped
-    if method == 'project' and mass is None:
-        coeffs = emodes_s.T @ data_r
-    elif method == 'project': # and mass is not None
-        coeffs = emodes_s.T @ (mass @ data_r) # faster if n_maps < n_modes 
-    else: # method == 'regress'
-        coeffs = np.linalg.lstsq(emodes_s, data_r)[0]
-    return coeffs.reshape((n_modes,) + data.shape[1:])
+    mode_ids, squeeze_output = _process_mode_ids(mode_counts, mode_ids, emodes.shape[1])
+    n_modes = [len(x) for x in mode_ids]
+
+    # Manipulate input/output shapes
+    output_shapes = [(i,) + data.shape[1:] for i in n_modes]
+    beta = [np.empty(shape, dtype=data.dtype) for shape in output_shapes]
+    data_reshaped = data.reshape(data.shape[0], -1) # guaranteed 2d
+    
+    # Handle NaNs and Infs by masking out afflicted vertices (separately for each NaN/Inf pattern)
+    data_finite = np.isfinite(data_reshaped)
+    if np.all(data_finite):
+        masks = np.ones((data_reshaped.shape[0], 1), dtype=bool)
+        mask_indices = np.zeros(data_reshaped.shape[1], dtype=int)
+    elif method == 'regress':
+        if checks is True or checks == 'maps':
+            warn("data contains NaNs and/or Infs; these will be disregarded during decomposition by"
+                " masking corresponding vertices from data and emodes. This may lead to extreme "
+                "values in affected areas of the reconstructed data. Consider instead interpolating"
+                " missing data prior to decomposition via EigenSolver.inpaint().")
+        masks, mask_indices = np.unique(data_finite, axis=1, return_inverse=True)
+    else:  # method == 'project'
+        raise ValueError("data contains NaNs/Infs; consider interpolating missing data prior to "
+                         "decomposition via EigenSolver.inpaint() or set method='regress' to mask "
+                         "out afflicted vertices during decomposition.")
+
+    if method == 'project': 
+        # Find the unique mode IDs requested, and the inverse mapping back to mode_ids
+        unique_mids, inv = np.unique(np.concatenate(mode_ids), return_inverse=True)
+        inv = np.split(inv, np.cumsum([len(m) for m in mode_ids[:-1]])) # back in the same list pattern as mode_ids
+        
+        # For each nan/inf pattern, get the beta values for all the unique modes
+        beta_all = _calc_beta(
+            data = data_reshaped, 
+            emodes = emodes[:, unique_mids],
+            method = method,
+            mass = mass,
+            mask = masks[:, 0]
+            )
+        
+        # Map the unique results back to the specific mode_ids requested
+        for j, idxs in enumerate(inv):
+            beta[j] = beta_all[idxs, :].reshape(output_shapes[j])
+
+    elif method == 'regress':
+        # Have to loop over each set of mode indices
+        for j in range(len(mode_ids)):
+            beta_current = np.empty((n_modes[j], data_reshaped.shape[1]), dtype=data.dtype)
+            # as well as each NaN pattern
+            for i, mask in enumerate(masks.T):
+                # Get indices of maps with this NaN/Inf pattern
+                # Remove verts with NaNs/Inf in this group from data and emodes
+                # Calculate beta coefficients for subset of data
+                map_indices = np.where(mask_indices == i)[0]
+                beta_current[:, map_indices] = _calc_beta(
+                    data = data_reshaped[:, map_indices], 
+                    emodes = emodes[:, mode_ids[j]], 
+                    method = method,
+                    mass = mass, 
+                    mask = mask
+                )
+            beta[j] = beta_current.reshape(output_shapes[j])
+
+    return beta[0] if squeeze_output else beta # convert back to array if mode_counts was None/scalar
 
 def reconstruct(
-    data: ArrayLike,
-    emodes: ArrayLike,
-    method: str = 'project',
-    mass: Union[spmatrix, ArrayLike, None] = None,
-    mode_counts: Union[ArrayLike, None] = None,
-    metric: Union[_MetricCallback, _MetricKind, None] = 'correlation',
-    check_ortho: bool = True,
+    data: NDArray[floating],
+    emodes: NDArray[floating],
+    method: _DecompositionKind = 'project',
+    mass: csc_matrix | None = None,
+    mode_counts: _IntSequenceKind | int | None = None,
+    mode_ids: _SeqSequenceKind | None = None,
+    checks: _CheckKind = None,
+    metric: _MetricCallback | _MetricKind | None = 'correlation',
     **cdist_kwargs
-) -> Tuple[NDArray, NDArray, list[NDArray]]:
+) -> _ReconSingle | _ReconList:
     """
     Calculate and score the reconstruction of the given independent data using the provided
     orthogonal vectors (e.g., geometric eigenmodes).
@@ -120,224 +172,299 @@ def reconstruct(
     Parameters
     ----------
     data : array-like
-        The input data array of shape (n_verts,) or (n_verts, n_maps), where n_verts is the number
-        of vertices and n_maps is the number of brain maps.
+        The input data array of shape ``(n_verts, ...)``, where ``n_verts`` is
+        the number of vertices and ``n_maps`` is the number of brain maps.
     emodes : array-like
-        The vectors array of shape (n_verts, n_modes), where n_modes is the number of orthogonal
-        vectors.
+        The vectors array of shape ``(n_verts, n_modes)``, where ``n_modes`` is the number of
+        orthogonal vectors.
     method : str, optional
-        The method used for the decomposition, either `'project'` to project data into a
-        mass-orthonormal space or `'regress'` for least-squares fitting. Note that the beta values
-        from `'regress'` tend towards those from `'project'` when more basis vectors are provided.
-        For a non-orthonormal basis set, `'regress'` must be used. Default is `'project'`.
+        The method used for the decomposition, either ``'project'`` to project data into a
+        mass-orthonormal space or ``'regress'`` for least-squares fitting. Note that the beta values
+        from ``'regress'`` tend towards those from ``'project'`` when more basis vectors are
+        provided. For a non-orthonormal basis set, ``'regress'`` must be used. Default is
+        ``'project'``.
     mass : array-like, optional
-        The mass matrix of shape (n_verts, n_verts) used for the decomposition when method is
-        `'project'`. If vectors are orthonormal in Euclidean space, leave as `None`. See
-        `eigen.is_orthonormal_basis` for more details. Default is `None`.
+        The mass matrix of shape ``(n_verts, n_verts)`` used for the decomposition when method is
+        ``'project'``. If vectors are orthonormal in Euclidean space, leave as ``None``. See
+        :func:`eigen.is_orthonormal_basis` for more details. Default is ``None``.
     mode_counts : array-like, optional
-        The sequence of vectors to be used for reconstruction. For example,
-        `mode_counts=np.array([10,20,30])` will run three analyses: with the first 10 vectors, with
-        the first 20 vectors, and with the first 30 vectors. Default is `None`, which uses all
-        vectors provided.
+        The sequence of vectors to be used for reconstruction, of shape ``(n_recons,)``. For
+        example, ``mode_counts=np.array([10,20,30])`` will run three analyses: with the first 10
+        vectors, with the first 20 vectors, and with the first 30 vectors. Default is ``None``,
+        which uses all vectors provided.
     metric : str, optional
         The metric used for calculating reconstruction error. Should be one of the options from
-        `scipy.spatial.distance.cdist`, or `None` if no scoring is required. Default is
-        `'correlation'`.
-    check_ortho : bool, optional
-        Whether to check if `emodes` are mass-orthonormal before using the `'project'` method. 
-        Default is `True`.
+        ``scipy.spatial.distance.cdist``, or ``None`` if no scoring is required. Default is
+        ``'correlation'``.
+    checks : bool, optional
+        Whether to verify types, shapes, and orthonormality of ``emodes`` and ``mass`` before
+        reconstruction. Default is ``True``.
     **cdist_kwargs
-        Additional keyword arguments to pass to `scipy.spatial.distance.cdist`.
+        Additional keyword arguments to pass to ``scipy.spatial.distance.cdist``.
 
     Returns
     -------
     recon : numpy.ndarray
-        The reconstructed data array of shape (n_verts, nq, n_maps), where nq is the number of
-        different reconstructions ordered in `mode_counts`. Each slice is the independent
-        reconstruction of each map. Note that if `mode_counts` includes any constant vector (e.g.,
-        the first geometric eigenmode), the reconstructions will be constant for that value of
-        `mode_counts` (this may also result in warnings/nans for `recon_error`). 
+        The reconstructed data array of shape ``(n_verts, ..., n_recons)``, where ``n_recons`` is
+        the number of different reconstructions ordered in ``mode_counts``. Each slice is the
+        independent reconstruction of each map. Note that if ``mode_counts`` includes any constant
+        vector (e.g., the first geometric eigenmode), the reconstructions will be constant for that
+        value of ``mode_counts`` (this may also result in warnings/nans for ``recon_error``). 
     recon_error : numpy.ndarray
-        The reconstruction error array of shape (nq, n_maps). Each value represents the
-        reconstruction error of one map. If `metric` is None, this will be empty. 
+        The reconstruction error array of shape ``(..., n_recons)``. Each value represents the
+        reconstruction error of one map. If ``metric`` is None, this will be empty. 
     beta : list of numpy.ndarray
         A list of beta coefficients calculated for each vector.
     
     Raises
     ------
     ValueError
-        If `mode_counts` is not a 1D array of integers within the range [1, n_modes].
+        If ``mode_counts`` is not a 1D array-like of integers within the range [1, ``n_modes``].
+
+    Notes
+    -----
+    If ``data`` contains NaNs or Infs, these will be disregarded during decomposition by masking
+    corresponding vertices from ``data``, ``emodes``, and ``mass``. Note that this can lead to
+    unexpected behaviour, such as extreme values in affected areas of the reconstructed data, or
+    extreme beta values. This appears particularly prevalent when using the ``'regress'`` method.
     """
-    # Format / validate arguments
-    data = np.asarray(data) # chkfinite in decompose
-    if data.ndim == 1:
-        data = data[:, np.newaxis]
-    emodes = np.asarray(emodes) # chkfinite in decompose
-    mode_counts = (np.arange(emodes.shape[1])+1 if mode_counts is None
-                   else np.asarray_chkfinite(mode_counts))
-    if (mode_counts.ndim != 1 or not np.issubdtype(mode_counts.dtype, np.integer)
-        or mode_counts.min() < 1 or mode_counts.max() > emodes.shape[1]):
-        raise ValueError("`mode_counts` must be a 1D array-like of integers within the range [1, "
-                         f"{emodes.shape[1]}].")
+    # Format / validate inputs
+    if checks is None:
+        if method == 'regress':
+            checks = 'maps'
+        else:
+            checks = True
+    if checks is not False:
+        ved = EigenData(emodes=emodes, mass=mass, data=data, checks=checks)
+        emodes, mass, data = ved.emodes, ved.mass, ved.data
+    mode_ids, squeeze_output = _process_mode_ids(mode_counts, mode_ids, emodes.shape[1])
 
-    # Decompose the data to get beta coefficients
-    if method == 'project':
-        # only need to decompose once (with n=max modes) if using orthogonal method
-        tmp = decompose(data, emodes[:, :np.max(mode_counts)], mass=mass,
-                        method=method, check_ortho=check_ortho)
-        beta = [tmp[:mq, :] for mq in mode_counts]
-    else:
-        beta = [
-            decompose(data, emodes[:, :mq], mass=mass, method=method)
-            for mq in mode_counts
-        ]
+    # Prepare inputs and outputs in right shapes
+    n_recons = len(mode_ids)
+    recon_output_shape = data.shape + (n_recons,)
+    error_output_shape = data.shape[1:] + (n_recons,)
 
-    # Reconstruct and calculate error
-    recon = np.stack([emodes[:, :mode_counts[i]] @ beta[i] for i in range(len(beta))], axis=1)
-    recon_error = np.concatenate([
-        cdist(recon[:, :, i].T, data[:, [i]].T, metric=metric, **cdist_kwargs)
-        for i in range(data.shape[1])
-    ], axis=1) if metric is not None else np.empty(0)
+    data_2d = data.reshape(data.shape[0], -1)
+    recon_flat_shape = data_2d.shape + (n_recons,) # the flat data will just be np.reshaped into the size above
+    error_flat_shape = (data_2d.shape[1],) + (n_recons,)
+
+    # Main computation
+    # a. Decomposition
+    beta = decompose(data, emodes, method=method, mass=mass, mode_ids=mode_ids, checks=False)
+
+    # b. Reconstructions: Need to loop over recons as betas are different sizes
+    recon_flat = np.empty(recon_flat_shape, dtype=data.dtype)
+    for j, mids in enumerate(mode_ids):
+        recon_flat[:, :, j] = emodes[:, mids] @ beta[j].reshape(len(mids), -1) # convert to col vec if 1D
+
+    # c. Errors: Need to loop over maps for cdist
+    recon_error_flat = np.full(error_flat_shape, None, dtype=data.dtype)
+    if metric is not None:
+        for i in range(data_2d.shape[1]):
+            recon_error_flat[i, :] = cdist(data_2d[:, [i]].T, recon_flat[:, i, :].T, 
+                                           metric=metric, **cdist_kwargs)
+
+    # Reshape outputs
+    recon = recon_flat.reshape(recon_output_shape)
+    recon_error = recon_error_flat.reshape(error_output_shape)
+
+    if squeeze_output: 
+        recon = np.squeeze(recon, axis=-1)
+        recon_error = np.squeeze(recon_error, axis=-1)
+        beta = beta[0]
 
     return recon, recon_error, beta
 
 def reconstruct_timeseries(
-    data: ArrayLike,
-    emodes: ArrayLike,
-    method: str = 'project',
-    mass: Union[spmatrix, ArrayLike, None] = None,
-    mode_counts: Union[ArrayLike, None] = None,
-    metric: Union[_MetricCallback, _MetricKind, None] = 'correlation',
-    check_ortho: bool = True,
+    timeseries: NDArray[floating],
+    emodes: NDArray[floating],
+    method: _DecompositionKind = 'project',
+    mass: csc_matrix | None = None,
+    mode_counts: _IntSequenceKind | int | None = None,
+    mode_ids: _SeqSequenceKind | None = None,
+    metric: _MetricCallback | _MetricKind | None = 'correlation',
+    checks: _CheckKind = None,
     **cdist_kwargs
-) -> Tuple[NDArray, NDArray, NDArray, NDArray, list[NDArray]]:
+) -> _ReconTSSingle | _ReconTSList:
     """
-    Calculate and score the reconstruction of the given time-series data using the provided
+    Calculate and score the reconstruction of the given timeseries data using the provided
     orthogonal vectors (e.g., geometric eigenmodes).
 
     Parameters
     ----------
-    data : array-like
-        The input data array of shape (n_verts, n_timepoints), where n_verts is the number of
-        vertices and n_timepoints is the number of timepoints.
+    timeseries : array-like
+        The input timeseries array of shape ``(n_verts, n_timepoints)``, where ``n_verts`` is the
+        number of vertices and ``n_timepoints`` is the number of timepoints.
     emodes : array-like
-        The vectors array of shape (n_verts, n_modes), where n_modes is the number of orthogonal
-        vectors.
+        The vectors array of shape ``(n_verts, n_modes)``, where ``n_modes`` is the number of
+        orthogonal vectors.
     method : str, optional
-        The method used for the decomposition, either `'project'` to project data into a
-        mass-orthonormal space or `'regress'` for least-squares fitting. Note that the beta values
-        from `'regress'` tend towards those from `'project'` when more basis vectors are provided.
-        For a non-orthonormal basis set, `'regress'` must be used. Default is `'project'`.
+        The method used for the decomposition, either ``'project'`` to project data into a
+        mass-orthonormal space or ``'regress'`` for least-squares fitting. Note that the beta values
+        from ``'regress'`` tend towards those from ``'project'`` when more basis vectors are
+        provided. For a non-orthonormal basis set, ``'regress'`` must be used. Default is
+        ``'project'``.
     mass : array-like, optional
-        The mass matrix of shape (n_verts, n_verts) used for the decomposition when method is
-        `'project'`. If vectors are orthonormal in Euclidean space, leave as `None`. See
-        `eigen.is_orthonormal_basis` for more details. Default is `None`.
+        The mass matrix of shape ``(n_verts, n_verts)`` used for the decomposition when method is
+        ``'project'``. If vectors are orthonormal in Euclidean space, leave as ``None``. See
+        :func:`eigen.is_orthonormal_basis` for more details. Default is ``None``.
     mode_counts : array-like, optional
-        The sequence of vectors to be used for reconstruction. For example, `mode_counts =
-        np.array([10,20,30])` will run three analyses: with the first 10 vectors, with the first 20
-        vectors, and with the first 30 vectors. Default is `None`, which uses all vectors provided.
+        The sequence of vectors to be used for reconstruction. For example, ``mode_counts =
+        np.array([10,20,30])`` will run three analyses: with the first 10 vectors, with the first 20
+        vectors, and with the first 30 vectors. Default is ``None``, which uses all vectors
+        provided.
     metric : str, optional
         The metric used for calculating reconstruction error. Should be one of the options from
-        `scipy.spatial.distance.cdist`, or `None` if no scoring is required. Default is
-        `'correlation'`.
-    check_ortho : bool, optional
-        Whether to check if `emodes` are mass-orthonormal before using the `'project'` method. 
-        Default is `True`.
+        ``scipy.spatial.distance.cdist``, or ``None`` if no scoring is required. Default is
+        ``'correlation'``.
+    checks : bool, optional
+        Whether to verify types, shapes, and orthonormality of ``emodes`` and ``mass`` before
+        reconstruction. Default is ``True``.
     **cdist_kwargs
-        Additional keyword arguments to pass to `scipy.spatial.distance.cdist`.
+        Additional keyword arguments to pass to ``scipy.spatial.distance.cdist``.
 
     Returns
     -------
     fc_recon : numpy.ndarray
-        The functional connectivity reconstructed data array of shape (n_edges, nq), where n_edges =
-        n_verts*(n_verts-1)/2 and nq is the number of different reconstructions ordered in
-        `mode_counts`. The FC matrix returned is r-to-z (arctanh) transformed and vectorized. Note 
-        that if `mode_counts` includes any constant vector (e.g., the first geometric eigenmode),
-        the reconstructions will be constant for that value of `mode_counts` (this may also result
-        in warnings/nans for `recon_error`). 
+        The reconstructed functional connectivity array of shape ``(n_edges, n_recons)``, where
+        ``n_edges = n_verts*(n_verts-1)/2`` and ``n_recons`` is the number of different
+        reconstructions ordered in ``mode_counts``. The FC matrix returned is r-to-z (arctanh)
+        transformed and vectorized. Note that if ``mode_counts`` includes any constant vector (e.g.,
+        the first geometric eigenmode), the reconstructions will be constant for that value of
+        ``mode_counts`` (this may also result in warnings/nans for ``recon_error``). 
     fc_recon_error : numpy.ndarray
-        The functional reconstruction accuracy of shape (nq,). If `metric` is `None`, this will be
-        empty.
+        The functional reconstruction accuracy of shape ``(n_recons,)``. If ``metric`` is ``None``,
+        this will be empty.
     recon : numpy.ndarray
-        The reconstructed data array of shape (n_verts, nq, n_timepoints), where nq is the number of
-        different reconstructions ordered in `mode_counts`. Each slice is the independent
-        reconstruction of each timepoint. Note that if `mode_counts` includes any constant vector
-        (e.g., the first geometric eigenmode), the reconstructions will be constant for that value
-        of `mode_counts` (this may also result in warnings/nans for `recon_error`).
+        The reconstructed timeseries array of shape ``(n_verts, n_recons, n_timepoints)``, where
+        ``n_recons`` is the number of different reconstructions ordered in ``mode_counts``. Each
+        slice is the independent reconstruction of each timepoint. Note that if ``mode_counts``
+        includes any constant vector (e.g., the first geometric eigenmode), the reconstructions will
+        be constant for that value of ``mode_counts`` (this may also result in warnings/nans for
+        ``recon_error``).
     recon_error : numpy.ndarray
-        The reconstruction error array of shape (nq, n_timepoints). Each value represents the
-        reconstruction error at one timepoint. If `metric` is `None`, this will be empty. 
+        The reconstruction error array of shape ``(n_recons, n_timepoints)``. Each value represents
+        the reconstruction error at one timepoint. If ``metric`` is ``None``, this will be empty. 
     beta : list of numpy.ndarray
         A list of beta coefficients calculated for each vector.
     
     Raises
     ------
     ValueError
-        If `data` does not have shape (n_verts, n_timepoints).
+        If ``timeseries`` does not have shape ``(n_verts, n_timepoints)``.
     """
     # Format / validate arguments
-    if np.ndim(data) != 2:
-        raise ValueError("`data` must have shape (n_verts, n_timepoints).")
+    if checks is None:
+        if method == 'regress':
+            checks = 'maps'
+        else:
+            checks = True
+    if checks is not False:
+        ved = EigenData(emodes=emodes, mass=mass, data=timeseries, checks=checks)
+        emodes, mass, timeseries = ved.emodes, ved.mass, ved.data
+    if timeseries.ndim != 2:
+        raise ValueError("timeseries must have shape (n_verts, n_timepoints).")
+
+    mode_ids, squeeze_output = _process_mode_ids(mode_counts, mode_ids, emodes.shape[1])
     
     # Use reconstruct to get independent reconstructions
     recon, recon_error, beta = reconstruct(
-        data,
+        timeseries,
         emodes, 
         method=method,
         mass=mass,
-        mode_counts=mode_counts,
+        mode_ids=mode_ids,
         metric=metric,
-        check_ortho=check_ortho
+        checks=False, 
+        **cdist_kwargs
     )
 
-    fc = calc_vec_fc(data)[np.newaxis, :]
-    fc_recon = np.stack([calc_vec_fc(recon[:, i, :]) for i in range(recon.shape[1])], axis=1)
-    fc_recon_error = (cdist(fc_recon.T, fc, metric=metric, **cdist_kwargs)[:, 0]
-                      if metric is not None else np.empty(0))
+    # Calculate FC of original timeseries
+    fc = calc_vec_fc(timeseries)
+    n_edges = len(fc)
+    n_recons = len(beta)
+
+    # Calculate FC of reconstructed timeseries
+    fc_recon = np.full((n_edges,) + recon.shape[2:], None, dtype=timeseries.dtype)
+    for i in range(n_recons):
+        fc_recon[:, i] = calc_vec_fc(recon[..., i])
+
+    # Score FC of reconstructions
+    fc_recon_error = np.full(n_recons, None, dtype=timeseries.dtype)
+    if metric is not None:
+        fc_recon_error = cdist(
+            fc_recon.T,
+            fc[np.newaxis, :],
+            metric=metric,
+            **cdist_kwargs
+            )[:, 0]
+    
+    if squeeze_output:
+        fc_recon = np.squeeze(fc_recon, axis=-1)
+        fc_recon_error = np.squeeze(fc_recon_error, axis=-1)
+        recon = np.squeeze(recon, axis=-1)
+        recon_error = np.squeeze(recon_error, axis=-1)
+        beta = beta[0]
 
     return fc_recon, fc_recon_error, recon, recon_error, beta
 
-def calc_norm_power(
-    beta: ArrayLike
-) -> NDArray:
-    """
-    Transform beta coefficients from a decomposition into normalised power.
-
-    Parameters
-    ----------
-    beta : array-like
-        The beta coefficients array of shape (n_modes,) or (n_modes, n_maps), where n_modes is the
-        number of orthogonal vectors and n_maps is the number of brain maps.
-
-    Returns
-    -------
-    numpy.ndarray
-        The normalized power array of shape (n_modes,) or (n_modes, n_maps), where each element
-        represents the proportion of power contributed by the corresponding orthogonal vector to
-        each brain map.
-    """
-    beta_sq = np.asarray_chkfinite(beta)**2
-    total_power = np.sum(beta_sq, axis=0)
-
-    return beta_sq / total_power
-
 def calc_vec_fc(
-    timeseries: ArrayLike
-) -> NDArray:
+    timeseries: NDArray[floating]
+) -> NDArray[floating]:
     """
     Compute Fisher-z-transformed vectorized functional connectivity from timeseries data.
     
     Parameters
     ----------
     timeseries : array-like
-        The input timeseries data of shape (n_verts, n_timepoints).
+        The input timeseries data of shape ``(n_verts, n_timepoints)``.
 
     Returns
     -------
     numpy.ndarray
-        The Fisher-z-transformed vectorized functional connectivity array of shape (n_edges,), where
-        n_edges = n_verts*(n_verts-1)/2.
+        The Fisher-z-transformed vectorized functional connectivity array of shape ``(n_edges,)``,
+        where ``n_edges = n_verts*(n_verts-1)/2``.
     """
     fc = np.corrcoef(timeseries)
     vec_fc = fc[np.triu_indices_from(fc, k=1)]
     return np.arctanh(vec_fc)
+
+def _calc_beta(
+    data: NDArray[floating],
+    emodes: NDArray[floating],
+    method: str,
+    mass: csc_matrix | None,
+    mask: NDArray
+) -> NDArray[floating]:
+    """Helper function to perform decomposition after validating arguments and masking NaNs/Infs."""
+    if method == 'project':
+        return emodes.T @ data if mass is None else emodes.T @ (mass @ data)
+    elif method == 'regress':
+        return np.linalg.lstsq(emodes[mask, :], data[mask, :], rcond=None)[0]
+    
+    raise ValueError(f"Invalid method '{method}'; must be 'project' or 'regress'.")
+
+def _process_mode_ids(
+    mode_counts: _IntSequenceKind | int | None,
+    mode_ids: _SeqSequenceKind | None,
+    n_modes: int
+) -> tuple[_SeqSequenceKind, bool]: 
+    # mode_counts is just shorthand for mode_ids
+    # If mode_counts is provided, reformat into mode_ids
+    if mode_counts is not None and mode_ids is not None:
+        raise UserWarning("Both mode_counts and mode_ids provided; mode_counts will be ignored.")
+    
+    if isinstance(mode_ids, (list, tuple, np.ndarray)):
+        output = mode_ids
+    elif mode_ids is not None: 
+        raise ValueError("mode_ids must be a list or tuple of arrays of mode indices.")
+    elif mode_counts is None:
+        output = (np.arange(n_modes),)
+    elif isinstance(mode_counts, int):
+        output = (np.arange(mode_counts),)
+    else: 
+        output = [np.arange(mc) for mc in mode_counts]
+    
+    squeeze_output = (mode_ids is None) and (mode_counts is None or isinstance(mode_counts, int))
+
+    return output, squeeze_output

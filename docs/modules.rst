@@ -34,21 +34,23 @@ API Reference
    :template: function.rst
    :toctree: generated/
 
-   neuromodes.eigen.EigenSolver.compute_lbo
-   neuromodes.eigen.EigenSolver.solve
-   neuromodes.eigen.EigenSolver.decompose
-   neuromodes.eigen.EigenSolver.reconstruct
-   neuromodes.eigen.EigenSolver.reconstruct_timeseries
-   neuromodes.eigen.EigenSolver.simulate_waves
-   neuromodes.eigen.EigenSolver.model_connectome
+   compute_lbo
+   solve
+   decompose
+   reconstruct
+   reconstruct_timeseries
+   sim_nft_waves
+   balloon_model
+   compute_gem
+   eigenstrap
 
 .. autosummary::
    :template: function.rst
    :toctree: generated/
 
-   neuromodes.eigen.scale_hetero
-   neuromodes.eigen.standardize_modes
-   neuromodes.eigen.is_orthonormal_basis
+   scale_hetero
+   standardize_emodes
+   is_orthonormal_basis
 
 .. _ref_basis:
 
@@ -65,11 +67,10 @@ API Reference
    :template: function.rst
    :toctree: generated/
 
-   neuromodes.basis.decompose
-   neuromodes.basis.reconstruct
-   neuromodes.basis.reconstruct_timeseries
-   neuromodes.basis.calc_norm_power
-   neuromodes.basis.calc_vec_fc
+   decompose
+   reconstruct
+   reconstruct_timeseries
+   calc_vec_fc
 
 .. _ref_waves:
 
@@ -86,26 +87,45 @@ API Reference
    :template: function.rst
    :toctree: generated/
 
-   neuromodes.waves.simulate_waves
-   neuromodes.waves.calc_wave_speed
-   neuromodes.waves.get_balloon_params
+   sim_nft_waves
+   balloon_model
+   calc_wave_speed
 
-.. _ref_connectome:
+.. _ref_network:
 
-:mod:`neuromodes.connectome` - Generative modelling of the structural connectome
+:mod:`neuromodes.network` - Generative modelling of the structural connectome
 ---------------------------------------------------------------
 
-.. automodule:: neuromodes.connectome
+.. automodule:: neuromodes.network
    :no-members:
    :no-inherited-members:
 
-.. currentmodule:: neuromodes.connectome
+.. currentmodule:: neuromodes.network
 
 .. autosummary::
    :template: function.rst
    :toctree: generated/
 
-   neuromodes.connectome.model_connectome
+   compute_gem
+
+.. _ref_mesh:
+
+:mod:`neuromodes.mesh` - Create, mask, and validate meshes of brain structures
+---------------------------------------------------------------
+
+.. automodule:: neuromodes.mesh
+   :no-members:
+   :no-inherited-members:
+
+.. currentmodule:: neuromodes.mesh
+
+.. autosummary::
+   :template: function.rst
+   :toctree: generated/
+
+   mask_mesh
+   unmask_data
+   check_surf
 
 .. _ref_nulls:
 
@@ -122,11 +142,11 @@ API Reference
    :template: function.rst
    :toctree: generated/
 
-   neuromodes.nulls.eigenstrap
+   eigenstrap
 
 .. _ref_io:
 
-:mod:`neuromodes.io` - IO functions for cortical surface meshes and maps
+:mod:`neuromodes.io` - IO functions for loading cortical meshes and maps
 ---------------------------------------------------------------
 
 .. automodule:: neuromodes.io
@@ -139,8 +159,6 @@ API Reference
    :template: function.rst
    :toctree: generated/
 
-   neuromodes.io.read_surf
-   neuromodes.io.mask_surf
-   neuromodes.io.check_surf
-   neuromodes.io.fetch_surf
-   neuromodes.io.fetch_map
+   read_surf
+   fetch_surf
+   fetch_map

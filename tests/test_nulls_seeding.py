@@ -113,7 +113,7 @@ def test_randomize_resample(solver, rotation_method, randomize, residual):
     a2 = solver.eigenstrap(data, n_nulls=n_nulls, seed=1, rotation_method=rotation_method, randomize=randomize, residual=residual)
 
     assert np.allclose(a1, a2), \
-        f"These specific nulls should be the same regardless of randomize and residual parameters when seed is fixed"
+        "These specific nulls should be the same regardless of randomize and residual parameters when seed is fixed"
 
 @pytest.mark.parametrize("rotation_method", rotation_options)
 @pytest.mark.parametrize("randomize", randomize_options)
@@ -167,9 +167,9 @@ def test_seed_global_scipy_match_orig(solver, test_data, randomize, residual):
     b1 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=None, rotation_method="scipy", randomize=randomize, residual=residual)
 
     assert np.allclose(a1, a2), \
-        f"Nulls generated with the same global seed should be identical for seed=None and rotation_method='scipy'"
+        "Nulls generated with the same global seed should be identical for seed=None and rotation_method='scipy'"
     assert not np.allclose(a1, b1), \
-        f"Nulls generated with different global seeds should be different for seed=None and rotation_method='scipy'"
+        "Nulls generated with different global seeds should be different for seed=None and rotation_method='scipy'"
 
 @pytest.mark.parametrize("randomize", randomize_options)
 @pytest.mark.parametrize("residual", residual_options)
@@ -183,7 +183,7 @@ def test_seed_global_qr(solver, test_data, randomize, residual):
     b1 = solver.eigenstrap(test_data, n_nulls=n_nulls, seed=None, rotation_method="qr", randomize=randomize, residual=residual)
     
     assert not np.allclose(a1, b1), \
-        f"Nulls generated with the same global seed should not be identical for seed=None and rotation_method='qr'"
+        "Nulls generated with the same global seed should not be identical for seed=None and rotation_method='qr'"
 
 @pytest.mark.parametrize("rotation_method", rotation_options)
 @pytest.mark.parametrize("randomize", randomize_options)
@@ -208,7 +208,7 @@ def test_reproducibility_number_nulls(solver, test_data, rotation_method, random
     a2 = solver.eigenstrap(test_data, n_nulls=n_nulls-1, seed=1, rotation_method=rotation_method, randomize=randomize, residual=residual)
 
     assert np.allclose(a1[:,:-1], a2, atol=1e-10), \
-        f"Nulls with the same seed should be identical"
+        "Nulls with the same seed should be identical"
 
 @pytest.mark.parametrize("rotation_method", rotation_options)
 @pytest.mark.parametrize("randomize", randomize_options)
@@ -219,7 +219,7 @@ def test_reproducibility_number_data(solver, test_data, rotation_method, randomi
     a2 = solver.eigenstrap(test_data[:,:-1], n_nulls=n_nulls, seed=1, rotation_method=rotation_method, randomize=randomize, residual=residual)
 
     assert np.allclose(a1[:,:,:-1], a2, atol=1e-10), \
-        f"Nulls with the same seed should be identical"
+        "Nulls with the same seed should be identical"
 
 @pytest.mark.parametrize("rotation_method", ['qr']) # only new method supports this
 @pytest.mark.parametrize("randomize", randomize_options)
@@ -237,7 +237,7 @@ def test_reproducibility_number_groups_qr(solver, test_data, rotation_method, ra
     beta2 = solver.decompose(np.squeeze(a2, axis=2))
 
     assert np.allclose(beta1[:n_groups2**2,:], beta2[:n_groups2**2,:], atol=1e-10), \
-        f"Nulls with the same seed should be identical regardless of number of groups"
+        "Nulls with the same seed should be identical regardless of number of groups"
 
 @pytest.mark.parametrize("rotation_method", ['scipy']) # scipy needs to specify individiual seeds to support this
 @pytest.mark.parametrize("randomize", randomize_options)
@@ -255,7 +255,7 @@ def test_reproducibility_number_groups_scipy(solver, test_data, rotation_method,
     beta2 = solver.decompose(np.squeeze(a2, axis=2))
 
     assert np.allclose(beta1[:n_groups2**2,:], beta2[:n_groups2**2,:], atol=1e-10), \
-        f"Nulls with the same seed should be identical regardless of number of groups"
+        "Nulls with the same seed should be identical regardless of number of groups"
 
 def test_compared_to_original_seed_outside(nulls_orig): 
     # These parameters are hard coded to match data saved in the repo and should not be changed

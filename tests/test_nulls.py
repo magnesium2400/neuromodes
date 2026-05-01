@@ -119,6 +119,7 @@ def test_residual_none(solver, test_data):
     nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, residual=None)
     recons = np.squeeze(solver.reconstruct(nulls, mode_counts=[solver.n_modes], metric=None)[0])
     residuals = nulls - recons
+    
     assert np.allclose(residuals, 0, atol=1e-10), \
         "Nulls should not have any residual added when residual=None"
 
@@ -134,8 +135,8 @@ def test_residual_add(solver, test_data):
     
 def test_residual_permute(solver, test_data):
     """Nulls should have permuted residual added when residual='permute'"""
-    data_recons = solver.reconstruct(test_data, mode_counts=[solver.n_modes], metric=None)[0]
-    data_residuals = test_data - np.squeeze(data_recons, axis=(1,2))
+    data_recons = solver.reconstruct(test_data, mode_counts=solver.n_modes, metric=None)[0]
+    data_residuals = test_data - data_recons
     # Have to do it this way as permute residuals will not be orthogonal to modes (ie an approach
     # like the `residual='add'`` approach will not work)
     nulls_base = solver.eigenstrap(test_data, n_nulls=n_nulls, residual=None, seed=365)
@@ -163,6 +164,57 @@ def test_resample_exact(solver, test_data):
         data_sorted = np.sort(test_data)
         assert np.allclose(null_sorted, data_sorted), \
             f"Null {i} doesn't preserve data distribution"
+
+# ignore warning from decompose()
+@pytest.mark.filterwarnings("ignore:data contains NaNs")
+def test_resample_exact_nan_mask_preserved_1d(solver, test_data):
+    """With resample='exact', NaN locations should be preserved and finite values rank-matched."""
+    test_data_nan = test_data.copy()
+    test_data_nan[::19] = np.nan
+    nulls = solver.eigenstrap(test_data_nan, n_nulls=n_nulls, resample="exact", decomp_method='regress')
+
+    nan_mask = np.isnan(test_data_nan)
+    valid_mask = ~nan_mask
+    expected_sorted = np.sort(test_data_nan[valid_mask])
+
+    assert np.isnan(nulls[nan_mask, :]).all(), "NaN locations should be preserved across nulls"
+    assert np.isfinite(nulls[valid_mask, :]).all(), "Valid locations should remain finite"
+
+    for i in range(nulls.shape[1]):
+        null_sorted = np.sort(nulls[valid_mask, i])
+        assert np.allclose(null_sorted, expected_sorted), \
+            f"Null {i} doesn't preserve finite-value distribution with NaNs present"
+
+@pytest.mark.filterwarnings("ignore:data contains NaNs")
+def test_resample_exact_nan_mask_preserved_2d(solver, test_data_2d):
+    """With resample='exact', each map should preserve its own NaN mask and finite distribution."""
+    test_data = test_data_2d.copy()
+
+    # add nans
+    test_data[::17, 0] = np.nan
+    test_data[5::19, 1] = np.nan
+    test_data[5::19, 2] = np.nan  # use same pattern to test efficient sorting
+
+    # add infs
+    test_data[::29, 0] = np.inf
+    test_data[7::31, 1] = -np.inf
+
+    nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, resample="exact", decomp_method='regress')
+
+    for m in range(test_data.shape[1]):
+        nan_mask = np.isnan(test_data[:, m])
+        inf_mask = np.isinf(test_data[:, m])
+        valid_mask = ~(nan_mask | inf_mask)
+        expected_sorted = np.sort(test_data[valid_mask, m])
+
+        assert np.isnan(nulls[nan_mask, :, m]).all(), f"NaN locations should be preserved in map {m}"
+        assert np.isinf(nulls[inf_mask, :, m]).all(), f"Inf locations should be preserved in map {m}"
+        assert np.isfinite(nulls[valid_mask, :, m]).all(), f"Valid locations should remain finite in map {m}"
+
+        for i in range(nulls.shape[1]):
+            null_sorted = np.sort(nulls[valid_mask, i, m])
+            assert np.allclose(null_sorted, expected_sorted), \
+                f"Null {i} in map {m} doesn't preserve finite-value distribution with NaNs/Infs present"
 
 def test_resample_affine(solver, test_data):
     """With resample='affine', nulls should have mean and std that match the data"""
@@ -260,9 +312,9 @@ def test_same_map(solver, test_data_2d):
     nulls = solver.eigenstrap(test_data, n_nulls=n_nulls)
 
     assert not np.allclose(nulls[:,:,1], nulls[:,:,2]), \
-        f"Nulls for map 1 should be different to nulls for map 2"
+        "Nulls for map 1 should be different to nulls for map 2"
     assert np.allclose(nulls[:,:,1], nulls[:,:,0]), \
-        f"Nulls for map 1 should be the same as nulls for map 0"
+        "Nulls for map 1 should be the same as nulls for map 0"
 
 def test_different_maps(solver, test_data_2d): 
     """For different maps, each null should be different to each other null"""
