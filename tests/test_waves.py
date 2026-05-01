@@ -5,8 +5,8 @@ import numpy as np
 import pytest
 from neuromodes.io import fetch_surf, fetch_map
 from neuromodes.eigen import EigenSolver
-from neuromodes.waves import (sim_nft_waves, calc_wave_speed, get_balloon_params, _gen_noise,
-                              _sim_nft_waves_fem, _analytical_fc)
+from neuromodes.waves import (sim_nft_waves, calc_wave_speed, _gen_noise, _sim_nft_waves_fem,
+                              _analytical_fc)
 
 @pytest.fixture(scope="module")
 def solver():
@@ -184,11 +184,6 @@ def test_sim_nft_waves_balloon_param(solver):
 
     assert not np.allclose(bold_default, bold_custom), \
         "BOLD signals with different balloon model parameters match unexpectedly."
-    
-def test_get_balloon_params():
-    # Check an invalid override
-    with pytest.raises(ValueError, match="'rho' must be positive."):
-        _ = get_balloon_params(rho=0)
 
 def test_calc_wave_speed(solver):
 
@@ -204,7 +199,7 @@ def test_calc_wave_speed(solver):
 def test_analytical_fc(solver):
     sim_ts = solver.sim_nft_waves(nt=1000, dt=0.1, seed=0)
     # Check that simulated FC from waves aligns with the analytical FC
-    ana_fc = _analytical_fc(solver.emodes, solver.evals, r=17.4, gamma=116)
+    ana_fc = _analytical_fc(solver.emodes, solver.evals, r=17.4)
     sim_fc = np.corrcoef(sim_ts)
     mse = np.mean((ana_fc - sim_fc)**2)
     assert mse < 0.01, f"Analytical FC does not align with simulated FC (MSE={mse:.4f})."

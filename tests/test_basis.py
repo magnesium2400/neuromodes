@@ -42,8 +42,7 @@ def test_decompose_invalid_data_shape(solver):
     with pytest.raises(ValueError, match=r"data.*first dimension.*3619"):
         decompose(np.ones(4002), solver.emodes, mass=solver.mass)
 
-def test_decompose_nan_inf_mode(solver):
-    emodes = solver.emodes
+def test_decompose_nan_inf_data(solver):
     data = np.ones(solver.n_verts)
 
     bad_emodes = emodes.copy()

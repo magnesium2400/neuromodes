@@ -8,13 +8,13 @@ import numpy as np
 
 if TYPE_CHECKING:
     from lapy import TriaMesh, TetMesh
-    from numpy import floating
-    from numpy.typing import ArrayLike, NDArray
+    from numpy import floating, bool_
+    from numpy.typing import NDArray
     MeshType = TypeVar('MeshType', TriaMesh, TetMesh)
 
 def mask_mesh(
     geometry: MeshType,
-    mask: ArrayLike
+    mask: NDArray[bool_]
 ) -> MeshType:
     """
     Remove specified vertices and corresponding elements from a triangular surface mesh. Returns a
@@ -58,8 +58,8 @@ def mask_mesh(
     return geometry.__class__(v=v_masked, t=t_masked)
 
 def unmask_data(
-    data: ArrayLike,
-    mask: ArrayLike,
+    data: NDArray[floating],
+    mask: NDArray[bool_],
     fill_val: float = np.nan
 ) -> NDArray[floating]:
     """
