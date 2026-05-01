@@ -5,8 +5,7 @@ import numpy as np
 import pytest
 from neuromodes.io import fetch_surf, fetch_map
 from neuromodes.eigen import EigenSolver
-from neuromodes.waves import (sim_nft_waves, calc_wave_speed, _gen_noise, _sim_nft_waves_fem,
-                              _analytical_fc)
+from neuromodes.waves import (sim_nft_waves, calc_wave_speed, _gen_noise, _analytical_fc)
 
 @pytest.fixture(scope="module")
 def solver():
@@ -212,12 +211,8 @@ def test_fem_alignment(solver):
 
     fourier_ts = solver.sim_nft_waves(nt=nt, dt=dt, seed=seed)
 
-    # Get lumped mass and run FEM simulation
-    solver.compute_lbo(lump=True)
-    fem_ts = _sim_nft_waves_fem(solver.mass, solver.stiffness, nt=nt, dt=dt, seed=seed, n_jobs=-1)
-
-    # Reset mass attribute
-    solver.compute_lbo(lump=False)
+    # Run FEM simulation
+    fem_ts = solver.sim_nft_waves(nt=nt, dt=dt, seed=seed, n_jobs=1, pde_method='fem')
 
     # Assess
     for t in range(10, nt):
@@ -226,19 +221,14 @@ def test_fem_alignment(solver):
 
 def test_fem_no_joblib(solver):
     # Check that FEM simulation runs without joblib installed
-    nt=2
+    nt=50
     dt=0.1
     seed=0
 
     with patch.dict('sys.modules', {'joblib': None}):
-        # Get lumped mass and run FEM simulation
-        solver.compute_lbo(lump=True)
         with pytest.warns(UserWarning, match="joblib is not installed"):
-            fem_ts = _sim_nft_waves_fem(solver.mass, solver.stiffness, nt=nt, dt=dt, seed=seed,
-                                         n_jobs=-1)
-
-        # Reset mass attribute
-        solver.compute_lbo(lump=False)
+            fem_ts = solver.sim_nft_waves(nt=nt, dt=dt, seed=seed, n_jobs=-1, pde_method='fem')
 
         assert fem_ts.shape == (solver.n_verts, nt), \
             "FEM output shape is incorrect when joblib is not installed."
+        
