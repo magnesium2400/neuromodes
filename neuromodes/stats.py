@@ -176,8 +176,8 @@ def lstsqw(a, b, w, rcond=None):
     bw = b * va[:, np.newaxis] if b.ndim != 1 else b * va
     return np.linalg.lstsq(aw, bw, rcond=rcond)
 
-def pinv(A, w, rcond=1e-15):
-    raise NotImplementedError("pinv is not yet implemented.")
+def pinvw(A, w, rcond=1e-15):
+    raise NotImplementedError("pinvw is not yet implemented.")
     # W = _process_vertex_areas(w, A.shape[0])
     # return np.linalg.pinv(A.T @ W @ A, rcond=rcond) @ A.T @ W
 
