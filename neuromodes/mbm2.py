@@ -15,16 +15,12 @@ def fdr_bh(ps):
 # TODO given how things are done in MBM (the permutations) consider removing two_sample. 
 #   make it a subset of anova. can sqrt the f stat and then get the sign of the t stat.
 def mbm_stat_map(
-        inputMap, 
-        designMatrix, 
+        inputMap, # (n_subjects, n_vertices)
+        designMatrix, # (n_subjects, n_predictors)
         statTest, 
-        # contrast=None, 
+        # contrast=None, # (n_predictors,) 
         # return_stat='t'
 ):
-    
-    # input map = (n_subjects, n_vertices)
-    # design matrix = (n_subjects, n_predictors)
-    # contrast = (n_predictors,) 
 
     if inputMap.ndim != 2:
         raise ValueError('inputMap must be a 2D array of shape (n_subjects, n_vertices).')
@@ -40,7 +36,9 @@ def mbm_stat_map(
     #     if contrast.shape[0] != n_predictors:
     #         raise ValueError('Length of contrast must match number of predictors in designMatrix.')
 
-    # consider change ttest and anova to use glmw, same as ancova. 
+    # TODO do we need to have the design matrices here? what if the user just inputs their groups
+    # and then we do the testing automagically? 1/2/3 groups ==> ttest_1samp/ttest_ind/f_oneway.
+    # TODO consider change ttest and anova to use glmw, same as ancova. 
     # more consistent. but better to use inbuilt where available?
     if statTest == 'one sample':
         if n_predictors != 1:
@@ -51,9 +49,9 @@ def mbm_stat_map(
             raise ValueError('Design matrix must have exactly two predictors for two sample t-test.')
         statMap = sps.ttest_ind(inputMap[designMatrix[:,0],:], inputMap[designMatrix[:,1],:], axis=0)[0]
     elif statTest == 'one way anova':
-        # TODO : this is a p stat. need to clarify this across all options (return_stat not relevant)
+        # TODO : this is an f stat. need to clarify this across all options (return_stat not relevant)
         groups = [inputMap[designMatrix[:,i],:] for i in range(n_predictors)]
-        statMap = sps.f_oneway(*groups, axis=0)[1]
+        statMap = sps.f_oneway(*groups, axis=0)[0]
     # elif statTest == 'ancova': # home made function, needs to be tested 2026/05/01
     #     statMap = nms.glmw(inputMap, designMatrix, 
     #                        w=np.ones(n_subjects), contrast=contrast, return_stat=return_stat)
@@ -137,6 +135,64 @@ def permutations_shuffle_rows(
     return out
 
 
+# TODO look at speed options for this?
+# is it faster to avoid generating the full permuted maps
+# for one sample: can just flip the sign for each ii at the time it is needed?
+# for two sample can we just shuffle the design matrix 
+# maybe also put the if statement inside the loop if this is the case
+# if it is faster, consider using seedSequence to generate the seeds for each ii
+# then the input seed will be a 'master seed'. 
+# then generate n_permutations daughter seeds, need to all be different, and in reproducible order
+# see eigenstrapping for an example
+# maybe wont make a big difference as n_vertices >> n_subjects probably
+# TODO investigate user inputting a perms matrix (n_subjects, n_permutations) 
+# TODO have a way to turn off the permutations (only do observed)
+# TODO consider outputting perms
+def mbm_generate_stat_maps(
+        maps, # (n_vertices, n_subjects)
+        statDesignMatrix,   # (n_subjects,) or (n_subjects, n_predictors) depending on statTest
+        statTest,           # cant do ancova as there is no contrast
+        n_permutations = 1000,
+        seed = None
+):
+    n_vertices, n_subjects = maps.shape
+    observedStatMap = mbm_stat_map(maps.T, statDesignMatrix, statTest).T # (n_vertices, 1)
+
+    statMapNull = np.empty((n_vertices, n_permutations)) 
+    if statTest == 'one sample': 
+        perms = permutations_flip_sign(n_subjects, n_permutations, seed)
+        for ii in range(n_permutations):
+            permutedMaps = maps.T * perms[:, [ii]] # (n_subjects, n_vertices)
+            statMapNull[:, ii] = mbm_stat_map(permutedMaps, statDesignMatrix, statTest).T # (n_vertices, 1)
+    else: 
+        perms = permutations_shuffle_rows(n_subjects, n_permutations, seed)
+        for ii in range(n_permutations):
+            permutedMaps = maps[:, perms[:, ii]].T # (n_subjects, n_vertices)
+            statMapNull[:, ii] = mbm_stat_map(permutedMaps, statDesignMatrix, statTest).T # (n_vertices, 1)
+
+    return observedStatMap, statMapNull
+
+
+# TODO make into a separate function (reuse for verts and modes)
+# TODO see if this can be vectorized across vertices
+# hmmm GPD is a single parameter fit (kinda - need to check piecewise-ness as param varies) 
+# so maybe the fitting can be done across all vertices simultaneously
+# then the p value estimation can be done across all vertices simultaneously
+# or consider method of moments?
+def mbm_calc_p_vals(
+        observedStatMap, # (n_vertices, 1)
+        statMapNull, # (n_vertices, n_permutations)
+        statPThr = 0.05, # threshold for tail extrapolation with pareto
+): 
+    permPMap = np.zeros(observedStatMap.shape[0], dtype=np.float32)
+    permRevMap = np.zeros(observedStatMap.shape[0], dtype=np.bool_)
+    for ii in range(observedStatMap.shape[0]):
+        permPMap[ii], permRevMap[ii] = mbm_estimate_p_val_tail(
+            statMapNull[ii, :], observedStatMap[ii], statPThr, stop=False)
+      
+    return permPMap, permRevMap
+
+
 # TODO : generate smaller single responsibility functions 
 # ?0. generate permutations (n_subjects, n_permutations). have to see if it is worthwhile 
 # saving all these in memory at the same time for large number of permutations 
@@ -152,64 +208,23 @@ def mbm_example_workflow(
         mass, # (n_vertices, n_vertices)
         statTest,           # cant do ancova as there is no contrast
         statDesignMatrix,   # (n_subjects,) or (n_subjects, n_predictors) depending on statTest
-        statPThr = 0.05, # where the p value threshold for switching to pareto is & also the threshold for significant modes.
+        statPThr = 0.05, # consider making two thresh? for tail estimation and for mode significance?
         statFDR = True, 
         n_modes = None, 
         n_permutations = 1000,
         seed = None
 ): 
     
-    # Format / validate inputs
-    n_vertices, n_subjects = maps.shape
-
-    if n_modes is None:
-        n_modes = emodes.shape[1]
-    elif n_modes > emodes.shape[1]:
-        raise ValueError('n_modes cannot be greater than the number of provided eigenmodes.')
-
     # 0 & 1
     # generate permutations
-    # TODO look at speed options for this?
-    # is it faster to avoid generating the full permuted maps
-    # for one sample: can just flip the sign for each ii at the time it is needed?
-    # for two sample can we just shuffle the design matrix 
-    # if it is faster, consider using seedSequence to generate the seeds for each ii
-    # then the input seed will be a 'master seed'. 
-    # then generate n_permutations daughter seeds, need to all be different, and in reproducible order
-    # see eigenstrapping for an example
-    # maybe wont make a big difference as n_vertices >> n_subjects probably
-    statMapNull = np.empty((n_vertices, n_permutations)) 
-    if statTest == 'one sample': 
-        perms = permutations_flip_sign(n_subjects, n_permutations, seed)
-        for ii in range(n_permutations):
-            permutedMaps = maps.T * perms[:, [ii]] # (n_subjects, n_vertices)
-            statMapNull[:, ii] = mbm_stat_map(permutedMaps, statDesignMatrix, statTest).T # (n_vertices, 1)
-    else: 
-        perms = permutations_shuffle_rows(n_subjects, n_permutations, seed)
-        for ii in range(n_permutations):
-            permutedMaps = maps[:, perms[:, ii]].T # (n_subjects, n_vertices)
-            statMapNull[:, ii] = mbm_stat_map(permutedMaps, statDesignMatrix, statTest).T # (n_vertices, 1)
-
-
-    observedStatMap = mbm_stat_map(maps.T, statDesignMatrix, statTest).T # (n_vertices, 1)
+    observedStatMap, statMapNull = mbm_generate_stat_maps(
+        maps, statDesignMatrix, statTest, n_permutations, seed)
 
     # 2
     # convert observed stat to p values using permutations
-    # TODO make into a separate function (reuse for verts and modes)
-    # TODO see if this can be vectorized across vertices
-    # hmmm GPD is a single parameter fit (kinda - need to check piecewise-ness as param varies) 
-    # so maybe the fitting can be done across all vertices simultaneously
-    # then the p value estimation can be done across all vertices simultaneously
-    # or consdier method of moments?
-    permPMap = np.zeros(n_vertices, dtype=np.float32)
-    permRevMap = np.zeros(n_vertices, dtype=np.bool_)
-    for ii in range(n_vertices):
-        permPMap[ii], permRevMap[ii] = mbm_estimate_p_val_tail(
-            statMapNull[ii, :], observedStatMap[ii], statPThr, stop=False)
-      
-    if statFDR: 
+    permPMap, permRevMap = mbm_calc_p_vals(observedStatMap, statMapNull, statPThr)
+    if statFDR:
         permPMap = fdr_bh(permPMap)
-
 
     # Eigenmode decomposition of observed and null stat maps
     # would decompose_kwargs be needed?
@@ -217,20 +232,9 @@ def mbm_example_workflow(
     betaNull = decompose(statMapNull, emodes=emodes, mass=mass, mode_counts=n_modes) # (n_modes, n_permutations)
 
     # 2
-    eigPBeta = np.zeros(n_modes, dtype=np.float32)
-    eigPRevBeta = np.zeros(n_modes, dtype=np.bool_)
-    for ii in range(n_modes):
-        eigPBeta[ii], eigPRevBeta[ii] = mbm_estimate_p_val_tail(
-            betaNull[ii, :], eigBeta[ii], statPThr, stop=False)
-    
+    eigPBeta, eigPRevBeta = mbm_calc_p_vals(eigBeta, betaNull, statPThr)    
     if statFDR:
         eigPBeta = fdr_bh(eigPBeta)
 
     # Take those above results, extract significant modes, and reconstruct the stat map
     reconMap = emodes @ (eigBeta * (eigPBeta < statPThr))
-
-
-
-
-
-
