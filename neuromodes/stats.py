@@ -10,21 +10,21 @@ from scipy.sparse import csc_matrix, diags
 if TYPE_CHECKING:
     from scipy.spatial.distance import _MetricCallback, _MetricKind
 
-def dotw(A, B, w):
-    """Dot product between corresponding columns (not pairwise)."""
-    W = _process_vertex_areas(w, A.shape[0])
-    return np.sum(A * (W @ B), axis=0)
-
 def gramw(A, B, w):
     """Dot product between all columns (pairwise)."""
     W = _process_vertex_areas(w, A.shape[0])
     return A.T @ (W @ B)
 
+# TODO : consider adding keepdims parameter to many of theses funcs
+def dotw(A, B, w):
+    """Dot product between corresponding columns (not pairwise)."""
+    W = _process_vertex_areas(w, A.shape[0])
+    return np.sum(A * (W @ B), axis=0)
+    
 def ssqw(A, w):
     """Energy (sum of squares) of each column."""
     return dotw(A, A, w)
 
-# TODO : consider adding keepdims parameter
 def meanw(A, w):
     """Area-weighted mean."""
     W = _process_vertex_areas(w, A.shape[0])
@@ -61,8 +61,8 @@ def stdw(A, w):
     """Area-weighted standard deviation."""
     return np.sqrt(varw(A, w))
 
-def normalizew(A, w):
-    """Z-score normalize using area-weighted mean and standard deviation."""
+def zscorew(A, w):
+    """Z-score using area-weighted mean and standard deviation."""
     return demeanw(A, w) / stdw(A, w)
 
 def covw(A, arg2, arg3=None):
