@@ -18,7 +18,6 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
     from scipy.sparse import csc_matrix
     from neuromodes.eigen import _CheckKind
-    from neuromodes.basis import _DecompositionKind
     _PDEKind = Literal["fourier", "ode"]
 
 def sim_nft_waves(
@@ -30,7 +29,6 @@ def sim_nft_waves(
     r: float = 17.4,
     gamma: float = 116.0,
     pde_method: _PDEKind = "fourier",
-    decomp_method: _DecompositionKind = "project",
     mass: csc_matrix | None = None,
     speed_limits: tuple[float, float] | None = (0, 150),
     scaled_hetero: NDArray[floating] | None = None,
@@ -63,11 +61,6 @@ def sim_nft_waves(
     pde_method : str, optional
         Method for solving the wave PDEs. Either ``'fourier'`` or ``'ode'``. Default is
         ``'fourier'``.
-    decomp_method : str, optional
-        The method used to eigendecompose ``ext_input``, either ``'project'`` to project data into a
-        mass-orthonormal space or ``'regress'`` for least-squares fitting. Note that the beta values
-        from ``'regress'`` tend towards those from ``'project'`` when more modes are provided.
-        Default is ``'project'``.
     mass : array-like, optional
         The mass matrix of shape ``(n_verts, n_verts)`` used for the decomposition when method is
         ``'project'``. Default is ``None``.
@@ -94,7 +87,7 @@ def sim_nft_waves(
     Returns
     -------
     np.ndarray
-        Simulated neural activity or BOLD signal of shape ``(n_verts, n_timepoints)``.
+        Simulated neural activity of shape ``(n_verts, n_timepoints)``.
 
     Raises
     ------
@@ -189,7 +182,7 @@ def sim_nft_waves(
         raise ValueError("Either nt or ext_input must be provided.")
 
     # Eigendecompose external input to get modal coefficients over time
-    input_coeffs = decompose(ext_input, emodes, method=decomp_method, mass=mass, checks=False)
+    input_coeffs = decompose(ext_input, emodes, method='project', mass=mass, checks=False)
 
     # Compute activity timeseries for each mode
     _model_wave = _model_wave_fourier if pde_method == 'fourier' else _model_wave_ode
@@ -203,7 +196,6 @@ def balloon_model(
     dt: float,
     emodes: NDArray[floating],
     pde_method: _PDEKind = "fourier",
-    decomp_method: _DecompositionKind = "project",
     mass: csc_matrix | None = None,
     checks: _CheckKind = True,
     **params
@@ -224,11 +216,6 @@ def balloon_model(
     pde_method : str, optional
         Method for solving the balloon PDEs. Either ``'fourier'`` or ``'ode'``. Default is
         ``'fourier'``.
-    decomp_method : str, optional
-        The method used to eigendecompose ``activity``, either ``'project'`` to project data into a
-        mass-orthonormal space or ``'regress'`` for least-squares fitting. Note that the beta values
-        from ``'regress'`` tend towards those from ``'project'`` when more modes are provided.
-        Default is ``'project'``.
     mass : array-like, optional
         The mass matrix of shape (n_verts, n_verts) used for the decomposition when method is
         ``'project'``. Default is ``None``.
@@ -271,7 +258,7 @@ def balloon_model(
             raise ValueError(f"Balloon model parameter '{param_name}' must be a positive number.")
 
     # Eigendecompose activity to get modal coefficients over time
-    activity_coeffs = decompose(activity, emodes, method=decomp_method, mass=mass, checks=checks)
+    activity_coeffs = decompose(activity, emodes, method='project', mass=mass, checks=checks)
 
     # Apply model to each mode's activity timeseries
     _model_balloon = _model_balloon_fourier if pde_method == 'fourier' else _model_balloon_ode

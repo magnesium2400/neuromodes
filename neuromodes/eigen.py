@@ -375,21 +375,21 @@ class EigenSolver(Solver):
             **kwargs
         )
     
-    def reconstruction_error(
+    def recon_error(
         self,
         data: NDArray,
         recon: NDArray,
         **kwargs
     ) -> NDArray[np.floating]:
         """
-        This is a wrapper for :func:`~neuromodes.basis.reconstruction_error`. Note that ``mass``
-        and ``checks`` are passed automatically by the ``EigenSolver`` instance.
+        This is a wrapper for :func:`~neuromodes.basis.recon_error`. Note that ``mass`` and
+        ``checks`` are passed automatically by the ``EigenSolver`` instance.
         """
-        from neuromodes.basis import reconstruction_error
+        from neuromodes.basis import recon_error
         
         self._check_for_emodes()
             
-        return reconstruction_error(
+        return recon_error(
             data=data,
             recon=recon,
             mass=self.mass,
@@ -591,17 +591,18 @@ def is_orthonormal_basis(
     checks: _CheckKind = 'shape'
 ) -> bool:
     """
-    Check if a set of vectors is orthonormal in Euclidean space (i.e., ``emodes.T @ emodes == I``,
-    where ``I`` is an identity matrix) or with respect to a mass matrix (i.e., ``emodes.T @ mass @
-    emodes == I``). Mass-orthonormality is expected for the geometric eigenmodes (see notes).
+    Check if a set of vectors is orthonormal with respect to a mass matrix (i.e., ``emodes.T @ mass
+    @ emodes == I``, where ``I`` is an identity matrix). ``mass = I`` corresponds to Euclidean
+    orthonormality, and an assumption that all vertices in a mesh have equal Voronoi areas/volumes.
+    Mass-orthonormality is expected for the geometric eigenmodes (see notes).
 
     Parameters
     ----------
     emodes : array-like
         The vectors array of shape ``(n_verts, n_modes)``, where n_modes is the number of vectors.
     mass : array-like, optional
-        The mass matrix of shape ``(n_verts, n_verts)``. If ``None``, Euclidean orthonormality is
-        checked. Default is ``None``.
+        The mass matrix of shape ``(n_verts, n_verts)``. If ``None``, an identity matrix is used
+        (Eucliean orthonormality). Default is ``None``.
     atol : float, optional
         Absolute tolerance for the orthonormality check. Default is ``1e-3``.
     rtol : float, optional
@@ -612,8 +613,7 @@ def is_orthonormal_basis(
     Returns
     -------
     bool
-        ``True`` if the set of vectors is orthonormal (Euclidean or mass-orthonormal), ``False``
-        otherwise.
+        ``True`` if the set of vectors is orthonormal, ``False`` otherwise.
 
     Notes
     -----
@@ -670,7 +670,9 @@ class EigenData:
     stiffness: csc_matrix
     scaled_hetero: NDArray[np.floating]
     data: NDArray[np.floating]
-
+    """
+    Helper dataclass for validating and standardising common arguments.
+    """
     def __init__(
         self,
         emodes: NDArray[np.floating] | None = _MISSING, # type: ignore[assignment]
