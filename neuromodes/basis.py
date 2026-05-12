@@ -134,22 +134,22 @@ def decompose(
     
     # Handle NaNs by masking out afflicted vertices (separately for each NaN pattern)
     data_isnan = np.isnan(data_2d)
-    if np.any(data_isnan) and method == 'project':
-        raise ValueError("data contains NaNs; use method='regress' to mask out afflicted vertices "
-                         "prior to decomposition, or consider interpolating missing data.")
-    if np.all(~data_isnan):
-        if method == 'regress':
-            # Keep all vertices
-            masks = np.ones((data_2d.shape[0], 1), dtype=bool)
-            mask_indices = np.zeros(data_2d.shape[1], dtype=int)
-    elif method == 'regress':
+    if np.any(data_isnan):
+        if method == 'project':
+            raise ValueError("data contains NaNs; use method='regress' to mask out afflicted "
+                             "vertices prior to decomposition, or consider interpolating missing "
+                             "data.")
+        # method == 'regress'
         if checks is True or checks == 'maps':
-            warn("NaN values detected in data; these will be disregarded during decomposition by "
-                "masking corresponding vertices from data, emodes, and mass. This may lead to extreme "
-                "values in affected areas of the reconstructed data. Consider instead interpolating"
-                " missing data prior to decomposition.")
+            warn("NaN values detected in data; these will be disregarded during decomposition "
+                    "by masking corresponding vertices from data, emodes, and mass. This may lead "
+                    "to extreme values in affected areas of the reconstructed data. Consider "
+                    "instead interpolating missing data prior to decomposition.")
         masks, mask_indices = np.unique(~data_isnan, axis=1, return_inverse=True)
-
+    elif method == 'regress':
+        # Keep all vertices
+        masks = np.ones((data_2d.shape[0], 1), dtype=bool)
+        mask_indices = np.zeros(data_2d.shape[1], dtype=int)
 
     # TODO : consider adding a method that does fitting/param estimation (like lstsqw) but using 
     # full (consistent) mass matrix (not just vertex areas). solvew?
@@ -191,7 +191,7 @@ def decompose(
                 coeffs_current[:, map_indices] = lstsqw(
                     emodes[mask][:, mode_ids[j]],
                     data_2d[mask][:, map_indices],
-                    w=mass[mask][:, mask]
+                    mass=mass[mask][:, mask]
                 )[0]
             coeffs[j] = coeffs_current.reshape(output_shapes[j])
 
@@ -346,7 +346,7 @@ def recon_error(
     recon_error_2d = np.empty(error_2d_shape, dtype=data.dtype)
     for i in range(data_2d.shape[1]):
         recon_error_2d[i, :] = cdistw(data_2d[:, [i]], recon_3d[:, i, :],
-                                      w=mass, metric=metric, **cdist_kwargs)
+                                      mass=mass, metric=metric, **cdist_kwargs)
 
     recon_error = recon_error_2d.reshape(recon.shape[1:])
     return recon_error

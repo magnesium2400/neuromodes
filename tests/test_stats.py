@@ -3,7 +3,7 @@ import pytest
 from scipy.spatial.distance import cdist, pdist
 from scipy.stats import zscore
 from neuromodes.stats import (gramw, dotw, ssqw, lstsqw, solvew, cdistw, pdistw, meanw, demeanw,
-                              varw, stdw, zscorew, covw, vecnormw, correlationw)
+                              varw, stdw, zscorew, covw, vecnormw)
 
 @pytest.fixture(scope='module')
 def random_data():
@@ -15,143 +15,189 @@ def random_data():
     X = rng.standard_normal(size=(n_verts, n_maps))
     Y = rng.standard_normal(size=(n_verts, n_maps))
 
-    mass = np.eye(n_verts) # identity mass for testing
-    return X, Y, mass
+    eye = np.eye(n_verts) # identity mass for testing
+    noneye = np.arange(1, n_verts + 1)[:, None] * eye
 
-def test_gramw_eye(random_data):
-    """Test that Gram matrix with identity mass is the same as unweighted Gram matrix."""
-    X, Y, mass = random_data
-    gram_w = gramw(X, Y, mass=mass)
-    gram_u = X.T @ Y
-    assert np.allclose(gram_w, gram_u), "Gram matrix with identity mass should be the same as " \
-                                        "unweighted Gram matrix."
+    return X, Y, eye, noneye
 
-def test_dotw_eye(random_data):
-    """Test that dot product with identity mass is the same as unweighted dot product."""
-    X, Y, mass = random_data
-    dot_w = dotw(X, Y, mass=mass)
-    dot_u = np.einsum('ij,ij->j', X, Y)
-    assert np.allclose(dot_w, dot_u), "Dot product with identity mass should be the same as " \
-                                     "unweighted dot product."
-    
-def test_ssqw_eye(random_data):
-    """Test that sum of squares with identity mass is the same as unweighted sum of squares."""
-    X, _, mass = random_data
-    ssq_w = ssqw(X, mass)
-    ssq_u = np.sum(X**2, axis=0)
-    assert np.allclose(ssq_w, ssq_u), "Sum of squares with identity mass should be the same as " \
-                                      "unweighted sum of squares."
-    
-def test_meanw_eye(random_data):
-    """Test that mean with identity mass is the same as unweighted mean."""
-    X, _, mass = random_data
-    mean_w = meanw(X, mass=mass)
-    mean_u = np.mean(X, axis=0)
-    assert np.allclose(mean_w, mean_u), "Mean with identity mass should be the same as " \
-                                        "unweighted mean."
-    
-def test_varw_eye(random_data):
-    """Test that variance with identity mass is the same as unweighted variance."""
-    X, _, mass = random_data
-    var_w = varw(X, mass=mass)
-    var_u = np.var(X, axis=0, ddof=0)
-    assert np.allclose(var_w, var_u), "Variance with identity mass should be the same as " \
-                                      "unweighted variance."
-    
-def test_stdw_eye(random_data):
-    """Test that standard deviation with identity mass is the same as unweighted standard deviation."""
-    X, _, mass = random_data
-    std_w = stdw(X, mass=mass)
-    std_u = np.std(X, axis=0)
-    assert np.allclose(std_w, std_u), "Standard deviation with identity mass should be the same " \
-                                      "as unweighted standard deviation."
-    
-def test_zscorew_eye(random_data):
-    """Test that z-score with identity mass is the same as unweighted z-score."""
-    X, _, mass = random_data
-    zscore_w = zscorew(X, mass=mass)
-    zscore_u = zscore(X)
-    assert np.allclose(zscore_w, zscore_u), "Z-score with identity mass should be the same as " \
-                                            "unweighted z-score."
+class TestEye:
+    def test_gramw_eye(self, random_data):
+        X, Y, eye, noneye = random_data
+        gram_w = gramw(X, Y, mass=eye)
+        gram_u = X.T @ Y
+        assert np.allclose(gram_w, gram_u), "Gram matrix with identity mass should be the same " \
+                                            "as unweighted Gram matrix."
+        gram_wn = gramw(X, Y, mass=noneye)
+        assert not np.allclose(gram_wn, gram_w), "Gram matrix with non-identity mass should not " \
+                                                 "be the same " \
 
-def test_correlationw_eye(random_data):
-    """Test that correlation with identity mass is the same as unweighted correlation."""
-    X, Y, mass = random_data
-    corr_w = correlationw(X, Y, mass=mass)
-    corr_u = np.corrcoef(X, Y, rowvar=False)[:X.shape[1], X.shape[1]:]
-    assert np.allclose(corr_w, corr_u), "Correlation with identity mass should be the same as " \
-                                        "unweighted correlation."
+    def test_dotw_eye(self, random_data):
+        X, Y, eye, noneye = random_data
+        dot_w = dotw(X, Y, mass=eye)
+        dot_u = np.einsum('ij,ij->j', X, Y)
+        assert np.allclose(dot_w, dot_u), "Dot product with identity mass should be the same as " \
+                                          "unweighted dot product."
+        
+        dot_wn = dotw(X, Y, mass=noneye)
+        assert not np.allclose(dot_wn, dot_w), "Dot product with non-identity mass should not " \
+                                               "be the same as unweighted dot product."
+    def test_ssqw_eye(self, random_data):
+        X, _, eye, noneye = random_data
+        ssq_w = ssqw(X, mass=eye)
+        ssq_u = np.sum(X**2, axis=0)
+        assert np.allclose(ssq_w, ssq_u), "Sum of squares with identity mass should be the same " \
+                                          "as unweighted sum of squares."
+        
+        ssq_wn = ssqw(X, mass=noneye)
+        assert not np.allclose(ssq_wn, ssq_w), "Sum of squares with non-identity mass should not " \
+                                               "be the same as unweighted sum of squares."
+        
+    def test_meanw_eye(self, random_data):
+        X, _, eye, noneye = random_data
+        mean_w = meanw(X, mass=eye)
+        mean_u = np.mean(X, axis=0)
+        assert np.allclose(mean_w, mean_u), "Mean with identity mass should be the same as " \
+                                            "unweighted mean."
+        
+        mean_wn = meanw(X, mass=noneye)
+        assert not np.allclose(mean_wn, mean_w), "Mean with non-identity mass should not be the " \
+                                                 "same as unweighted mean."
+        
+    def test_varw_eye(self, random_data):
+        X, _, eye, noneye = random_data
+        var_w = varw(X, mass=eye)
+        var_u = np.var(X, axis=0, ddof=0)
+        assert np.allclose(var_w, var_u), "Variance with identity mass should be the same as " \
+                                          "unweighted variance."
+        
+        var_wn = varw(X, mass=noneye)
+        assert not np.allclose(var_wn, var_w), "Variance with non-identity mass should not be " \
+                                               "the same as unweighted variance."
+        
+    def test_stdw_eye(self, random_data):
+        X, _, eye, noneye = random_data
+        std_w = stdw(X, mass=eye)
+        std_u = np.std(X, axis=0)
+        assert np.allclose(std_w, std_u), "Standard deviation with identity mass should be the " \
+                                          "same as unweighted standard deviation."
+        
+        std_wn = stdw(X, mass=noneye)
+        assert not np.allclose(std_wn, std_w), "Standard deviation with non-identity mass should " \
+                                               "not be the same as unweighted standard deviation."
+        
+    def test_zscorew_eye(self, random_data):
+        X, _, eye, noneye = random_data
+        zscore_w = zscorew(X, mass=eye)
+        zscore_u = zscore(X)
+        assert np.allclose(zscore_w, zscore_u), "Z-score with identity mass should be the same " \
+                                                "as unweighted z-score."
+        
+        zscore_wn = zscorew(X, mass=noneye)
+        assert not np.allclose(zscore_wn, zscore_w), "Z-score with non-identity mass should not " \
+                                                     "be the same as unweighted z-score."
 
-def test_momentw_eye(random_data):
-    # TODO: decide whether/how to test this
-    pass
+    def test_covw_eye(self, random_data):
+        X, Y, eye, noneye = random_data
+        cov_w = covw(X, Y, mass=eye)
+        cov_u = np.cov(X, Y, rowvar=False, bias=True)[:X.shape[1], X.shape[1]:]
+        assert np.allclose(cov_w, cov_u), "Covariance with identity mass should be the same as " \
+                                          "unweighted covariance (without Bessel correction)."
+        
+        cov_wn = covw(X, Y, mass=noneye)
+        assert not np.allclose(cov_wn, cov_w), "Covariance with non-identity mass should not be " \
+                                               "the same as unweighted covariance."
 
-def test_covw_eye(random_data):
-    """Test that covariance with identity mass is the same as unweighted covariance."""
-    X, Y, mass = random_data
-    cov_w = covw(X, Y, mass=mass)
-    cov_u = np.cov(X, Y, rowvar=False)[:X.shape[1], X.shape[1]:]
-    assert np.allclose(cov_w, cov_u), "Covariance with identity mass should be the same as " \
-                                      "unweighted covariance."
+    def test_vecnormw_eye(self, random_data):
+        X, _, eye, noneye = random_data
+        norm_w = vecnormw(X, mass=eye)
+        norm_u = np.linalg.norm(X, axis=0)
+        assert np.allclose(norm_w, norm_u), "Vector norm with identity mass should be the same " \
+                                            "as unweighted vector norm."
+        
+        norm_wn = vecnormw(X, mass=noneye)
+        assert not np.allclose(norm_wn, norm_w), "Vector norm with non-identity mass should not " \
+                                                 "be the same as unweighted vector norm."
 
-def test_covw_unbiased_eye(random_data):
-    """Test that unbiased covariance with identity mass matches NumPy's default covariance."""
-    X, Y, mass = random_data
-    cov_w = covw(X, Y, mass=mass, bias=False)
-    cov_u = np.cov(X, Y, bias=False, rowvar=False)[:X.shape[1], X.shape[1]:]
-    assert np.allclose(cov_w, cov_u), "Unbiased covariance with identity mass should match " \
-                                      "NumPy's default covariance."
+    def test_demeanw_eye(self, random_data):
+        X, _, eye, noneye = random_data
+        demean_w = demeanw(X, mass=eye)
+        demean_u = X - np.mean(X, axis=0)
+        assert np.allclose(demean_w, demean_u), "Demean with identity mass should be the same as " \
+                                                "unweighted demean."
+        
+        demean_wn = demeanw(X, mass=noneye)
+        assert not np.allclose(demean_wn, demean_w), "Demean with non-identity mass should not " \
+                                                     "be the same as unweighted demean."
+        
+    def test_lstsqw_eye(self, random_data):
+        X, Y, eye, noneye = random_data
+        lstsq_w = lstsqw(X, Y, mass=eye)[0]
+        lstsq_u = np.linalg.lstsq(X, Y, rcond=None)[0]
+        assert np.allclose(lstsq_w, lstsq_u), "Least squares with identity mass should be the " \
+                                              "same as unweighted least squares."
+        
+        lstsq_wn = lstsqw(X, Y, mass=noneye)[0]
+        assert not np.allclose(lstsq_wn, lstsq_w), "Least squares with non-identity mass should " \
+                                                   "not be the same as unweighted least squares."
 
-def test_vecnormw_eye(random_data):
-    """Test that vector norm with identity mass is the same as unweighted vector norm."""
-    X, _, mass = random_data
-    norm_w = vecnormw(X, mass=mass)
-    norm_u = np.linalg.norm(X, axis=0)
-    assert np.allclose(norm_w, norm_u), "Vector norm with identity mass should be the same as " \
-                                        "unweighted vector norm."
-    
-def test_demeanw_eye(random_data):
-    """Test that demean with identity mass is the same as unweighted demean."""
-    X, _, mass = random_data
-    demean_w = demeanw(X, mass=mass)
-    demean_u = X - np.mean(X, axis=0)
-    assert np.allclose(demean_w, demean_u), "Demean with identity mass should be the same as " \
-                                            "unweighted demean."
-    
-def test_lstsqw_eye(random_data):
-    """Test that least squares with identity mass is the same as unweighted least squares."""
-    X, Y, mass = random_data
-    lstsq_w = lstsqw(X, Y, mass=mass)[0]
-    lstsq_u = np.linalg.lstsq(X, Y, rcond=None)[0]
-    assert np.allclose(lstsq_w, lstsq_u), "Least squares with identity mass should be the same " \
-                                          "as unweighted least squares."\
+    def test_solvew_eye(self, random_data):
+        X, Y, eye, noneye = random_data
 
-def test_solvew_eye(random_data):
-    """Test that solve with identity mass is the same as unweighted solve."""
-    X, Y, mass = random_data
+        solve_w = solvew(X, Y, mass=eye)
+        solve_u = np.linalg.solve(X.T @ X, X.T @ Y)
+        assert np.allclose(solve_w, solve_u), "Solve with identity mass should be the same as " \
+                                              "unweighted solve."
+        
+        solve_wn = solvew(X, Y, mass=noneye)
+        assert not np.allclose(solve_wn, solve_w), "Solve with non-identity mass should not be " \
+                                                   "the same as unweighted solve."
+        
+    def test_cdistw_eye(self, random_data):
+        X, Y, eye, noneye = random_data
+        for metric in ['euclidean', 'sqeuclidean', 'cosine', 'correlation']:
+            cdist_w = cdistw(X, Y, mass=eye, metric=metric)
+            cdist_u = cdist(X.T, Y.T, metric=metric)
+            assert np.allclose(cdist_w, cdist_u), "Pairwise distances with identity mass should " \
+                                                  "be the same as unweighted pairwise distances " \
+                                                  f"for metric '{metric}'."
+            
+            cdist_wn = cdistw(X, Y, mass=noneye, metric=metric)
+            assert not np.allclose(cdist_wn, cdist_w), (
+                "Pairwise distances with non-identity mass should not be the same as unweighted "
+                f"pairwise distances for metric '{metric}'."
+            )
 
-    solve_w = solvew(X, Y, mass=mass)
-    solve_u = np.linalg.solve(X.T @ X, X.T @ Y)
-    assert np.allclose(solve_w, solve_u), "Solve with identity mass should be the same as " \
-                                          "unweighted solve."
-    
-def test_cdistw_eye(random_data):
-    """Test that pairwise distances with identity mass are the same as unweighted pairwise distances."""
-    X, Y, mass = random_data
-    for metric in ['euclidean', 'sqeuclidean', 'cosine', 'correlation']:
-        cdist_w = cdistw(X, Y, mass=mass, metric=metric)
-        cdist_u = cdist(X.T, Y.T, metric=metric)
-        assert np.allclose(cdist_w, cdist_u), "Pairwise distances with identity mass should be " \
-                                              "the same as unweighted pairwise distances for " \
-                                              f"metric '{metric}'."
-    
-def test_pdistw_eye(random_data):
-    """Test that pairwise distances with identity mass are the same as unweighted pairwise distances."""
-    X, _, mass = random_data
+    def test_pdistw_eye(self, random_data):
+        X, _, eye, noneye = random_data
 
-    for metric in ['euclidean', 'sqeuclidean', 'cosine', 'correlation']:
-        pdist_w = pdistw(X, mass=mass, metric=metric)
-        pdist_u = pdist(X.T, metric=metric)
-        assert np.allclose(pdist_w, pdist_u), "Pairwise distances with identity mass should be " \
-                                              "the same as unweighted pairwise distances for " \
-                                              f"metric '{metric}'."
+        for metric in ['euclidean', 'sqeuclidean', 'cosine', 'correlation']:
+            pdist_w = pdistw(X, mass=eye, metric=metric)
+            pdist_u = pdist(X.T, metric=metric)
+            assert np.allclose(pdist_w, pdist_u), "Pairwise distances with identity mass should " \
+                                                  "be the same as unweighted pairwise distances " \
+                                                  f"for metric '{metric}'."
+            
+            pdist_wn = pdistw(X, mass=noneye, metric=metric)
+            assert not np.allclose(pdist_wn, pdist_w), (
+                "Pairwise distances with non-identity mass should not be the same as unweighted "
+                f"pairwise distances for metric '{metric}'."
+            )
+
+class TestShapes:
+    def test_dotw_ssqw_3d(self, random_data):
+        X, Y, eye, noneye = random_data
+        X3 = np.stack([X, X + 1.0], axis=-1)
+        Y3 = np.stack([Y, Y - 1.0], axis=-1)
+
+        dot_w = dotw(X3, Y3, mass=eye)
+        dot_u = np.einsum('vij,vij->ij', X3, Y3)
+        assert dot_w.shape == X3.shape[1:]
+        assert np.allclose(dot_w, dot_u)
+
+        dot_wn = dotw(X3, Y3, mass=noneye)
+        assert not np.allclose(dot_wn, dot_w)
+
+        ssq_w = ssqw(X3, mass=eye)
+        ssq_u = np.sum(X3**2, axis=0)
+        assert ssq_w.shape == X3.shape[1:]
+        assert np.allclose(ssq_w, ssq_u)

@@ -10,7 +10,6 @@ import numpy as np
 from typing import TYPE_CHECKING
 from warnings import warn
 from scipy.spatial.distance import squareform, cdist
-from scipy.stats import rankdata
 from scipy.sparse import csc_matrix, diags
 
 if TYPE_CHECKING:
@@ -30,32 +29,42 @@ def gramw(
         B = A
     return A.T @ (mass @ B)
 
-# TODO : consider adding keepdims parameter to many of theses funcs
-# TODO : consider changing to dotw(A, mass), where A can be A = [A_1, A_2]
+# TODO: ensure that all functions support nD input, not just 2D
 def dotw(
     A: NDArray[floating],
     B: NDArray[floating],
-    mass: csc_matrix | NDArray[floating]
+    mass: csc_matrix | NDArray[floating],
+    keepdims: bool = False
 ) -> NDArray[floating]:
-    """Dot product between corresponding columns (not pairwise)."""
+    """Dot product between corresponding brain maps (not pairwise).
+    """
+    if A.shape != B.shape:
+        raise ValueError(f"A and B must have matching shapes; got {A.shape} and {B.shape}.")
+
     mass = _process_vertex_areas(mass, A.shape[0])
-    return np.sum(A * (mass @ B), axis=0)
+    A_2d = A.reshape(A.shape[0], -1)
+    B_2d = B.reshape(B.shape[0], -1)
+    out = np.sum(A_2d * (mass @ B_2d), axis=0).reshape(A.shape[1:])
+    return np.expand_dims(out, axis=0) if keepdims else out
 
 def ssqw(
     A: NDArray[floating],
-    mass: csc_matrix | NDArray[floating]
+    mass: csc_matrix | NDArray[floating],
+    keepdims: bool = False
 ) -> NDArray[floating]:
     """Energy (sum of squares) of each column."""
-    return dotw(A, A, mass=mass)
+    return dotw(A, A, mass=mass, keepdims=keepdims)
 
 def meanw(
     A: NDArray[floating],
-    mass: csc_matrix | NDArray[floating]
+    mass: csc_matrix | NDArray[floating],
+    keepdims: bool = False
 ) -> float:
-    """Area-weighted mean."""
-    mass = _process_vertex_areas(mass, A.shape[0])
-    areas = np.asarray(mass.sum(axis=1))
-    return (areas * A).sum(axis=0) / areas.sum()
+    """Area-weighted mean. Note that this is equivalent to the more general
+    sum(mass @ A) / mass.sum()."""
+    areas = _mass_to_areas(mass, A.shape[0])
+    out = np.average(A, axis=0, weights=areas)
+    return out[None, :] if keepdims else out  # TODO: test for A.ndim /= 2 cases
 
 def demeanw(
     A: NDArray[floating],
@@ -66,37 +75,40 @@ def demeanw(
 
 def varw(
     A: NDArray[floating],
-    mass: csc_matrix | NDArray[floating]
+    mass: csc_matrix | NDArray[floating],
+    keepdims: bool = False
 ) -> float:
     """Area-weighted variance."""
     mass = _process_vertex_areas(mass, A.shape[0])
     B = demeanw(A, mass)
-    return ssqw(B, mass) / mass.sum()
+    out = ssqw(B, mass) / mass.sum()
+    return out[None, :] if keepdims else out  # TODO: test for A.ndim /= 2 cases
 
 def momentw(
     A: NDArray[floating],
     mass: csc_matrix | NDArray[floating],
-    order: int
+    order: int,
+    keepdims: bool = False
 ) -> float:
     """Area-weighted statistical moment of a given order."""
     if order == 1:
         return np.zeros(A.shape[1])
     elif order == 2:
-        return varw(A, mass)
+        return varw(A, mass, keepdims=keepdims)
     else:
         # Approximate by lumping
-        mass = _process_vertex_areas(mass, A.shape[0])
-        B = demeanw(A, mass)
+        areas = _mass_to_areas(mass, A.shape[0])
+        B = demeanw(A, areas)
         # Sum rows of the sparse matrix to get a lumped vector, safely flattened
-        areas = np.asarray(mass.sum(axis=1))
-        return np.sum(areas * (B ** order)) / areas.sum()
+        return meanw(B ** order, areas, keepdims=keepdims)
 
 def stdw(
     A: NDArray[floating],
-    mass: csc_matrix | NDArray[floating]
+    mass: csc_matrix | NDArray[floating],
+    keepdims: bool = False
 ) -> float:
     """Area-weighted standard deviation."""
-    return np.sqrt(varw(A, mass))
+    return np.sqrt(varw(A, mass, keepdims=keepdims))
 
 def zscorew(
     A: NDArray[floating],
@@ -109,47 +121,44 @@ def covw(
     A: NDArray[floating],
     B: NDArray[floating] | None = None,
     *,
-    mass: csc_matrix | NDArray[floating],
-    bias: bool = False
+    mass: csc_matrix | NDArray[floating]
 ) -> NDArray[floating]:
     """
     Weighted covariance.
     Usage: covw(A, mass=w) computes covariance of A with itself.
            covw(A, B, mass=w) computes cross-covariance between A and B.
-    If bias is False, apply the standard weighted Bessel correction for diagonal mass matrices.
+    No bias correction is applied, equivalent to np.cov(..., bias=True). Since mesh vertices are not
+    IID samples and maps typically display spatial autocorrelation, Bessel's N-1 correction is not
+    appropriate.
     """
     mass = _process_vertex_areas(mass, A.shape[0])
-    areas = np.asarray(mass.sum(axis=1)).ravel()
+    areas = _mass_to_areas(mass, A.shape[0])
     total_area = areas.sum()
     
-    A_d = demeanw(A, mass)
-    if B is None:
-        gram = gramw(A_d, mass=mass)
-    else:
-        B_d = demeanw(B, mass)
-        gram = gramw(A_d, B_d, mass=mass)
-
-    norm = total_area
-    if not bias:
-        norm -= (areas @ areas) / total_area
-    return gram / norm
+    A_d = demeanw(A, areas)
+    B_d = demeanw(B, areas) if B is not None else A_d
+    gram = gramw(A_d, B_d, mass=mass)
+    
+    return gram / total_area
 
 def vecnormw(
     A: NDArray[floating],
     mass: csc_matrix | NDArray[floating],
-    p: int = 2
+    p: int = 2,
+    keepdims: bool = False
 ) -> NDArray[floating]:
     """Calculates the area-weighted L^p norm of spatial maps."""
     if p == 2: # Exact (well-defined)
-        return np.sqrt(ssqw(A, mass))
+        return np.sqrt(ssqw(A, mass, keepdims=keepdims))
     
     elif p == np.inf: # Exact (ignores the mass matrix)
-        return np.max(np.abs(A), axis=0)
+        out = np.max(np.abs(A), axis=0)
+        return out[None, :] if keepdims else out
     
     else: # Approximate by lumping
-        mass = _process_vertex_areas(mass, A.shape[0])
-        areas = np.asarray(mass.sum(axis=1))
-        return np.sum(areas * (np.abs(A) ** p), axis=0) ** (1 / p)
+        areas = _mass_to_areas(mass, A.shape[0])
+        out = np.sum(areas * (np.abs(A) ** p), axis=0) ** (1 / p)
+        return out[None, :] if keepdims else out
 
 def cdistw(
     X: NDArray[floating],
@@ -160,9 +169,6 @@ def cdistw(
     """Pairwise distance between rows of X and Y, accounting for mass matrix. Some functions support
     exact calculation (these have been reimplemented); some functions are approximated by lumping
     (scipy.spatial.distance.cdist with weights)."""
-    
-    mass = _process_vertex_areas(mass, X.shape[0])
-    
     # Reimplement these to support unlumped mass matrix
     if metric == 'sqeuclidean':
         D = ssqw(X, mass)[:, None] + ssqw(Y, mass)[None, :] - 2 * gramw(X, Y, mass=mass)
@@ -194,19 +200,6 @@ def pdistw(
     D2 = cdistw(X, X, mass, metric)
     np.fill_diagonal(D2, 0) # Ensures exact 0 on diagonal
     return squareform(D2, checks=False)
-
-def correlationw(
-    XA: NDArray[floating],
-    XB: NDArray[floating],
-    mass: csc_matrix | NDArray[floating],
-    metric: str = 'pearsonr'
-) -> NDArray[floating]:    
-    if metric=='spearmanr':
-        XA = rankdata(XA, axis=0)
-        XB = rankdata(XB, axis=0)
-    elif metric != 'pearsonr': 
-        raise ValueError(f"Invalid metric '{metric}'; must be 'pearsonr' or 'spearmanr'.")
-    return 1 - cdistw(XA, XB, mass=mass, metric='correlation')
 
 def solvew(
     A: NDArray[floating],
@@ -262,7 +255,8 @@ def _process_vertex_areas(
         elif mass_arr.ndim == 1 or mass_arr.shape[0] == 1 or mass_arr.shape[1] == 1:
             output = diags(np.ravel(mass_arr), format='csc')
         else: 
-            raise ValueError(f"Mass matrix has invalid shape: {mass_arr.shape} (should be square or vector).")
+            raise ValueError(f"Mass matrix has invalid shape: {mass_arr.shape} (should be square "
+                             "or vector).")
 
     elif isinstance(mass, csc_matrix) and mass.shape is not None: # appease: pyright
         if mass.shape[0] == mass.shape[1]: 
@@ -270,10 +264,12 @@ def _process_vertex_areas(
         elif mass.shape[0] == 1 or mass.shape[1] == 1:
             output = diags(mass.toarray().flatten(), format='csc')
         else: 
-            raise ValueError(f"Sparse mass matrix has invalid shape: {mass.shape} (should be square or vector).")
+            raise ValueError(f"Sparse mass matrix has invalid shape: {mass.shape} (should be "
+                             "square or vector).")
             
     else:
-        raise TypeError("mass must be a 1D array of vertex areas, a 2D mass matrix, or a sparse matrix.")
+        raise TypeError("mass must be a 1D array of vertex areas, a 2D mass matrix, or a sparse "
+                        "matrix.")
 
     output = csc_matrix(output)
     
@@ -282,6 +278,7 @@ def _process_vertex_areas(
     elif output.shape[0] != output.shape[1]:
         raise ValueError(f"Mass matrix must be square; got shape {output.shape}.")
     if n_verts is not None and output.shape != (n_verts, n_verts):
-        raise ValueError(f"Mass matrix has invalid shape: {output.shape} (should be ({n_verts}, {n_verts})).")
+        raise ValueError(f"Mass matrix has invalid shape: {output.shape} (should be ({n_verts}, "
+                         f"{n_verts})).")
 
     return output

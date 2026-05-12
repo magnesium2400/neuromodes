@@ -100,6 +100,8 @@ def test_sim_nft_waves_methods_bold(solver):
         assert np.corrcoef(bold_fourier[:, t], bold_ode[:, t])[0, 1] > 0.6, \
             f'Fourier and ODE BOLD solutions are not correlated at r>.6 at t={t}.'
         
+# TODO: add test that BOLD FC is very similar to neural FC
+        
 def test_gen_noise_reproducibility():
     seed = 0
     noise1 = _gen_noise(5, 10, seed=seed)
