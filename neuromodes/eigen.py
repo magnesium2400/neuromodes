@@ -468,6 +468,47 @@ class EigenSolver(Solver):
             checks='maps',
             **kwargs
         )
+    
+    def truncate_emodes(
+        self,
+        data: NDArray[np.floating],
+        **kwargs
+    ) -> int | NDArray[np.integer]:
+        """
+        This is a wrapper for :func:`~neuromodes.eigen.truncate_emodes`. Note that ``geometry``,
+        ``mass``, ``stiffness``, ``emodes``, ``evals``, and ``checks`` are passed automatically by
+        the ``EigenSolver`` instance.
+        """
+        return truncate_emodes(
+            data=data,
+            geometry=self.geometry,
+            mass=self.mass,
+            stiffness=self.stiffness,
+            emodes=self.emodes,
+            evals=self.evals,
+            checks='maps',
+            **kwargs
+        )
+    
+    def estimate_fwhm(
+        self,
+        data: NDArray[np.floating],
+        **kwargs
+    ) -> float | NDArray[np.floating]:
+        """
+        This is a wrapper for :func:`~neuromodes.eigen.estimate_fwhm`. Note that `geometry`, `mass`,
+        `stiffness`, and `checks` are passed automatically by the `EigenSolver` instance.
+        """
+        return estimate_fwhm(
+            data=data,
+            geometry=self.geometry,
+            mass=self.mass,
+            stiffness=self.stiffness,
+            emodes=self.emodes,
+            evals=self.evals,
+            checks='maps',
+            **kwargs
+        )
 
 def scale_hetero(
     hetero: NDArray[np.floating],
@@ -614,6 +655,7 @@ def truncate_emodes(
     evals: NDArray[np.floating] | None = None,
     emodes: NDArray[np.floating] | None = None,
     output: str = 'group',
+    checks: bool = True,
     threshold_kwargs: dict | None = None
 ) -> int | NDArray[np.integer]:
     from neuromodes.basis import decompose, reconstruct
@@ -628,6 +670,11 @@ def truncate_emodes(
         raise ValueError(f"emodes and mass must be provided when using method='{method}'.")
     if method in ['eigenvalue', 'wavelength', 'fwhm'] and evals is None:
         raise ValueError(f"evals must be provided when using method='{method}'.")
+    if checks is not False:
+        ved = EigenData(geometry=geometry, mass=mass, stiffness=stiffness, evals=evals,
+                        emodes=emodes, checks=checks)
+        geometry, mass, stiffness, evals, emodes = \
+            ved.geometry, ved.mass, ved.stiffness, ved.evals, ved.emodes
 
     # Prelims
     vf = np.asarray(data, copy=True)
@@ -704,7 +751,7 @@ def estimate_fwhm(
     method: Literal['wb', 'fem'] = 'fem',
     roi_mask: NDArray[np.bool_] | None = None,
     checks: bool = True
-) -> float:
+) -> float | NDArray[np.floating]:
     # Format / validate inputs
     if not isinstance(geometry, (type(None), TriaMesh, EigenSolver)):
         raise TypeError("geometry must be a TriaMesh, EigenSolver, or None.")
@@ -728,7 +775,7 @@ def _estimate_fwhm_wb(
     data: NDArray[np.floating],
     geometry: TriaMesh,
     roi_mask: NDArray[np.bool_] | None = None
-) -> float:
+) -> float | NDArray[np.floating]:
     """Equivalent to wb_command -metric-estimate-fwhm"""
     # Prelims
     rois = np.ones(len(geometry.v), dtype=bool) if roi_mask is None else np.asarray(roi_mask, dtype=bool)
@@ -752,7 +799,7 @@ def _estimate_fwhm_fem(
     mass: csc_matrix,
     stiffness: csc_matrix,
     roi_mask: NDArray[np.bool_] | None = None
-) -> float:
+) -> float | NDArray[np.floating]:
     if roi_mask is not None: # subset stiffness, mass, and data to roi (set diags to correct values)
         idx = np.asarray(roi_mask, dtype=bool)
         vf = data[idx, ...]
@@ -787,7 +834,7 @@ def _estimate_fwhm_fem_local(
     data: NDArray[np.floating],
     mass: csc_matrix,
     stiffness: csc_matrix
-) -> float:
+) -> NDArray[np.floating]:
     # TODO: change to demeanw / stats.py etc
     vf = data - np.average(data, weights=mass.diagonal(), axis=0) # set (mass-weighted) mean to 0
     Vm = vf * (mass @ vf)
