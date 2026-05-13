@@ -607,7 +607,7 @@ def is_orthonormal_basis(
 def truncate_emodes(
     data: NDArray[np.floating],
     threshold: float | NDArray[np.floating] | None = None,
-    threshold_method: str = 'decompose',
+    method: str = 'decompose',
     geometry: TriaMesh | None = None,
     mass: csc_matrix | None = None,
     stiffness: csc_matrix | None = None,
@@ -618,20 +618,31 @@ def truncate_emodes(
 ) -> int | NDArray[np.integer]:
     from neuromodes.basis import decompose, reconstruct
 
+    # Format / validate arguments
+    if output not in ['mode', 'group']:
+        raise ValueError("output must be either 'mode' or 'group'.")
+    if method not in ['decompose', 'reconstruct', 'eigenvalue', 'wavelength', 'fwhm']:
+        raise ValueError("method must be one of 'decompose', 'reconstruct', 'eigenvalue', "
+                         "'wavelength', or 'fwhm'.")
+    if method in ['decompose', 'reconstruct'] and (emodes is None or mass is None):
+        raise ValueError(f"emodes and mass must be provided when using method='{method}'.")
+    if method in ['eigenvalue', 'wavelength', 'fwhm'] and evals is None:
+        raise ValueError(f"evals must be provided when using method='{method}'.")
+
     # Prelims
     vf = np.asarray(data, copy=True)
     if vf.ndim == 1:
         vf = vf[:, np.newaxis] # ensure 2d for consistent processing
     n_maps = vf.shape[1]
     
-    physical_threshold = threshold_method in ['eigenvalue', 'wavelength', 'fwhm']
+    is_method_physical = method in ['eigenvalue', 'wavelength', 'fwhm']
 
     if threshold is None:
-        if physical_threshold:
+        if is_method_physical:
             fwhm = estimate_fwhm(vf, geometry, mass, stiffness)
-            thresholds = _convert_spatial_scale(fwhm, input='fwhm', output=threshold_method)
+            thresholds = _convert_spatial_scale(fwhm, input='fwhm', output=method)
         else: 
-            raise ValueError(f"Threshold must be provided for threshold_method={threshold_method}.")
+            raise ValueError(f"Threshold must be provided for method={method}.")
     elif np.isscalar(threshold):
         thresholds = np.full(n_maps, threshold)
     elif len(threshold) != n_maps:
@@ -643,54 +654,44 @@ def truncate_emodes(
         threshold_kwargs = {}
 
     # Get data to threshold against
-    if threshold_method == 'decompose':
-        if emodes is None or mass is None:
-            raise ValueError(f"emodes and mass must be provided when using threshold_method='{threshold_method}'.")
-        betas = decompose(vf, emodes=emodes, mass=mass, **threshold_kwargs)
-        ascending_data = np.cumsum(betas**2, axis=0) # user needs to demean if desired
-        total_power = np.sum(vf * (mass @ vf), axis=0) # = np.diag(vf.T @ mass @ vf) (TODO: use stats.ssqw)
-        thresholds = total_power * (1 - thresholds)
-    elif threshold_method == 'reconstruct':
-        if emodes is None or mass is None:
-            raise ValueError(f"emodes and mass must be provided when using threshold_method='{threshold_method}'.")
-        # TODO : change to new reconstruct
-        # recons = reconstruct(data=vf, emodes=emodes, mass=mass, mode_counts=np.arange(1, emodes.shape[1]+1))
-        # errors = reconstruction_error(vf, recon=recons, mass=mass, **threshold_kwargs)
-        _, errors, _ = reconstruct(data=vf, emodes=emodes, mass=mass, mode_counts=np.arange(1, emodes.shape[1]+1), **threshold_kwargs)
-        ascending_data = -errors.T # make this (n_modes, n_maps)
-        thresholds = -thresholds
-    elif threshold_method == 'eigenvalue':
-        if evals is None:
-            raise ValueError(f"evals must be provided when using threshold_method='{threshold_method}'.")
-        ascending_data = np.broadcast_to(evals[:, np.newaxis], (len(evals), n_maps))
-    elif threshold_method == 'fwhm': 
-        if evals is None:
-            raise ValueError(f"evals must be provided when using threshold_method='{threshold_method}'.")
-        data = np.full(len(evals), np.inf) # default to inf for zero evals to avoid divide-by-zero issues
-        data[1:] = convert_from_eigenvalue(evals[1:], output=threshold_method)
-        ascending_data = -np.broadcast_to(data[:, np.newaxis], (len(evals), n_maps))
-        thresholds = -thresholds
-    else: 
-        raise ValueError("Incorrect threshold_method specified.")
+    match method:
+        case 'decompose':
+            coeffs = decompose(vf, emodes=emodes, mass=mass, **threshold_kwargs)
+            ascending_data = np.cumsum(coeffs**2, axis=0) # user needs to demean if desired
+            total_power = np.sum(vf * (mass @ vf), axis=0) # = np.diag(vf.T @ mass @ vf) (TODO: use stats.ssqw)
+            thresholds = total_power * (1 - thresholds)
+        case 'reconstruct':
+            # TODO : change to new reconstruct
+            # recons = reconstruct(data=vf, emodes=emodes, mass=mass, mode_counts=np.arange(1, emodes.shape[1]+1))
+            # errors = reconstruction_error(vf, recon=recons, mass=mass, **threshold_kwargs)
+            _, errors, _ = reconstruct(data=vf, emodes=emodes, mass=mass, mode_counts=np.arange(1, emodes.shape[1]+1), **threshold_kwargs)
+            ascending_data = -errors.T # make this (n_modes, n_maps)
+            thresholds = -thresholds
+        case 'eigenvalue' | 'wavelength' | 'fwhm':
+            data = np.full(len(evals), np.inf) # default to inf for zero evals to avoid divide-by-zero issues
+            if method == 'eigenvalue':
+                data = evals
+            else:
+                data[1:] = convert_from_evals(evals[1:], output=method)
+            ascending_data = -np.broadcast_to(data[:, np.newaxis], (len(evals), n_maps))
+            thresholds = -thresholds
 
     # Find the required mode for each map
     # If the threshold is physical, keep only the modes that are strictly below the threshold
     # It the threshold is statistical, use the first mode that crosses the threshold 
-    side = 'right' if physical_threshold else 'left' 
+    side = 'right' if is_method_physical else 'left' 
     n_mode = [np.searchsorted(ascending_data[:,i], thresholds[i], side=side) for i in range(n_maps)]
     n_mode = np.array(n_mode)
     if (failed_indices := np.where(n_mode == ascending_data.shape[0])[0]).size > 0:
         warn(f"Threshold not met for map(s) [{', '.join(map(str, failed_indices))}]. "
              f"All available modes were used. Consider providing more modes or loosening the threshold.")
-    n_mode += not physical_threshold # this is the number of modes to use i.e. the first excluded mode
+    n_mode += not is_method_physical # this is the number of modes to use i.e. the first excluded mode
 
     # Return
-    if output == 'mode': 
+    if output == 'mode':
         result = n_mode
-    elif output == 'group':
+    else: # output == 'group'
         result = mode_to_group(n_mode-1, method='ceil')+1 # number of groups (of last included mode)
-    else: 
-        raise ValueError("Output must be either 'mode' or 'group'.")
     
     return result if data.ndim > 1 else result.item() # type: ignore # result will only be scalar if data.ndim=1
 
@@ -743,8 +744,8 @@ def _estimate_fwhm_wb(
     vl = np.mean((vf[rows, ...] - vf[cols, ...])**2, axis=0)  # local variance
     
     # In accordance with wb_command, use whole mesh mean edge length (not just mask)
-    lambda_eff = 4 * -np.log(1 - vl / (2 * vg)) / geometry.avg_edge_length()**2
-    return convert_from_eigenvalue(lambda_eff, output='fwhm') # alternate expression, but same as wb_command
+    evals = 4 * -np.log(1 - vl / (2 * vg)) / geometry.avg_edge_length()**2
+    return convert_from_evals(evals, output='fwhm') # alternate expression, but same as wb_command
 
 def _estimate_fwhm_fem(
     data: NDArray[np.floating],
@@ -780,7 +781,7 @@ def _estimate_fwhm_fem(
     Vm = vf * (M @ vf)
     Vs = vf * (S @ vf) - 0.5 * (S @ vf**2) # keep second term for correction on open meshes
     lambda_eff = np.sum(Vs, axis=0) / np.sum(Vm, axis=0)
-    return convert_from_eigenvalue(lambda_eff, output='fwhm')
+    return convert_from_evals(lambda_eff, output='fwhm')
 
 def _estimate_fwhm_fem_local(
     data: NDArray[np.floating],
@@ -792,7 +793,7 @@ def _estimate_fwhm_fem_local(
     Vm = vf * (mass @ vf)
     Vs = vf * (stiffness @ vf) - 0.5 * (stiffness @ vf**2)
     lambda_eff = Vs / Vm
-    return convert_from_eigenvalue(lambda_eff, output='fwhm')
+    return convert_from_evals(lambda_eff, output='fwhm')
 
 def get_eigengroup_inds(
     n_modes: int,
@@ -892,49 +893,47 @@ def group_to_mode(
     result = func(np.asarray(group_id) + 1).astype(outtype)**2 - 1
     return result.item() if np.isscalar(group_id) else result
 
-def convert_to_eigenvalue(
+def convert_to_evals(
     values: float | NDArray[np.floating],
     input: str,
     area: float | None = None
 ) -> float | NDArray[np.floating]:
-    if input == 'eigenvalue': 
-        return values
-    elif input == 'wavelength':
-        return (2 * np.pi / values)**2
-    elif input == 'fwhm':
-        return 8 * np.log(2) / values**2
-    elif input == 'group':
-        if area is None:
-            raise ValueError("Area must be provided when input is 'group'.")
-        return values * (values + 1) * 4 * np.pi / area
-    elif input == 'mode':
-        if area is None:
-            raise ValueError("Area must be provided when input is 'mode'.")
-        return 4 * np.pi * values / area 
-    else:
-        raise ValueError("Incorrect input specified")
+    match input:
+        case ('group' | 'mode') if area is None:
+            raise ValueError(f"Area must be provided when input is '{input}'.")
+        case 'evals':
+            return values
+        case 'wavelength':
+            return (2 * np.pi / values)**2
+        case 'fwhm':
+            return 8 * np.log(2) / values**2
+        case 'group':
+            return values * (values + 1) * 4 * np.pi / area
+        case 'mode':
+            return 4 * np.pi * values / area
+        case _:
+            raise ValueError("Incorrect input specified")
 
-def convert_from_eigenvalue(
+def convert_from_evals(
     evals: float | NDArray[np.floating],
     output: str,
     area: float | None = None
 ) -> float | NDArray[np.floating]:
-    if output == 'eigenvalue': 
-        return evals
-    elif output == 'wavelength':
-        return 2 * np.pi / np.sqrt(evals)
-    elif output == 'fwhm':
-        return np.sqrt(8 * np.log(2) / evals)
-    elif output == 'group':
-        if area is None:
-            raise ValueError("Area must be provided when output is 'group'.")
-        return (np.sqrt(evals * area / np.pi + 1) - 1) / 2
-    elif output == 'mode':
-        if area is None:
-            raise ValueError("Area must be provided when output is 'mode'.")
-        return evals * area / (4 * np.pi)
-    else:
-        raise ValueError("Incorrect output specified")
+    match output:
+        case ('group' | 'mode') if area is None:
+            raise ValueError(f"Area must be provided when output is '{output}'.")
+        case 'evals':
+            return evals
+        case 'wavelength':
+            return 2 * np.pi / np.sqrt(evals)
+        case 'fwhm':
+            return np.sqrt(8 * np.log(2) / evals)
+        case 'group':
+            return (np.sqrt(evals * area / np.pi + 1) - 1) / 2
+        case 'mode':
+            return evals * area / (4 * np.pi)
+        case _:
+            raise ValueError("Incorrect output specified")
     
 # TODO : consider making public
 def _convert_spatial_scale(
@@ -944,8 +943,8 @@ def _convert_spatial_scale(
     area: float | None = None
 ) -> float | NDArray[np.floating]:
     """Convenience function to convert between spatial scale representations without needing to manually convert to eigenvalues."""
-    eigenvalue = convert_to_eigenvalue(data, input=input, area=area)
-    return convert_from_eigenvalue(eigenvalue, output=output, area=area)
+    eigenvalue = convert_to_evals(data, input=input, area=area)
+    return convert_from_evals(eigenvalue, output=output, area=area)
 
 _MISSING = object()  
 @dataclass(frozen=True, init=False)
