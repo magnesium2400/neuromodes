@@ -669,7 +669,7 @@ def truncate_emodes(
 
     # Prelims
     data = np.asarray(data, copy=True)
-    if data.ndim == 1:
+    if (return_float := data.ndim == 1):
         data = data[:, np.newaxis] # ensure 2d for consistent processing
     n_maps = data.shape[1]
 
@@ -694,12 +694,13 @@ def truncate_emodes(
     # Get data to threshold against
     if is_method_physical:
         if method == 'evals':
-            data = evals
+            phys = evals
         else:
-            data = np.full(len(evals), np.inf) # default to inf for zero evals to avoid divide-by-zero issues
-            data[1:] = convert_from_evals(evals[1:], output=method)
-        ascending_data = -np.broadcast_to(data[:, np.newaxis], (len(evals), n_maps))
-        thresholds = -thresholds
+            phys = np.full(len(evals), np.inf) # default to inf for zero evals to avoid divide-by-zero issues (TODO: consider defining convert_from_evals(0) = inf)
+            phys[1:] = convert_from_evals(evals[1:], output=method)
+            phys = -phys
+            thresholds = -thresholds
+        ascending_data = np.broadcast_to(phys[:, np.newaxis], (len(evals), n_maps))
     elif method == 'power':
         coeffs = decompose(data, emodes=emodes, mass=mass, **threshold_kwargs)
         ascending_data = np.cumsum(coeffs**2, axis=0) # user needs to demean if desired
@@ -729,7 +730,7 @@ def truncate_emodes(
     result = n_mode if output == 'mode' \
         else mode_to_group(n_mode-1, method='ceil')+1 # number of groups (of last included mode)
     
-    return result if data.ndim > 1 else result.item() # type: ignore # result will only be scalar if data.ndim=1
+    return result.item() if return_float else result # type: ignore # result will only be scalar if data.ndim=1
 
 # TODO: move these functions to mesh.py?
 def estimate_fwhm(
@@ -758,12 +759,12 @@ def _estimate_fwhm_wb(
 ) -> float | NDArray[np.floating]:
     """Equivalent to wb_command -metric-estimate-fwhm"""
     # Prelims
-    rois = np.ones(len(geometry.v), dtype=bool) if mask is None else np.asarray(mask, dtype=bool,
+    mask = np.ones(len(geometry.v), dtype=bool) if mask is None else np.asarray(mask, dtype=bool,
                                                                                 copy=True)
-    data = data[rois, ...].copy()  # avoid in-place mods
+    data = data[mask, ...].copy()  # avoid in-place mods
 
     # Get edges
-    adj = geometry.adj_sym[rois, :][:, rois]
+    adj = geometry.adj_sym[mask, :][:, mask]
     rows, cols = adj.nonzero()
     rows, cols = rows[rows>cols], cols[rows>cols]  # Keep only upper triangle indices
 
@@ -791,10 +792,10 @@ def _estimate_fwhm_fem(
         stiffness.setdiag(0)
         stiffness.setdiag(-np.asarray(stiffness.sum(axis=0)).ravel())
 
-        mass = mass[mask, :][:, mask]
-        m_sum = np.asarray(mass.sum(axis=0)).ravel()
         target_mass = np.asarray(mass[:, mask].sum(axis=0)).ravel()
-        mass.setdiag(mass.diagonal() + (target_mass - m_sum))
+        mass = mass[mask, :][:, mask]
+        areas = np.asarray(mass.sum(axis=0)).ravel()
+        mass.setdiag(mass.diagonal() + (target_mass - areas))
 
     # Vm = \Sigma_{i=1}^N \beta_i^2 (where \beta_i is the coefficient of mode i in the decomposition of data)
     # Vs = \Sigma_{i=1}^N \beta_i^2 \lambda_i (where \lambda_i is the eigenvalue of mode i)
