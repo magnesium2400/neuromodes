@@ -643,12 +643,12 @@ def is_orthonormal_basis(
 def truncate_emodes(
     data: NDArray[np.floating],
     threshold: float | NDArray[np.floating] | None = None,
-    method: str = 'power',
+    method: Literal['power', 'error', 'evals', 'wavelength', 'fwhm'] = 'power',
     geometry: TriaMesh | None = None,
     mass: csc_matrix | None = None,
     evals: NDArray[np.floating] | None = None,
     emodes: NDArray[np.floating] | None = None,
-    output: str = 'group',
+    output: Literal['mode', 'group'] = 'group',
     checks: bool = True,
     threshold_kwargs: dict | None = None
 ) -> int | NDArray[np.integer]:
@@ -787,15 +787,7 @@ def _estimate_fwhm_fem(
     if mask is not None: # subset stiffness, mass, and data to roi (set diags to correct values)
         mask = np.asarray(mask, dtype=bool, copy=True)
         data = data[mask, ...]
-        
-        stiffness = stiffness[mask, :][:, mask]
-        stiffness.setdiag(0)
-        stiffness.setdiag(-np.asarray(stiffness.sum(axis=0)).ravel())
-
-        target_mass = np.asarray(mass[:, mask].sum(axis=0)).ravel()
-        mass = mass[mask, :][:, mask]
-        areas = np.asarray(mass.sum(axis=0)).ravel()
-        mass.setdiag(mass.diagonal() + (target_mass - areas))
+        mass, stiffness = _mask_fem_matrices(mask, mass=mass, stiffness=stiffness)
 
     # Vm = \Sigma_{i=1}^N \beta_i^2 (where \beta_i is the coefficient of mode i in the decomposition of data)
     # Vs = \Sigma_{i=1}^N \beta_i^2 \lambda_i (where \lambda_i is the eigenvalue of mode i)
@@ -810,16 +802,39 @@ def _estimate_fwhm_fem(
 
 def _estimate_fwhm_fem_local(
     data: NDArray[np.floating],
-    mass: csc_matrix,
-    stiffness: csc_matrix
+    geometry: TriaMesh,
+    mask: NDArray[np.bool_] | None = None
 ) -> NDArray[np.floating]:
-    # TODO: change to demeanw / stats.py etc
+    stiffness, mass = Solver._fem_tria(geometry)  # non-lumped mass
     data = data.copy() # avoid in-place mods
+
+    if mask is not None: # subset stiffness, mass, and data to roi (set diags to correct values)
+        mask = np.asarray(mask, dtype=bool, copy=True)
+        data = data[mask, ...]
+        mass, stiffness = _mask_fem_matrices(mask, mass=mass, stiffness=stiffness)
+
+    # TODO: change to demeanw / stats.py etc
     data -= np.average(data, weights=mass.diagonal(), axis=0) # set (mass-weighted) mean to 0
     Vm = data * (mass @ data)
     Vs = data * (stiffness @ data) - 0.5 * (stiffness @ data**2)
     evals = Vs / Vm
     return convert_from_evals(evals, output='fwhm')
+
+def _mask_fem_matrices(
+    mask: NDArray[np.bool_],
+    mass: csc_matrix | None = None,
+    stiffness: csc_matrix | None = None
+) -> tuple[csc_matrix | None, csc_matrix | None]:
+    if mass is not None:
+        target_mass = np.asarray(mass[:, mask].sum(axis=0)).ravel()
+        mass = mass[mask, :][:, mask]
+        areas = np.asarray(mass.sum(axis=0)).ravel()
+        mass.setdiag(mass.diagonal() + (target_mass - areas))
+    if stiffness is not None:
+        stiffness = stiffness[mask, :][:, mask]
+        new_diag = stiffness.diagonal() - np.asarray(stiffness.sum(axis=0)).ravel()
+        stiffness.setdiag(new_diag)
+    return mass, stiffness
 
 def get_eigengroup_inds(
     n_modes: int,

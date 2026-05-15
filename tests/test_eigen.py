@@ -5,10 +5,11 @@ from numpy.testing import assert_allclose
 from lapy import TriaMesh
 from lapy.shapedna import normalize_ev
 import pytest
+from scipy.sparse.linalg import eigsh
 
 from neuromodes.eigen import (EigenSolver, is_orthonormal_basis, scale_hetero, get_eigengroup_inds, 
                               convert_to_evals, convert_from_evals, mode_to_group, group_to_mode, 
-                              estimate_fwhm, truncate_emodes)
+                              estimate_fwhm, truncate_emodes, _mask_fem_matrices)
 from neuromodes.io import fetch_surf, fetch_map
 from neuromodes.mesh import mask_mesh
 
@@ -512,6 +513,23 @@ class TestFWHM:
 
             assert np.allclose(estimated_fwhm, float(expected_fwhm), atol=ATOL), \
                 f"Estimated FWHM ({estimated_fwhm}) does not match expected FWHM ({float(expected_fwhm)}) for {data}"
+            
+    def test_mask_fem_matrices(self, sphere):
+        """Tests that the FEM matrices are correctly masked."""
+        mass, stiffness = sphere.mass, sphere.stiffness
+
+        mask = np.zeros(mass.shape[0], dtype=bool)
+        mask[:mass.shape[0] // 2] = True
+        mass_m, stiffness_m = _mask_fem_matrices(mask, mass=mass, stiffness=stiffness)
+
+        assert mass_m.shape == (mask.sum(), mask.sum()), "Masked mass matrix has incorrect shape."
+        assert stiffness_m.shape == (mask.sum(), mask.sum()), "Masked stiffness matrix has incorrect shape."
+        assert np.all(eigsh(mass_m, k=sphere.n_modes-1, return_eigenvectors=False) > 0), "Masked mass matrix is not positive definite."
+        assert np.all(eigsh(stiffness_m, k=sphere.n_modes-1, return_eigenvectors=False) > -1e-12), "Masked stiffness matrix has negative eigenvalues."
+        assert not (mass_m != mass_m.transpose()).toarray().any(), "Masked mass matrix is not symmetric."
+        assert not (stiffness_m != stiffness_m.transpose()).toarray().any(), "Masked stiffness matrix is not symmetric."
+        assert np.allclose(np.sum(stiffness_m, axis=1), 0, atol=1e-12), "Rows of masked stiffness matrix do not sum to zero."
+        assert (mass.diagonal() > 0).all(), "Diagonal of masked mass matrix has non-positive entries."
 
     # Test that mask runs without errors and produces different results than global FWHM (but
     # doesn't test actual correctness)
@@ -542,6 +560,8 @@ class TestFWHM:
         assert fwhm_2d.shape == (sphere.n_modes - 1,)
         assert not np.isnan(fwhm_2d).any()
         assert not np.isinf(fwhm_2d).any()
+
+    # TODO: test local FWHM using modes
 
 class TestTruncateEmodes:
     # Test correctness of power method
