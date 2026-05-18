@@ -761,10 +761,14 @@ def estimate_fwhm_wb(
 def rayleigh_quotient(
     data: NDArray[np.floating],
     geometry: TriaMesh,
-    mask: NDArray[np.bool_] | None = None
+    mask: NDArray[np.bool_] | None = None,
+    checks: bool = True
 ) -> float | NDArray[np.floating]:
     stiffness, mass = Solver._fem_tria(geometry)  # non-lumped mass
     data = data.copy()  # avoid in-place mods
+    if checks is not False:
+        ved = EigenData(data=data, mass=mass, stiffness=stiffness, checks=checks)
+        data, mass, stiffness = ved.data, ved.mass, ved.stiffness
 
     if mask is not None: # subset stiffness, mass, and data to roi (set diags to correct values)
         mask = np.asarray(mask, dtype=bool, copy=True)
@@ -957,16 +961,15 @@ def _convert_from_rayleigh(
             raise ValueError("Incorrect output specified")
 
 def convert_spatial_scale(
-    data: float | NDArray[np.floating],
+    values: float | NDArray[np.floating],
     input: SpatialScale,
     output: SpatialScale,
     area: float | None = None
 ) -> float | NDArray[np.floating]:
-    """Convenience function to convert between spatial scale representations without needing to
-    manually convert to Rayleigh quotient."""
     if input == output:
-        return data
-    rayleigh = _convert_to_rayleigh(data, input=input, area=area)
+        return values
+    
+    rayleigh = _convert_to_rayleigh(values, input=input, area=area)
     return _convert_from_rayleigh(rayleigh, output=output, area=area)
 
 _MISSING = object()  
