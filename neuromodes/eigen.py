@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
     from scipy.sparse import csc_matrix
     from neuromodes.basis import _ReconSingle, _ReconList, _ReconTSSingle, _ReconTSList
+    SpatialScale = Literal['rayleigh', 'wavelength', 'fwhm', 'group', 'mode']
 
 class EigenSolver(Solver):
     """
@@ -643,7 +644,7 @@ def is_orthonormal_basis(
 def truncate_emodes(
     data: NDArray[np.floating],
     threshold: float | NDArray[np.floating] | None = None,
-    method: Literal['power', 'error', 'evals', 'wavelength', 'fwhm'] = 'power',
+    method: Literal['power', 'error', 'rayleigh', 'wavelength', 'fwhm'] = 'power',
     geometry: TriaMesh | None = None,
     mass: csc_matrix | None = None,
     evals: NDArray[np.floating] | None = None,
@@ -657,11 +658,11 @@ def truncate_emodes(
     # Format / validate arguments
     if output not in ['mode', 'group']:
         raise ValueError("output must be either 'mode' or 'group'.")
-    if method not in ['power', 'error', 'evals', 'wavelength', 'fwhm']:
-        raise ValueError("method must be 'power', 'error', 'evals', 'wavelength', or 'fwhm'.")
+    if method not in ['power', 'error', 'rayleigh', 'wavelength', 'fwhm']:
+        raise ValueError("method must be 'power', 'error', 'rayleigh', 'wavelength', or 'fwhm'.")
     if method in ['power', 'error'] and (emodes is None or mass is None):
         raise ValueError(f"emodes and mass must be provided when using method='{method}'.")
-    if method in ['evals', 'wavelength', 'fwhm'] and evals is None:
+    if method in ['rayleigh', 'wavelength', 'fwhm'] and evals is None:
         raise ValueError(f"evals must be provided when using method='{method}'.")
     if checks is not False:
         ved = EigenData(mass=mass, evals=evals, data=data, emodes=emodes, checks=checks)
@@ -673,7 +674,7 @@ def truncate_emodes(
         data = data[:, np.newaxis] # ensure 2d for consistent processing
     n_maps = data.shape[1]
 
-    is_method_physical = method in ['evals', 'wavelength', 'fwhm']
+    is_method_physical = method in ['rayleigh', 'wavelength', 'fwhm']
 
     if threshold is None:
         if is_method_physical:
@@ -693,11 +694,11 @@ def truncate_emodes(
 
     # Get data to threshold against
     if is_method_physical:
-        if method == 'evals':
+        if method == 'rayleigh':
             phys = evals
         else:
-            phys = np.full(len(evals), np.inf) # default to inf for zero evals to avoid divide-by-zero issues (TODO: consider defining convert_from_evals(0) = inf)
-            phys[1:] = convert_from_evals(evals[1:], output=method)
+            phys = np.full(len(evals), np.inf) # default to inf for zero evals to avoid divide-by-zero issues (TODO: consider defining convert_from_rayleigh(0) = inf)
+            phys[1:] = convert_from_rayleigh(evals[1:], output=method)
             phys = -phys
             thresholds = -thresholds
         ascending_data = np.broadcast_to(phys[:, np.newaxis], (len(evals), n_maps))
@@ -774,7 +775,7 @@ def _estimate_fwhm_wb(
     
     # In accordance with wb_command, use whole mesh mean edge length (not just mask)
     evals = 4 * -np.log(1 - vl / (2 * vg)) / geometry.avg_edge_length()**2
-    return convert_from_evals(evals, output='fwhm') # alternate expression, but same as wb_command
+    return convert_from_rayleigh(evals, output='fwhm') # alternate expression, but same as wb_command
 
 def _estimate_fwhm_fem(
     data: NDArray[np.floating],
@@ -798,7 +799,7 @@ def _estimate_fwhm_fem(
     Vm = data * (mass @ data)
     Vs = data * (stiffness @ data) - 0.5 * (stiffness @ data**2) # keep second term for correction on open meshes
     evals = np.sum(Vs, axis=0) / np.sum(Vm, axis=0)
-    return convert_from_evals(evals, output='fwhm')
+    return convert_from_rayleigh(evals, output='fwhm')
 
 def _estimate_fwhm_fem_local(
     data: NDArray[np.floating],
@@ -818,7 +819,7 @@ def _estimate_fwhm_fem_local(
     Vm = data * (mass @ data)
     Vs = data * (stiffness @ data) - 0.5 * (stiffness @ data**2)
     evals = Vs / Vm
-    return convert_from_evals(evals, output='fwhm')
+    return convert_from_rayleigh(evals, output='fwhm')
 
 def _mask_fem_matrices(
     mask: NDArray[np.bool_],
@@ -866,7 +867,7 @@ def get_eigengroup_inds(
 # TODO : add overloads for int vs array inputs and int/float outputs
 def mode_to_group(
     mode_id: int | NDArray[np.integer],
-    method: str = 'ceil'
+    method: Literal['round', 'floor', 'ceil', 'raw'] = 'ceil'
 ) -> int | float | NDArray[np.floating]:
     """
     Translates a linear mode index to its spherical harmonic group index.
@@ -903,7 +904,7 @@ def mode_to_group(
 # TODO : add overloads for int vs array inputs and int/float outputs
 def group_to_mode(
     group_id: int | NDArray[np.integer],
-    method: str = 'ceil'
+    method: Literal['round', 'floor', 'ceil', 'raw'] = 'ceil'
 ) -> float | NDArray[np.integer]:
     """
     Translates a spherical harmonic group index back to a linear mode index.
@@ -912,7 +913,7 @@ def group_to_mode(
     ----------
     group_id : int, or array_like
         The index of the harmonic group(s).
-    method : {'ceil', 'floor', 'round', 'raw'}, optional
+    method : {'round', 'floor', 'ceil', 'raw'}, optional
         How to resolve fractional modes. Default is 'ceil', which maps 
         an integer group ID to its terminal (final) mode index.
         'raw' mathematically inverts a fractional group back to its exact mode.
@@ -934,15 +935,15 @@ def group_to_mode(
     result = func(np.asarray(group_id) + 1).astype(outtype)**2 - 1
     return result.item() if np.isscalar(group_id) else result
 
-def convert_to_evals(
+def convert_to_rayleigh(
     values: float | NDArray[np.floating],
-    input: str,
+    input: SpatialScale,
     area: float | None = None
 ) -> float | NDArray[np.floating]:
     match input:
         case ('group' | 'mode') if area is None:
             raise ValueError(f"Area must be provided when input is '{input}'.")
-        case 'evals':
+        case 'rayleigh':
             return values
         case 'wavelength':
             return (2 * np.pi / values)**2
@@ -955,37 +956,37 @@ def convert_to_evals(
         case _:
             raise ValueError("Incorrect input specified")
 
-def convert_from_evals(
-    evals: float | NDArray[np.floating],
-    output: str,
+def convert_from_rayleigh(
+    rayleigh: float | NDArray[np.floating],
+    output: SpatialScale,
     area: float | None = None
 ) -> float | NDArray[np.floating]:
     match output:
         case ('group' | 'mode') if area is None:
             raise ValueError(f"Area must be provided when output is '{output}'.")
-        case 'evals':
-            return evals
+        case 'rayleigh':
+            return rayleigh
         case 'wavelength':
-            return 2 * np.pi / np.sqrt(evals)
+            return 2 * np.pi / np.sqrt(rayleigh)
         case 'fwhm':
-            return np.sqrt(8 * np.log(2) / evals)
+            return np.sqrt(8 * np.log(2) / rayleigh)
         case 'group':
-            return (np.sqrt(evals * area / np.pi + 1) - 1) / 2
+            return (np.sqrt(rayleigh * area / np.pi + 1) - 1) / 2
         case 'mode':
-            return evals * area / (4 * np.pi)
+            return rayleigh * area / (4 * np.pi)
         case _:
             raise ValueError("Incorrect output specified")
     
 # TODO : consider making public
 def _convert_spatial_scale(
     data: float | NDArray[np.floating],
-    input: str,
-    output: str,
+    input: SpatialScale,
+    output: SpatialScale,
     area: float | None = None
 ) -> float | NDArray[np.floating]:
     """Convenience function to convert between spatial scale representations without needing to manually convert to eigenvalues."""
-    evals = convert_to_evals(data, input=input, area=area)
-    return convert_from_evals(evals, output=output, area=area)
+    rayleigh = convert_to_rayleigh(data, input=input, area=area)
+    return convert_from_rayleigh(rayleigh, output=output, area=area)
 
 _MISSING = object()  
 @dataclass(frozen=True, init=False)
