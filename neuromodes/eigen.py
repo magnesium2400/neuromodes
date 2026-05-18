@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
     from scipy.sparse import csc_matrix
     from neuromodes.basis import _ReconSingle, _ReconList, _ReconTSSingle, _ReconTSList
-    SpatialScale = Literal['rayleigh', 'wavelength', 'fwhm', 'group', 'mode']
+    SpatialScale = Literal['rayquo', 'wavelength', 'fwhm', 'group', 'mode']
 
 class EigenSolver(Solver):
     """
@@ -490,16 +490,16 @@ class EigenSolver(Solver):
             **kwargs
         )
     
-    def estimate_fwhm(
+    def rayleigh_quotient(
         self,
         data: NDArray[np.floating],
         **kwargs
     ) -> float | NDArray[np.floating]:
         """
-        This is a wrapper for :func:`~neuromodes.eigen.estimate_fwhm`. Note that ``geometry`` and
+        This is a wrapper for :func:`~neuromodes.eigen.rayleigh_quotient`. Note that ``geometry`` and
         ``checks`` are passed automatically by the ``EigenSolver`` instance.
         """
-        return estimate_fwhm(
+        return rayleigh_quotient(
             data=data,
             geometry=self.geometry,
             checks='maps',
@@ -678,8 +678,8 @@ def truncate_emodes(
 
     if threshold is None:
         if is_method_physical:
-            fwhm = estimate_fwhm(data, geometry, method='fem', checks=False)
-            thresholds = convert_spatial_scale(fwhm, input='fwhm', output=method)
+            fwhm = rayleigh_quotient(data, geometry, checks=False)
+            thresholds = convert_spatial_scale(fwhm, input='rayleigh', output=method)
         else: 
             raise ValueError(f"Threshold must be provided for method={method}.")
     elif np.isscalar(threshold):
@@ -734,26 +734,7 @@ def truncate_emodes(
     return result.item() if return_float else result # type: ignore # result will only be scalar if data.ndim=1
 
 # TODO: move these functions to mesh.py?
-def estimate_fwhm(
-    data: NDArray[np.floating],
-    geometry: TriaMesh,
-    method: Literal['wb', 'fem'] = 'fem',
-    mask: NDArray[np.bool_] | None = None,
-    checks: bool = True
-) -> float | NDArray[np.floating]:
-    # Format / validate inputs
-    if not isinstance(geometry, (type(None), TriaMesh, EigenSolver)):
-        raise TypeError("geometry must be a TriaMesh, EigenSolver, or None.")
-    if checks is not False:
-        data = EigenData(data=data, checks=checks).data
-    if method not in ['wb', 'fem']:
-        raise ValueError("method must be either 'wb' or 'fem'.")
-
-    # Main computation
-    _estimate_fwhm = _estimate_fwhm_fem if method == 'fem' else _estimate_fwhm_wb
-    return _estimate_fwhm(data, geometry, mask=mask)
-
-def _estimate_fwhm_wb(
+def estimate_fwhm_wb(
     data: NDArray[np.floating],
     geometry: TriaMesh,
     mask: NDArray[np.bool_] | None = None
@@ -777,7 +758,7 @@ def _estimate_fwhm_wb(
     evals = 4 * -np.log(1 - vl / (2 * vg)) / geometry.avg_edge_length()**2
     return _convert_from_rayleigh(evals, output='fwhm') # alternate expression, but same as wb_command
 
-def _estimate_fwhm_fem(
+def rayleigh_quotient(
     data: NDArray[np.floating],
     geometry: TriaMesh,
     mask: NDArray[np.bool_] | None = None
@@ -796,12 +777,11 @@ def _estimate_fwhm_fem(
     # If the input is a mode i, then this reduces to \lambda_i for that mode
     # TODO: change to demeanw / stats.py etc
     data -= np.average(data, weights=mass.diagonal(), axis=0) # set (mass-weighted) mean to 0
-    Vm = data * (mass @ data)
-    Vs = data * (stiffness @ data) - 0.5 * (stiffness @ data**2) # keep second term for correction on open meshes
-    evals = np.sum(Vs, axis=0) / np.sum(Vm, axis=0)
-    return _convert_from_rayleigh(evals, output='fwhm')
+    Vm = np.sum(data * (mass @ data), axis=0)
+    Vs = np.sum(data * (stiffness @ data), axis=0)
+    return Vs / Vm
 
-def _estimate_fwhm_fem_local(
+def _local_rayleigh_quotient(
     data: NDArray[np.floating],
     geometry: TriaMesh,
     mask: NDArray[np.bool_] | None = None
@@ -818,8 +798,7 @@ def _estimate_fwhm_fem_local(
     data -= np.average(data, weights=mass.diagonal(), axis=0) # set (mass-weighted) mean to 0
     Vm = data * (mass @ data)
     Vs = data * (stiffness @ data) - 0.5 * (stiffness @ data**2)
-    evals = Vs / Vm
-    return _convert_from_rayleigh(evals, output='fwhm')
+    return Vs / Vm
 
 def _mask_fem_matrices(
     mask: NDArray[np.bool_],
@@ -983,7 +962,10 @@ def convert_spatial_scale(
     output: SpatialScale,
     area: float | None = None
 ) -> float | NDArray[np.floating]:
-    """Convenience function to convert between spatial scale representations without needing to manually convert to eigenvalues."""
+    """Convenience function to convert between spatial scale representations without needing to
+    manually convert to Rayleigh quotient."""
+    if input == output:
+        return data
     rayleigh = _convert_to_rayleigh(data, input=input, area=area)
     return _convert_from_rayleigh(rayleigh, output=output, area=area)
 
