@@ -679,7 +679,7 @@ def truncate_emodes(
     if threshold is None:
         if is_method_physical:
             fwhm = estimate_fwhm(data, geometry, method='fem', checks=False)
-            thresholds = _convert_spatial_scale(fwhm, input='fwhm', output=method)
+            thresholds = convert_spatial_scale(fwhm, input='fwhm', output=method)
         else: 
             raise ValueError(f"Threshold must be provided for method={method}.")
     elif np.isscalar(threshold):
@@ -697,8 +697,8 @@ def truncate_emodes(
         if method == 'rayleigh':
             phys = evals
         else:
-            phys = np.full(len(evals), np.inf) # default to inf for zero evals to avoid divide-by-zero issues (TODO: consider defining convert_from_rayleigh(0) = inf)
-            phys[1:] = convert_from_rayleigh(evals[1:], output=method)
+            phys = np.full(len(evals), np.inf) # default to inf for zero evals to avoid divide-by-zero issues (TODO: consider defining _convert_from_rayleigh(0) = inf)
+            phys[1:] = _convert_from_rayleigh(evals[1:], output=method)
             phys = -phys
             thresholds = -thresholds
         ascending_data = np.broadcast_to(phys[:, np.newaxis], (len(evals), n_maps))
@@ -775,7 +775,7 @@ def _estimate_fwhm_wb(
     
     # In accordance with wb_command, use whole mesh mean edge length (not just mask)
     evals = 4 * -np.log(1 - vl / (2 * vg)) / geometry.avg_edge_length()**2
-    return convert_from_rayleigh(evals, output='fwhm') # alternate expression, but same as wb_command
+    return _convert_from_rayleigh(evals, output='fwhm') # alternate expression, but same as wb_command
 
 def _estimate_fwhm_fem(
     data: NDArray[np.floating],
@@ -799,7 +799,7 @@ def _estimate_fwhm_fem(
     Vm = data * (mass @ data)
     Vs = data * (stiffness @ data) - 0.5 * (stiffness @ data**2) # keep second term for correction on open meshes
     evals = np.sum(Vs, axis=0) / np.sum(Vm, axis=0)
-    return convert_from_rayleigh(evals, output='fwhm')
+    return _convert_from_rayleigh(evals, output='fwhm')
 
 def _estimate_fwhm_fem_local(
     data: NDArray[np.floating],
@@ -819,7 +819,7 @@ def _estimate_fwhm_fem_local(
     Vm = data * (mass @ data)
     Vs = data * (stiffness @ data) - 0.5 * (stiffness @ data**2)
     evals = Vs / Vm
-    return convert_from_rayleigh(evals, output='fwhm')
+    return _convert_from_rayleigh(evals, output='fwhm')
 
 def _mask_fem_matrices(
     mask: NDArray[np.bool_],
@@ -935,7 +935,7 @@ def group_to_mode(
     result = func(np.asarray(group_id) + 1).astype(outtype)**2 - 1
     return result.item() if np.isscalar(group_id) else result
 
-def convert_to_rayleigh(
+def _convert_to_rayleigh(
     values: float | NDArray[np.floating],
     input: SpatialScale,
     area: float | None = None
@@ -956,7 +956,7 @@ def convert_to_rayleigh(
         case _:
             raise ValueError("Incorrect input specified")
 
-def convert_from_rayleigh(
+def _convert_from_rayleigh(
     rayleigh: float | NDArray[np.floating],
     output: SpatialScale,
     area: float | None = None
@@ -976,17 +976,16 @@ def convert_from_rayleigh(
             return rayleigh * area / (4 * np.pi)
         case _:
             raise ValueError("Incorrect output specified")
-    
-# TODO : consider making public
-def _convert_spatial_scale(
+
+def convert_spatial_scale(
     data: float | NDArray[np.floating],
     input: SpatialScale,
     output: SpatialScale,
     area: float | None = None
 ) -> float | NDArray[np.floating]:
     """Convenience function to convert between spatial scale representations without needing to manually convert to eigenvalues."""
-    rayleigh = convert_to_rayleigh(data, input=input, area=area)
-    return convert_from_rayleigh(rayleigh, output=output, area=area)
+    rayleigh = _convert_to_rayleigh(data, input=input, area=area)
+    return _convert_from_rayleigh(rayleigh, output=output, area=area)
 
 _MISSING = object()  
 @dataclass(frozen=True, init=False)
