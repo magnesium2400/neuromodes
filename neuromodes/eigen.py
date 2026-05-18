@@ -13,13 +13,12 @@ from neuromodes.mesh import mask_mesh, check_surf
 
 if TYPE_CHECKING:
     from pathlib import Path
-    # from lapy import TriaMesh
     from nibabel.gifti.gifti import GiftiImage
-    from numpy import floating, signedinteger, bool_
     from numpy.random import Generator
     from numpy.typing import NDArray
     from scipy.sparse import csc_matrix
     from neuromodes.basis import _ReconSingle, _ReconList, _ReconTSSingle, _ReconTSList
+    SpatialScale = Literal['rayquo', 'wavelength', 'fwhm', 'group', 'mode']
 
 class EigenSolver(Solver):
     """
@@ -80,9 +79,9 @@ class EigenSolver(Solver):
     def __init__(
         self,
         geometry: str | Path | GiftiImage | TriaMesh | dict,
-        mask: NDArray[bool_] | None = None,
+        mask: NDArray[np.bool_] | None = None,
         normalize: bool = False,
-        hetero: NDArray[floating] | None = None,
+        hetero: NDArray[np.floating] | None = None,
         alpha: float | None = None, # default to 1.0 if hetero given (and remains None)
         scaling: Literal['sigmoid', 'exponential'] | None = None  # default to "sigmoid" if hetero given (and remains None)
     ):
@@ -207,7 +206,7 @@ class EigenSolver(Solver):
         rtol: float = 1e-5,
         sigma: float = -0.01, # EASIEST way is to hard-code this to LaPy default (2026/03)
         seed: int | Generator | None = 0, 
-        v0: NDArray[floating] | None = None
+        v0: NDArray[np.floating] | None = None
     ) -> EigenSolver:
         """
         Solves the generalized eigenvalue problem for the Laplace-Beltrami operator and compute
@@ -303,9 +302,9 @@ class EigenSolver(Solver):
     
     def decompose(
         self,
-        data: NDArray[floating],
+        data: NDArray[np.floating],
         **kwargs
-    ) -> NDArray[floating]:
+    ) -> NDArray[np.floating]:
         """
         This is a wrapper for :func:`~neuromodes.basis.decompose`. Note that ``emodes``, ``mass``,
         and ``checks`` are passed automatically by the ``EigenSolver`` instance.
@@ -324,7 +323,7 @@ class EigenSolver(Solver):
     
     def reconstruct(
         self,
-        data: NDArray[floating],
+        data: NDArray[np.floating],
         **kwargs
     ) -> _ReconSingle | _ReconList:
         """
@@ -345,7 +344,7 @@ class EigenSolver(Solver):
     
     def reconstruct_timeseries(
         self,
-        timeseries: NDArray[floating],
+        timeseries: NDArray[np.floating],
         **kwargs
     ) -> _ReconTSSingle | _ReconTSList:
         """
@@ -368,7 +367,7 @@ class EigenSolver(Solver):
     def compute_gem(
         self,
         **kwargs
-    ) -> NDArray[floating]:
+    ) -> NDArray[np.floating]:
         """
         This is a wrapper for :func:`~neuromodes.network.compute_gem`. Note that ``emodes``,
         ``evals``, and ``checks`` are passed automatically by the ``EigenSolver`` instance.
@@ -387,7 +386,7 @@ class EigenSolver(Solver):
     def sim_nft_waves(
         self,
         **kwargs
-    ) -> NDArray[floating]:
+    ) -> NDArray[np.floating]:
         """
         This is a wrapper for :func:`~neuromodes.waves.sim_nft_waves`. Note that ``emodes``,
         ``evals``, ``mass``, ``scaled_hetero``, and ``checks`` are passed automatically by the
@@ -408,10 +407,10 @@ class EigenSolver(Solver):
     
     def balloon_model(
         self,
-        activity: NDArray[floating],
+        activity: NDArray[np.floating],
         dt: float,
         **kwargs
-    ) -> NDArray[floating]:
+    ) -> NDArray[np.floating]:
         """
         This is a wrapper for :func:`~neuromodes.waves.balloon_model`. Note that ``emodes``,
         ``mass``, and ``checks`` are passed automatically by the ``EigenSolver`` instance.
@@ -431,9 +430,9 @@ class EigenSolver(Solver):
     
     def unmask_data(
         self,
-        data: NDArray[floating],
+        data: NDArray[np.floating],
         **kwargs
-    ) -> NDArray[floating]:
+    ) -> NDArray[np.floating]:
         """
         This is a wrapper for :func:`~neuromodes.mesh.unmask_data`. Note that ``mask`` is passed
         automatically by the ``EigenSolver`` instance.
@@ -451,9 +450,9 @@ class EigenSolver(Solver):
     
     def eigenstrap(
         self,
-        data: NDArray[floating],
+        data: NDArray[np.floating],
         **kwargs
-    ) -> NDArray[floating]:
+    ) -> NDArray[np.floating]:
         """
         This is a wrapper for :func:`~neuromodes.nulls.eigenstrap`. Note that `emodes`, `evals`,
         `mass`, and `checks` are passed automatically by the `EigenSolver` instance.
@@ -470,12 +469,48 @@ class EigenSolver(Solver):
             checks='maps',
             **kwargs
         )
+    
+    def truncate_emodes(
+        self,
+        data: NDArray[np.floating],
+        **kwargs
+    ) -> int | NDArray[np.integer]:
+        """
+        This is a wrapper for :func:`~neuromodes.eigen.truncate_emodes`. Note that ``geometry``,
+        ``mass``, ``emodes``, ``evals``, and ``checks`` are passed automatically by the
+        ``EigenSolver`` instance.
+        """
+        return truncate_emodes(
+            data=data,
+            geometry=self.geometry,
+            mass=self.mass,
+            emodes=self.emodes if hasattr(self, 'emodes') else None,
+            evals=self.evals if hasattr(self, 'evals') else None,
+            checks='maps',
+            **kwargs
+        )
+    
+    def rayleigh_quotient(
+        self,
+        data: NDArray[np.floating],
+        **kwargs
+    ) -> float | NDArray[np.floating]:
+        """
+        This is a wrapper for :func:`~neuromodes.eigen.rayleigh_quotient`. Note that ``geometry`` and
+        ``checks`` are passed automatically by the ``EigenSolver`` instance.
+        """
+        return rayleigh_quotient(
+            data=data,
+            geometry=self.geometry,
+            checks='maps',
+            **kwargs
+        )
 
 def scale_hetero(
-    hetero: NDArray[floating],
+    hetero: NDArray[np.floating],
     alpha: float = 1.0,
     scaling: Literal['sigmoid', 'exponential'] = "sigmoid"
-) -> NDArray[floating]:
+) -> NDArray[np.floating]:
     """
     Scales a heterogeneity map using specified normalization and scaling functions.
     
@@ -522,10 +557,11 @@ def scale_hetero(
     
     return hetero_scaled
 
+# TODO: rename and move to basis.py?
 def standardize_emodes(
-    emodes: NDArray[floating],
+    emodes: NDArray[np.floating],
     checks: bool = True
-) -> NDArray[floating]:
+) -> NDArray[np.floating]:
     """
     Flips the modes' signs such that the first element of each eigenmode has positive amplitude. 
     Note that the sign of each mode is arbitrary--standardisation is only helpful to compare sets of
@@ -551,8 +587,9 @@ def standardize_emodes(
     # Flip modes where the first element is negative
     return emodes * np.copysign(1, np.sign(np.asarray(emodes)[0, :]))
 
+# TODO: move to basis.py?
 def is_orthonormal_basis(
-    emodes: NDArray[floating],
+    emodes: NDArray[np.floating],
     mass: csc_matrix | None = None,
     atol: float = 1e-03,
     rtol: float = 1e-05,
@@ -603,24 +640,48 @@ def is_orthonormal_basis(
     identity = np.eye(emodes.shape[1])
     return np.allclose(prod, identity, rtol=rtol, atol=atol, equal_nan=False)
 
-def truncate_emodes(geometry: TriaMesh, vfunc, threshold, 
-                    evals=None, emodes=None, mass=None, threshold_method='decompose',
-                    threshold_kwargs=None, output='group'): 
+# TODO: rename and move to basis.py?
+def truncate_emodes(
+    data: NDArray[np.floating],
+    threshold: float | NDArray[np.floating] | None = None,
+    method: Literal['power', 'error', 'rayleigh', 'wavelength', 'fwhm'] = 'power',
+    geometry: TriaMesh | None = None,
+    mass: csc_matrix | None = None,
+    evals: NDArray[np.floating] | None = None,
+    emodes: NDArray[np.floating] | None = None,
+    output: Literal['mode', 'group'] = 'group',
+    checks: bool = True,
+    threshold_kwargs: dict | None = None
+) -> int | NDArray[np.integer]:
+    from neuromodes.basis import decompose, reconstruct
 
-    from neuromodes.basis import decompose, reconstruct#, reconstruction_error
+    # Format / validate arguments
+    if output not in ['mode', 'group']:
+        raise ValueError("output must be either 'mode' or 'group'.")
+    if method not in ['power', 'error', 'rayleigh', 'wavelength', 'fwhm']:
+        raise ValueError("method must be 'power', 'error', 'rayleigh', 'wavelength', or 'fwhm'.")
+    if method in ['power', 'error'] and (emodes is None or mass is None):
+        raise ValueError(f"emodes and mass must be provided when using method='{method}'.")
+    if method in ['rayleigh', 'wavelength', 'fwhm'] and evals is None:
+        raise ValueError(f"evals must be provided when using method='{method}'.")
+    if checks is not False:
+        ved = EigenData(mass=mass, evals=evals, data=data, emodes=emodes, checks=checks)
+        data, mass, evals, emodes = ved.data, ved.mass, ved.evals, ved.emodes
 
     # Prelims
-    vf = np.asarray(vfunc, copy=True)
-    vf = vf if vf.ndim > 1 else vf[:, np.newaxis] # ensure 2d for consistent processing
-    n_maps = vf.shape[1]
-    
-    physical_threshold = threshold_method in ['eigenvalue', 'wavelength', 'fwhm']
+    data = np.asarray(data, copy=True)
+    if (return_float := data.ndim == 1):
+        data = data[:, np.newaxis] # ensure 2d for consistent processing
+    n_maps = data.shape[1]
+
+    is_method_physical = method in ['rayleigh', 'wavelength', 'fwhm']
 
     if threshold is None:
-        if physical_threshold:
-            thresholds = _convert_spatial_scale(estimate_fwhm(geometry, vf), input='fwhm', output=threshold_method)
+        if is_method_physical:
+            fwhm = rayleigh_quotient(data, geometry, checks=False)
+            thresholds = convert_spatial_scale(fwhm, input='rayleigh', output=method)
         else: 
-            raise ValueError(f"Threshold must be provided for threshold_method={threshold_method}.")
+            raise ValueError(f"Threshold must be provided for method={method}.")
     elif np.isscalar(threshold):
         thresholds = np.full(n_maps, threshold)
     elif len(threshold) != n_maps:
@@ -632,142 +693,136 @@ def truncate_emodes(geometry: TriaMesh, vfunc, threshold,
         threshold_kwargs = {}
 
     # Get data to threshold against
-    if threshold_method == 'decompose':
-        if emodes is None or mass is None:
-            raise ValueError(f"emodes and mass must be provided when using threshold_method='{threshold_method}'.")
-        betas = decompose(vf, emodes=emodes, mass=mass, **threshold_kwargs)
-        ascending_data = np.cumsum(betas**2, axis=0) # user needs to demean if desired
-        total_power = np.sum(vf * (mass @ vf), axis=0) # = np.diag(vf.T @ mass @ vf)
+    if is_method_physical:
+        if method == 'rayleigh':
+            phys = evals
+        else:
+            phys = np.full(len(evals), np.inf) # default to inf for zero evals to avoid divide-by-zero issues (TODO: consider defining _convert_from_rayleigh(0) = inf)
+            phys[1:] = _convert_from_rayleigh(evals[1:], output=method)
+            phys = -phys
+            thresholds = -thresholds
+        ascending_data = np.broadcast_to(phys[:, np.newaxis], (len(evals), n_maps))
+    elif method == 'power':
+        coeffs = decompose(data, emodes=emodes, mass=mass, **threshold_kwargs)
+        ascending_data = np.cumsum(coeffs**2, axis=0) # user needs to demean if desired
+        total_power = np.sum(data * (mass @ data), axis=0) # = np.diag(data.T @ mass @ data) (TODO: use stats.ssqw)
         thresholds = total_power * (1 - thresholds)
-    elif threshold_method == 'reconstruct':
-        if emodes is None or mass is None:
-            raise ValueError(f"emodes and mass must be provided when using threshold_method='{threshold_method}'.")
+    else:  # method == 'error'
         # TODO : change to new reconstruct
-        # recons = reconstruct(data=vf, emodes=emodes, mass=mass, mode_counts=np.arange(1, emodes.shape[1]+1))
-        # errors = reconstruction_error(vf, recon=recons, mass=mass, **threshold_kwargs)
-        _, errors, _ = reconstruct(data=vf, emodes=emodes, mass=mass, mode_counts=np.arange(1, emodes.shape[1]+1), **threshold_kwargs)
+        # recons = reconstruct(data=data, emodes=emodes, mass=mass, mode_counts=np.arange(1, emodes.shape[1]+1))
+        # errors = reconstruction_error(data, recon=recons, mass=mass, **threshold_kwargs)
+        _, errors, _ = reconstruct(data=data, emodes=emodes, mass=mass,
+                                   mode_counts=np.arange(1, emodes.shape[1]+1), **threshold_kwargs)
         ascending_data = -errors.T # make this (n_modes, n_maps)
         thresholds = -thresholds
-    elif threshold_method == 'eigenvalue':
-        if evals is None:
-            raise ValueError(f"evals must be provided when using threshold_method='{threshold_method}'.")
-        ascending_data = np.broadcast_to(evals[:, np.newaxis], (len(evals), n_maps))
-    elif threshold_method == 'fwhm' or threshold_method == 'wavelength': 
-        if evals is None:
-            raise ValueError(f"evals must be provided when using threshold_method='{threshold_method}'.")
-        data = np.full(len(evals), np.inf) # default to inf for zero evals to avoid divide-by-zero issues
-        data[1:] = convert_from_eigenvalue(evals[1:], output=threshold_method)
-        ascending_data = -np.broadcast_to(data[:, np.newaxis], (len(evals), n_maps))
-        thresholds = -thresholds
-    else: 
-        raise ValueError("Incorrect threshold_method specified.")
 
     # Find the required mode for each map
     # If the threshold is physical, keep only the modes that are strictly below the threshold
     # It the threshold is statistical, use the first mode that crosses the threshold 
-    side = 'right' if physical_threshold else 'left' 
+    side = 'right' if is_method_physical else 'left' 
     n_mode = [np.searchsorted(ascending_data[:,i], thresholds[i], side=side) for i in range(n_maps)]
     n_mode = np.array(n_mode)
     if (failed_indices := np.where(n_mode == ascending_data.shape[0])[0]).size > 0:
         warn(f"Threshold not met for map(s) [{', '.join(map(str, failed_indices))}]. "
              f"All available modes were used. Consider providing more modes or loosening the threshold.")
-    n_mode += not physical_threshold # this is the number of modes to use i.e. the first excluded mode
+    n_mode += not is_method_physical # this is the number of modes to use i.e. the first excluded mode
 
     # Return
-    if output == 'mode': 
-        result = n_mode
-    elif output == 'group':
-        result = mode_to_group(n_mode-1, method='ceil')+1 # number of groups (of last included mode)
-    else: 
-        raise ValueError("Output must be either 'mode' or 'group'.")
+    result = n_mode if output == 'mode' \
+        else mode_to_group(n_mode-1, method='ceil')+1 # number of groups (of last included mode)
     
-    return result if vfunc.ndim > 1 else result.item() # type: ignore # result will only be scalar if vfunc.ndim=1
+    return result.item() if return_float else result # type: ignore # result will only be scalar if data.ndim=1
 
-def estimate_fwhm(surf: TriaMesh | Solver | EigenSolver, vfunc, method='fem', roi_mask=None):
-    if method == 'wb':
-        if isinstance(surf, TriaMesh):
-            return _estimate_fwhm_wb(surf, vfunc, roi_mask=roi_mask)
-        elif isinstance(surf, EigenSolver): 
-            return _estimate_fwhm_wb(surf.geometry, vfunc, roi_mask=roi_mask) 
-        elif isinstance(surf, Solver):
-            raise TypeError("Solver instances cannot be used as they do not have a geometry attribute.")
-        else:
-            raise TypeError("For 'wb' method, geometry must be a TriaMesh or EigenSolver instance.")
-        
-    elif method == 'fem':
-        if isinstance(surf, (Solver, EigenSolver)):
-            stiffness, mass = surf.stiffness, surf.mass
-        elif isinstance(surf, TriaMesh):
-            stiffness, mass = Solver._fem_tria(surf) # doesn't matter if lumped or not
-        else:
-            raise TypeError("For 'fem' method, geometry must be a Solver/EigenSolver/TriaMesh instance.")
-        return _estimate_fwhm_fem(stiffness, mass, vfunc, roi_mask=roi_mask)
-    
-    else:
-        raise ValueError("Method must be either 'wb' or 'fem'.")
-
-def _estimate_fwhm_wb(geometry: TriaMesh, vfunc, roi_mask=None):
+# TODO: move these functions to mesh.py?
+def estimate_fwhm_wb(
+    data: NDArray[np.floating],
+    geometry: TriaMesh,
+    mask: NDArray[np.bool_] | None = None
+) -> float | NDArray[np.floating]:
     """Equivalent to wb_command -metric-estimate-fwhm"""
     # Prelims
-    rois = np.ones(len(geometry.v), dtype=bool) if roi_mask is None else np.asarray(roi_mask, dtype=bool)
-    vf = vfunc[rois, ...]
+    mask = np.ones(len(geometry.v), dtype=bool) if mask is None else np.asarray(mask, dtype=bool,
+                                                                                copy=True)
+    data = data[mask, ...].copy()  # avoid in-place mods
 
     # Get edges
-    adj = geometry.adj_sym[rois, :][:, rois]
+    adj = geometry.adj_sym[mask, :][:, mask]
     rows, cols = adj.nonzero()
     rows, cols = rows[rows>cols], cols[rows>cols]  # Keep only upper triangle indices
 
     # Main computation
-    vg = np.var(vf, axis=0, ddof=0)                           # global variance
-    vl = np.mean((vf[rows, ...] - vf[cols, ...])**2, axis=0)  # local variance
+    vg = np.var(data, axis=0, ddof=0)                           # global variance
+    vl = np.mean((data[rows, ...] - data[cols, ...])**2, axis=0)  # local variance
     
     # In accordance with wb_command, use whole mesh mean edge length (not just mask)
-    lambda_eff = 4 * -np.log(1 - vl / (2 * vg)) / geometry.avg_edge_length()**2
-    return convert_from_eigenvalue(lambda_eff, output='fwhm') # alternate expression, but same as wb_command
+    evals = 4 * -np.log(1 - vl / (2 * vg)) / geometry.avg_edge_length()**2
+    return _convert_from_rayleigh(evals, output='fwhm') # alternate expression, but same as wb_command
 
-def _estimate_fwhm_fem(stiffness, mass, vfunc, roi_mask=None):
-    if roi_mask is not None: # subset stiffness, mass, and vfunc to roi (set diags to correct values)
-        idx = np.asarray(roi_mask, dtype=bool)
-        vf = vfunc[idx, ...]
-        
-        S = stiffness[idx, :][:, idx]
-        S.setdiag(0)
-        S.setdiag(-np.asarray(S.sum(axis=0)).ravel())
+def rayleigh_quotient(
+    data: NDArray[np.floating],
+    geometry: TriaMesh,
+    mask: NDArray[np.bool_] | None = None,
+    checks: bool = True
+) -> float | NDArray[np.floating]:
+    stiffness, mass = Solver._fem_tria(geometry)  # non-lumped mass
+    data = data.copy()  # avoid in-place mods
+    if checks is not False:
+        ved = EigenData(data=data, mass=mass, stiffness=stiffness, checks=checks)
+        data, mass, stiffness = ved.data, ved.mass, ved.stiffness
 
-        M = mass[idx, :][:, idx]
-        m_sum = np.asarray(M.sum(axis=0)).ravel()
-        if M.nnz > M.shape[0]: # consistent
-            target_mass = np.asarray(mass[:, idx].sum(axis=0)).ravel()
-            M.setdiag(M.diagonal() + (target_mass - m_sum))
-        else: # lumped
-            M.setdiag(m_sum)
+    if mask is not None: # subset stiffness, mass, and data to roi (set diags to correct values)
+        mask = np.asarray(mask, dtype=bool, copy=True)
+        data = data[mask, ...]
+        mass, stiffness = _mask_fem_matrices(mask, mass=mass, stiffness=stiffness)
 
-    else: 
-        S, M, vf = stiffness, mass, vfunc
-
-    # Vm = \Sigma_{i=1}^N \beta_i^2 (where \beta_i is the coefficient of mode i in the decomposition of vfunc)
+    # Vm = \Sigma_{i=1}^N \beta_i^2 (where \beta_i is the coefficient of mode i in the decomposition of data)
     # Vs = \Sigma_{i=1}^N \beta_i^2 \lambda_i (where \lambda_i is the eigenvalue of mode i)
     # Vs/Vm = \lambda_{eff} where lambda is the effective eigenvalue of the map (weighted average)
     # If the input is a mode i, then this reduces to \lambda_i for that mode
     # TODO: change to demeanw / stats.py etc
-    vf -= np.average(vf, weights=M.diagonal(), axis=0) # set (mass-weighted) mean to 0
-    Vm = vf * (M @ vf)
-    Vs = vf * (S @ vf) - 0.5 * (S @ vf**2) # keep second term for correction on open meshes
-    lambda_eff = np.sum(Vs, axis=0) / np.sum(Vm, axis=0)
-    return convert_from_eigenvalue(lambda_eff, output='fwhm')
+    data -= np.average(data, weights=mass.diagonal(), axis=0) # set (mass-weighted) mean to 0
+    Vm = np.sum(data * (mass @ data), axis=0)
+    Vs = np.sum(data * (stiffness @ data), axis=0)
+    return Vs / Vm
 
-def _estimate_fwhm_fem_local(stiffness, mass, vfunc):
+def _local_rayleigh_quotient(
+    data: NDArray[np.floating],
+    geometry: TriaMesh,
+    mask: NDArray[np.bool_] | None = None
+) -> NDArray[np.floating]:
+    stiffness, mass = Solver._fem_tria(geometry)  # non-lumped mass
+    data = data.copy() # avoid in-place mods
+
+    if mask is not None: # subset stiffness, mass, and data to roi (set diags to correct values)
+        mask = np.asarray(mask, dtype=bool, copy=True)
+        data = data[mask, ...]
+        mass, stiffness = _mask_fem_matrices(mask, mass=mass, stiffness=stiffness)
+
     # TODO: change to demeanw / stats.py etc
-    vf = vfunc - np.average(vfunc, weights=mass.diagonal(), axis=0) # set (mass-weighted) mean to 0
-    Vm = vf * (mass @ vf)
-    Vs = vf * (stiffness @ vf) - 0.5 * (stiffness @ vf**2)
-    lambda_eff = Vs / Vm
-    return convert_from_eigenvalue(lambda_eff, output='fwhm')
-      
+    data -= np.average(data, weights=mass.diagonal(), axis=0) # set (mass-weighted) mean to 0
+    Vm = data * (mass @ data)
+    Vs = data * (stiffness @ data) - 0.5 * (stiffness @ data**2)
+    return Vs / Vm
+
+def _mask_fem_matrices(
+    mask: NDArray[np.bool_],
+    mass: csc_matrix | None = None,
+    stiffness: csc_matrix | None = None
+) -> tuple[csc_matrix | None, csc_matrix | None]:
+    if mass is not None:
+        target_mass = np.asarray(mass[:, mask].sum(axis=0)).ravel()
+        mass = mass[mask, :][:, mask]
+        areas = np.asarray(mass.sum(axis=0)).ravel()
+        mass.setdiag(mass.diagonal() + (target_mass - areas))
+    if stiffness is not None:
+        stiffness = stiffness[mask, :][:, mask]
+        new_diag = stiffness.diagonal() - np.asarray(stiffness.sum(axis=0)).ravel()
+        stiffness.setdiag(new_diag)
+    return mass, stiffness
 
 def get_eigengroup_inds(
     n_modes: int,
-    ) -> list[NDArray[signedinteger]]:
+) -> list[NDArray[np.signedinteger]]:
     """
     Identify eigengroups based on ordering of spherical harmonics. Each eigengroup 
     contains the next 2k+1 modes, where k is the eigengroup number (starting from 0). If
@@ -793,7 +848,10 @@ def get_eigengroup_inds(
 
 # TODO : clarify that for inputs of the form n^2-1, all methods return n-1 
 # TODO : add overloads for int vs array inputs and int/float outputs
-def mode_to_group(mode_id: int | NDArray, method: str = 'ceil') -> int | float | NDArray:
+def mode_to_group(
+    mode_id: int | NDArray[np.integer],
+    method: Literal['round', 'floor', 'ceil', 'raw'] = 'ceil'
+) -> int | float | NDArray[np.floating]:
     """
     Translates a linear mode index to its spherical harmonic group index.
     
@@ -827,15 +885,18 @@ def mode_to_group(mode_id: int | NDArray, method: str = 'ceil') -> int | float |
 
 # TODO : clarify that for inputs of the form n, all methods return (n+1)^2-1=n(n+2)
 # TODO : add overloads for int vs array inputs and int/float outputs
-def group_to_mode(group_id: int | float | NDArray, method: str = 'ceil') -> int | float | NDArray:
+def group_to_mode(
+    group_id: int | NDArray[np.integer],
+    method: Literal['round', 'floor', 'ceil', 'raw'] = 'ceil'
+) -> float | NDArray[np.integer]:
     """
     Translates a spherical harmonic group index back to a linear mode index.
     
     Parameters
     ----------
-    group_id : int, float, or array_like
+    group_id : int, or array_like
         The index of the harmonic group(s).
-    method : {'ceil', 'floor', 'round', 'raw'}, optional
+    method : {'round', 'floor', 'ceil', 'raw'}, optional
         How to resolve fractional modes. Default is 'ceil', which maps 
         an integer group ID to its terminal (final) mode index.
         'raw' mathematically inverts a fractional group back to its exact mode.
@@ -857,68 +918,80 @@ def group_to_mode(group_id: int | float | NDArray, method: str = 'ceil') -> int 
     result = func(np.asarray(group_id) + 1).astype(outtype)**2 - 1
     return result.item() if np.isscalar(group_id) else result
 
-def convert_to_eigenvalue(value, input, area=None):
-    if input == 'eigenvalue': 
-        return value
-    elif input == 'wavelength':
-        return (2 * np.pi / value)**2
-    elif input == 'fwhm':
-        return 8 * np.log(2) / value**2
-    elif input == 'group':
-        if area is None:
-            raise ValueError("Area must be provided when input is 'group'.")
-        return value * (value + 1) * 4 * np.pi / area
-    elif input == 'mode':
-        if area is None:
-            raise ValueError("Area must be provided when input is 'mode'.")
-        return 4 * np.pi * value / area 
-    else:
-        raise ValueError("Incorrect input specified")
+def _convert_to_rayleigh(
+    values: float | NDArray[np.floating],
+    input: SpatialScale,
+    area: float | None = None
+) -> float | NDArray[np.floating]:
+    match input:
+        case ('group' | 'mode') if area is None:
+            raise ValueError(f"Area must be provided when input is '{input}'.")
+        case 'rayleigh':
+            return values
+        case 'wavelength':
+            return (2 * np.pi / values)**2
+        case 'fwhm':
+            return 8 * np.log(2) / values**2
+        case 'group':
+            return values * (values + 1) * 4 * np.pi / area
+        case 'mode':
+            return 4 * np.pi * values / area
+        case _:
+            raise ValueError("Incorrect input specified")
 
-def convert_from_eigenvalue(eigenvalue, output, area=None):
-    if output == 'eigenvalue': 
-        return eigenvalue
-    elif output == 'wavelength':
-        return 2 * np.pi / np.sqrt(eigenvalue)
-    elif output == 'fwhm':
-        return np.sqrt(8 * np.log(2) / eigenvalue)
-    elif output == 'group':
-        if area is None:
-            raise ValueError("Area must be provided when output is 'group'.")
-        return (np.sqrt(eigenvalue * area / np.pi + 1) - 1) / 2
-    elif output == 'mode':
-        if area is None:
-            raise ValueError("Area must be provided when output is 'mode'.")
-        return eigenvalue * area / (4 * np.pi)
-    else:
-        raise ValueError("Incorrect output specified")
+def _convert_from_rayleigh(
+    rayleigh: float | NDArray[np.floating],
+    output: SpatialScale,
+    area: float | None = None
+) -> float | NDArray[np.floating]:
+    match output:
+        case ('group' | 'mode') if area is None:
+            raise ValueError(f"Area must be provided when output is '{output}'.")
+        case 'rayleigh':
+            return rayleigh
+        case 'wavelength':
+            return 2 * np.pi / np.sqrt(rayleigh)
+        case 'fwhm':
+            return np.sqrt(8 * np.log(2) / rayleigh)
+        case 'group':
+            return (np.sqrt(rayleigh * area / np.pi + 1) - 1) / 2
+        case 'mode':
+            return rayleigh * area / (4 * np.pi)
+        case _:
+            raise ValueError("Incorrect output specified")
+
+def convert_spatial_scale(
+    values: float | NDArray[np.floating],
+    input: SpatialScale,
+    output: SpatialScale,
+    area: float | None = None
+) -> float | NDArray[np.floating]:
+    if input == output:
+        return values
     
-# TODO : consider making public
-def _convert_spatial_scale(data, input, output, area=None):
-    """Convenience function to convert between spatial scale representations without needing to manually convert to eigenvalues."""
-    eigenvalue = convert_to_eigenvalue(data, input=input, area=area)
-    return convert_from_eigenvalue(eigenvalue, output=output, area=area)
+    rayleigh = _convert_to_rayleigh(values, input=input, area=area)
+    return _convert_from_rayleigh(rayleigh, output=output, area=area)
 
 _MISSING = object()  
 @dataclass(frozen=True, init=False)
 class EigenData:
-    emodes: NDArray[floating]
-    evals: NDArray[floating] 
+    emodes: NDArray[np.floating]
+    evals: NDArray[np.floating] 
     mass: csc_matrix
     stiffness: csc_matrix
-    scaled_hetero: NDArray[floating]
-    data: NDArray[floating]
+    scaled_hetero: NDArray[np.floating]
+    data: NDArray[np.floating]
 
     def __init__(
         self,
-        emodes: NDArray[floating] | None = _MISSING, # type: ignore[assignment]
-        evals: NDArray[floating] | None = _MISSING, # type: ignore[assignment] 
+        emodes: NDArray[np.floating] | None = _MISSING, # type: ignore[assignment]
+        evals: NDArray[np.floating] | None = _MISSING, # type: ignore[assignment] 
         mass: csc_matrix | None = _MISSING, # type: ignore[assignment]
         stiffness: csc_matrix | None = _MISSING, # type: ignore[assignment]
-        scaled_hetero: NDArray[floating] | None = _MISSING, # type: ignore[assignment]
-        data: NDArray[floating] | None = _MISSING, # type: ignore[assignment]
+        scaled_hetero: NDArray[np.floating] | None = _MISSING, # type: ignore[assignment]
+        data: NDArray[np.floating] | None = _MISSING, # type: ignore[assignment]
         checks: bool | str = True
-    ):  # TODO: add mask?
+    ) -> None:  # TODO: add mask and geometry?
 
         # Local helper to bypass 'frozen' restriction during initialization
         def _set(name, val):

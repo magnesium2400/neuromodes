@@ -5,10 +5,13 @@ from numpy.testing import assert_allclose
 from lapy import TriaMesh
 from lapy.shapedna import normalize_ev
 import pytest
+from scipy.sparse.linalg import eigsh
 
-from neuromodes.eigen import (EigenSolver, is_orthonormal_basis, scale_hetero, get_eigengroup_inds, 
-                              convert_to_eigenvalue, convert_from_eigenvalue, mode_to_group, group_to_mode, 
-                              estimate_fwhm, truncate_emodes)
+from neuromodes.eigen import (
+    EigenSolver, is_orthonormal_basis, scale_hetero, get_eigengroup_inds, _convert_to_rayleigh,
+    _convert_from_rayleigh, mode_to_group, group_to_mode, estimate_fwhm_wb, rayleigh_quotient,
+    truncate_emodes, _mask_fem_matrices
+    )
 from neuromodes.io import fetch_surf, fetch_map
 from neuromodes.mesh import mask_mesh
 
@@ -359,59 +362,59 @@ def test_get_eigengroup_inds(solver):
     assert solver.emodes[:, :last_mode].shape == solver.emodes.shape, \
         'Last eigengroup indices do not match number of modes.'
     
-class TestEigenvalueConversion:
+class TestRayleighConversion:
     # Tests with manually specified values
-    def test_convert_to_eigenvalue_exact_values(self):
+    def test_convert_to_rayleigh_exact_values(self):
         """Tests that the mathematical formulas are applied correctly."""
         area = 4 * np.pi # sphere of radius 1
-        assert_allclose(convert_to_eigenvalue(2.0, 'eigenvalue'),       2.0)
-        assert_allclose(convert_to_eigenvalue(2.0, 'wavelength'),       np.pi**2)
-        assert_allclose(convert_to_eigenvalue(2.0, 'fwhm'),             2 * np.log(2))
-        assert_allclose(convert_to_eigenvalue(2.0, 'group', area=area), 6.0)
-        assert_allclose(convert_to_eigenvalue(2.0, 'mode', area=area),  2.0)
+        assert_allclose(_convert_to_rayleigh(2.0, 'rayleigh'),       2.0)
+        assert_allclose(_convert_to_rayleigh(2.0, 'wavelength'),       np.pi**2)
+        assert_allclose(_convert_to_rayleigh(2.0, 'fwhm'),             2 * np.log(2))
+        assert_allclose(_convert_to_rayleigh(2.0, 'group', area=area), 6.0)
+        assert_allclose(_convert_to_rayleigh(2.0, 'mode', area=area),  2.0)
 
-    def test_convert_from_eigenvalue_exact_values(self):
+    def test_convert_from_rayleigh_exact_values(self):
         """Tests the inverse mathematical formulas."""
         area = 4 * np.pi # sphere of radius 1
-        assert_allclose(convert_from_eigenvalue(2.0,       'eigenvalue'), 2.0)
-        assert_allclose(convert_from_eigenvalue(np.pi**2,  'wavelength'), 2.0)
-        assert_allclose(convert_from_eigenvalue(2 * np.log(2),   'fwhm'), 2.0)
-        assert_allclose(convert_from_eigenvalue(6.0, 'group', area=area), 2.0)
-        assert_allclose(convert_from_eigenvalue(2.0,  'mode', area=area), 2.0)
+        assert_allclose(_convert_from_rayleigh(2.0,       'rayleigh'), 2.0)
+        assert_allclose(_convert_from_rayleigh(np.pi**2,  'wavelength'), 2.0)
+        assert_allclose(_convert_from_rayleigh(2 * np.log(2),   'fwhm'), 2.0)
+        assert_allclose(_convert_from_rayleigh(6.0, 'group', area=area), 2.0)
+        assert_allclose(_convert_from_rayleigh(2.0,  'mode', area=area), 2.0)
 
     # Test inversions
     @pytest.mark.parametrize('ctype', ['wavelength', 'fwhm', 'group', 'mode'])
     def test_inversions(self, ctype):
-        """Tests that converting to and from an eigenvalue returns the original array."""
+        """Tests that converting to and from rayleigh quotient returns the original array."""
         area = 100.0
         values1 = np.array([0.5, 1.0, 2.5, 10.0, 100.0])
-        evals = convert_to_eigenvalue(values1, input=ctype, area=area)
-        values2 = convert_from_eigenvalue(evals, output=ctype, area=area)
+        rayleigh = _convert_to_rayleigh(values1, input=ctype, area=area)
+        values2 = _convert_from_rayleigh(rayleigh, output=ctype, area=area)
         assert_allclose(values1, values2)
 
     # Exception and validation Tests
-    @pytest.mark.parametrize('direction', [convert_to_eigenvalue, convert_from_eigenvalue])
+    @pytest.mark.parametrize('direction', [_convert_to_rayleigh, _convert_from_rayleigh])
     @pytest.mark.parametrize('ctype', ['group', 'mode'])
     def test_missing_area_errors(self, direction, ctype):
         """Tests that missing area arguments trigger ValueErrors."""
         with pytest.raises(ValueError, match="Area must be provided"):
             direction(5.0, ctype) 
 
-    @pytest.mark.parametrize('direction', [convert_to_eigenvalue, convert_from_eigenvalue])
+    @pytest.mark.parametrize('direction', [_convert_to_rayleigh, _convert_from_rayleigh])
     def test_invalid_type_errors(self, direction):
         """Tests that unrecognized string types trigger ValueErrors."""
         with pytest.raises(ValueError, match=r"Incorrect .*put specified"):
             direction(5.0, 'frequency')
 
     # Zero and inf
-    @pytest.mark.parametrize('direction', [convert_to_eigenvalue, convert_from_eigenvalue])
+    @pytest.mark.parametrize('direction', [_convert_to_rayleigh, _convert_from_rayleigh])
     @pytest.mark.parametrize('ctype', ['wavelength', 'fwhm'])
     def test_zero_division_handling(self, direction, ctype):
         """Tests that the context managers successfully handle division by zero."""
         with pytest.warns(RuntimeWarning, match="divide by zero encountered in .*"):
             # direction(0.0, ctype)
-            evals = np.array([0.0, 1.0, 1.0, 2.0])
-            out = direction(evals, ctype)
+            rayleigh = np.array([0.0, 1.0, 1.0, 2.0])
+            out = direction(rayleigh, ctype)
             assert np.isinf(out[0])
             assert not np.isinf(out[1:]).any()
 
@@ -477,12 +480,16 @@ def sphere():
 class TestFWHM:
     # Test that (i) both methods run on 2d data; (ii) 'fem' is very close to theory; (iii) 'wb'
     # approximately equals theory
-    @pytest.mark.parametrize("method_and_rtol", [('wb', 1e-1), ('fem', 1e-6)])
-    def test_fwhm(self, sphere, method_and_rtol):
-        estimated_value = estimate_fwhm(sphere.geometry, sphere.emodes[:,1:], method=method_and_rtol[0])
+    def test_fwhm(self, sphere):
         theoretical_value = np.sqrt(8 * np.log(2) / sphere.evals[1:])
-        assert np.allclose(estimated_value, theoretical_value, rtol=method_and_rtol[1]), \
-            f"Estimated value does not match theoretical value for method {method_and_rtol[0]}"
+        estimated_value_wb = estimate_fwhm_wb(data=sphere.emodes[:,1:], geometry=sphere.geometry)
+        assert np.allclose(estimated_value_wb, theoretical_value, rtol=1e-1), \
+            "Estimated value does not match theoretical value for workbench method."
+        rq = rayleigh_quotient(data=sphere.emodes[:,1:], geometry=sphere.geometry)
+        area = sphere.mass.sum()
+        estimated_value_fem = _convert_from_rayleigh(rq, output='fwhm', area=area)
+        assert np.allclose(estimated_value_fem, theoretical_value, atol=1e-6), \
+            "Estimated value does not match theoretical value for FEM method."
 
     # Test that 'wb' is very close to values previously computed using wb_command
     def test_fwhm_wb(self):
@@ -507,17 +514,33 @@ class TestFWHM:
             mesh, _ = fetch_surf(surf_type=surf_type, template=template, species=species, density=density, hemi=hemi)
             geometry = TriaMesh(mesh.v, mesh.t)
             vfunc = fetch_map(data=data, template=template, species=species, density=density, hemi=hemi)
-            estimated_fwhm = estimate_fwhm(geometry, vfunc, method='wb')
+            estimated_fwhm = estimate_fwhm_wb(data=vfunc, geometry=geometry)
 
             assert np.allclose(estimated_fwhm, float(expected_fwhm), atol=ATOL), \
                 f"Estimated FWHM ({estimated_fwhm}) does not match expected FWHM ({float(expected_fwhm)}) for {data}"
+            
+    def test_mask_fem_matrices(self, sphere):
+        """Tests that the FEM matrices are correctly masked."""
+        mass, stiffness = sphere.mass, sphere.stiffness
 
-    # Test that roi_mask runs without errors and produces different results than global FWHM (but
+        mask = np.zeros(mass.shape[0], dtype=bool)
+        mask[:mass.shape[0] // 2] = True
+        mass_m, stiffness_m = _mask_fem_matrices(mask, mass=mass, stiffness=stiffness)
+
+        assert mass_m.shape == (mask.sum(), mask.sum()), "Masked mass matrix has incorrect shape."
+        assert stiffness_m.shape == (mask.sum(), mask.sum()), "Masked stiffness matrix has incorrect shape."
+        assert np.all(eigsh(mass_m, k=sphere.n_modes-1, return_eigenvectors=False) > 0), "Masked mass matrix is not positive definite."
+        assert np.all(eigsh(stiffness_m, k=sphere.n_modes-1, return_eigenvectors=False) > -1e-12), "Masked stiffness matrix has negative eigenvalues."
+        assert not (mass_m != mass_m.transpose()).toarray().any(), "Masked mass matrix is not symmetric."
+        assert not (stiffness_m != stiffness_m.transpose()).toarray().any(), "Masked stiffness matrix is not symmetric."
+        assert np.allclose(np.sum(stiffness_m, axis=1), 0, atol=1e-12), "Rows of masked stiffness matrix do not sum to zero."
+        assert (mass.diagonal() > 0).all(), "Diagonal of masked mass matrix has non-positive entries."
+
+    # Test that mask runs without errors and produces different results than global FWHM (but
     # doesn't test actual correctness)
     # TODO : add correctness tests for method fem (what is ground truth)? 
-    @pytest.mark.parametrize("method", ['wb', 'fem'])
-    def test_roi_mask_execution(self, sphere, method):
-        """Tests that the roi_mask successfully evaluates without shape errors."""
+    def test_mask_execution(self, sphere):
+        """Tests that the mask successfully evaluates without shape errors."""
         # Create a dummy mask (e.g., just the first half of the vertices)
         num_vertices = sphere.geometry.v.shape[0]
         mask = np.zeros(num_vertices, dtype=bool)
@@ -525,25 +548,35 @@ class TestFWHM:
         
         # Test 1D array
         vfunc_1d = sphere.emodes[:, 1]
-        fwhm_1d = estimate_fwhm(sphere, vfunc_1d, method=method, roi_mask=mask)
-        assert isinstance(fwhm_1d, float)
-        assert not np.isnan(fwhm_1d)
-        
+        fwhm_1d_wb = estimate_fwhm_wb(data=vfunc_1d, geometry=sphere.geometry, mask=mask)
+        rq_1d = rayleigh_quotient(data=vfunc_1d, geometry=sphere.geometry, mask=mask)
+        fwhm_1d_fem = _convert_from_rayleigh(rq_1d, output='fwhm', area=sphere.mass.sum())
+        assert isinstance(fwhm_1d_wb, float)
+        assert np.isfinite(fwhm_1d_wb).all()
+        assert np.isfinite(fwhm_1d_fem).all()
+
         # Verify FWHM is actually different than the global FWHM
-        global_fwhm = estimate_fwhm(sphere, vfunc_1d, method=method, roi_mask=None)
-        assert fwhm_1d != global_fwhm
+        global_fwhm = estimate_fwhm_wb(data=vfunc_1d, geometry=sphere.geometry, mask=None)
+        assert fwhm_1d_wb != global_fwhm
 
         # Test 2D array
         vfunc_2d = sphere.emodes[:, 1:]
-        fwhm_2d = estimate_fwhm(sphere, vfunc_2d, method=method, roi_mask=mask)
-        assert isinstance(fwhm_2d, np.ndarray)
-        assert fwhm_2d.shape == (sphere.n_modes - 1,)
-        assert not np.isnan(fwhm_2d).any()
-        assert not np.isinf(fwhm_2d).any()
+        fwhm_2d_wb = estimate_fwhm_wb(data=vfunc_2d, geometry=sphere.geometry, mask=mask)
+        assert isinstance(fwhm_2d_wb, np.ndarray)
+        assert fwhm_2d_wb.shape == (sphere.n_modes - 1,)
+        assert np.isfinite(fwhm_2d_wb).all(), "FWHM contains non-finite values."
+
+        rq_2d = rayleigh_quotient(data=vfunc_2d, geometry=sphere.geometry, mask=mask)
+        fwhm_2d_fem = _convert_from_rayleigh(rq_2d, output='fwhm', area=sphere.mass.sum())
+        assert isinstance(fwhm_2d_fem, np.ndarray)
+        assert fwhm_2d_fem.shape == (sphere.n_modes - 1,)
+        assert np.isfinite(fwhm_2d_fem).all(), "FWHM contains non-finite values."
+
+    # TODO: test local FWHM using modes
 
 class TestTruncateEmodes:
-    # Test correctness of decompose
-    def test_truncate_emodes_decompose(self, sphere):
+    # Test correctness of power method
+    def test_truncate_emodes_power(self, sphere):  # TODO: speed up
         betas = np.random.default_rng().standard_normal((sphere.n_modes, 1))
         betas[0] = 0
         vfunc = sphere.emodes @ betas 
@@ -557,17 +590,17 @@ class TestTruncateEmodes:
         for i in range(kmin, sphere.n_modes - 1):
             out = truncate_emodes(
                 geometry=sphere.geometry, 
-                vfunc=vfunc, 
+                data=vfunc, 
                 emodes=sphere.emodes, 
                 mass=sphere.mass, 
-                threshold_method='decompose', 
+                method='power', 
                 threshold=thresholds[i - kmin], 
                 output='mode'
             )
             assert out == i + 1, f"Expected {i + 1} modes, but got {out}."
 
-    # Test correctness of reconstruct
-    def test_truncate_emodes_reconstruct(self, sphere):
+    # Test correctness of error method
+    def test_truncate_emodes_error(self, sphere):
         betas = np.random.default_rng().standard_normal((sphere.n_modes,))
         betas[0] = 0
         vfunc = sphere.emodes @ betas
@@ -581,36 +614,36 @@ class TestTruncateEmodes:
         for i in range(kmin, sphere.n_modes - 1):
             out = truncate_emodes(
                 geometry=sphere.geometry, 
-                vfunc=vfunc, 
+                data=vfunc, 
                 emodes=sphere.emodes, 
                 mass=sphere.mass, 
-                threshold_method='reconstruct', 
+                method='error', 
                 threshold=thresholds[i - kmin], 
                 output='mode'
             )
             assert out == i + 1, f"Expected {i + 1} modes, but got {out}."
     
     # Test correctness of physical methods
-    @pytest.mark.parametrize("threshold_method", ['eigenvalue', 'fwhm', 'wavelength'])
-    def test_truncate_emodes_physical(self, sphere, threshold_method):
+    @pytest.mark.parametrize("method", ['rayleigh', 'fwhm', 'wavelength'])
+    def test_truncate_emodes_physical(self, sphere, method):
         kmin = 3
         thresholds = (sphere.evals[kmin-1:-1] + sphere.evals[kmin:]) / 2
-        thresholds = convert_from_eigenvalue(thresholds, output=threshold_method)
+        thresholds = _convert_from_rayleigh(thresholds, output=method)
 
         for i in range(kmin, sphere.n_modes - 1):
             out = truncate_emodes(
                 geometry=sphere.geometry, 
-                vfunc=sphere.emodes[:, i],
+                data=sphere.emodes[:, i],
                 evals=sphere.evals, 
-                threshold_method=threshold_method, 
+                method=method, 
                 threshold=thresholds[i - kmin], 
                 output='mode'
             )
             assert out == i, f"Expected {i} modes, but got {out}."
 
     # Test auto-thresholding for physical methods
-    @pytest.mark.parametrize("threshold_method", ['eigenvalue', 'fwhm', 'wavelength'])
-    def test_truncate_emodes_auto_threshold(self, sphere, threshold_method):
+    @pytest.mark.parametrize("method", ['rayleigh', 'fwhm', 'wavelength'])
+    def test_truncate_emodes_auto_threshold(self, sphere, method):
         """Tests that passing threshold=None successfully triggers the FWHM estimator."""
         idx = np.random.default_rng().integers(1, sphere.n_modes-1)
         vfunc = sphere.emodes[:, idx] # Use a specific mode as the map
@@ -618,39 +651,39 @@ class TestTruncateEmodes:
         # It should run without raising errors
         out_mode = truncate_emodes(
             geometry=sphere.geometry, 
-            vfunc=vfunc, 
+            data=vfunc, 
             threshold=None, # Trigger auto-fallback
             evals=sphere.evals, 
-            threshold_method=threshold_method, 
+            method=method, 
             output='mode'
         )
         assert isinstance(out_mode, (int, np.integer))
         assert 0 < out_mode <= idx + 1
 
     # Test correctness of statistical thresholding using maps with some betas=0 
-    @pytest.mark.parametrize("threshold_method", ['decompose', 'reconstruct'])
-    def test_truncate_emodes_2d_statistical(self, sphere, threshold_method):
+    @pytest.mark.parametrize("method", ['power', 'error'])
+    def test_truncate_emodes_2d_statistical(self, sphere, method):
         betas = np.random.default_rng().integers(1, 2, size=(sphere.n_modes, sphere.n_modes-3))
         filt = 1 - np.tri(*betas.shape, k=-3).astype(int) 
         vfunc = sphere.emodes @ (betas * filt)
         expected_modes = filt.sum(axis=0)
-        out = truncate_emodes(geometry=sphere.geometry, vfunc=vfunc, 
+        out = truncate_emodes(geometry=sphere.geometry, data=vfunc, 
             emodes=sphere.emodes, evals=sphere.evals, mass=sphere.mass, 
-            threshold_method=threshold_method, threshold=1e-8, output='mode')
+            method=method, threshold=1e-8, output='mode')
         assert np.array_equal(out, expected_modes)
 
     # Test correctness of physical thresholding using maps with some betas=0
-    @pytest.mark.parametrize("threshold_method", ['eigenvalue', 'fwhm', 'wavelength'])
-    def test_truncate_emodes_2d_physical(self, sphere, threshold_method):
+    @pytest.mark.parametrize("method", ['rayleigh', 'fwhm', 'wavelength'])
+    def test_truncate_emodes_2d_physical(self, sphere, method):
         betas = np.random.default_rng().integers(1, 2, size=(sphere.n_modes, sphere.n_modes-3))
         filt = 1 - np.tri(*betas.shape, k=-3).astype(int) 
         vfunc = sphere.emodes @ (betas * filt)
         thresholds = [sphere.evals[i-1] for i in filt.sum(axis=0)]
-        thresholds = convert_from_eigenvalue(thresholds, output=threshold_method)
+        thresholds = _convert_from_rayleigh(thresholds, output=method)
         expected_modes = filt.sum(axis=0)
-        out = truncate_emodes(geometry=sphere.geometry, vfunc=vfunc, 
+        out = truncate_emodes(geometry=sphere.geometry, data=vfunc, 
             emodes=sphere.emodes, evals=sphere.evals, mass=sphere.mass, 
-            threshold_method=threshold_method, threshold=thresholds, output='mode')
+            method=method, threshold=thresholds, output='mode')
         assert np.array_equal(out, expected_modes)
 
     # Test some exceptions
@@ -658,18 +691,17 @@ class TestTruncateEmodes:
         """Tests that missing requirements trigger the correct errors."""
         vfunc = sphere.emodes[:, 1]
         
-        # Missing emodes/mass for decompose
+        # Missing emodes/mass for power method
         with pytest.raises(ValueError, match="emodes and mass must be provided"):
-            truncate_emodes(geometry=sphere.geometry, vfunc=vfunc, threshold=0.05, 
-                            threshold_method='decompose')
+            truncate_emodes(geometry=sphere.geometry, data=vfunc, threshold=0.05, method='power')
             
         # Missing evals for physical properties
         with pytest.raises(ValueError, match="evals must be provided"):
-            truncate_emodes(geometry=sphere.geometry, vfunc=vfunc, threshold=10.0, 
-                            threshold_method='wavelength')
+            truncate_emodes(geometry=sphere.geometry, data=vfunc, threshold=10.0, 
+                            method='wavelength')
             
         # Mismatched threshold array length
         vfunc_2d = sphere.emodes[:, 1:3] # 2 maps
         with pytest.raises(ValueError, match="Length of threshold array must match"):
-            truncate_emodes(geometry=sphere.geometry, vfunc=vfunc_2d, threshold=[0.05], # Only 1 threshold
+            truncate_emodes(geometry=sphere.geometry, data=vfunc_2d, threshold=[0.05], # Only 1 threshold
                             emodes=sphere.emodes, mass=sphere.mass)
