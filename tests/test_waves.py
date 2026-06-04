@@ -4,7 +4,7 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 from neuromodes.io import fetch_surf, fetch_map
-from neuromodes.eigen import EigenSolver, sigmoid_rescale
+from neuromodes.eigen import EigenSolver, scale_hetero
 from neuromodes.waves import (sim_nft_waves, calc_wave_speed, _gen_noise, _sim_nft_waves_fem,
                               _analytical_fc)
 
@@ -12,7 +12,7 @@ from neuromodes.waves import (sim_nft_waves, calc_wave_speed, _gen_noise, _sim_n
 def solver():
     mesh, medmask = fetch_surf(density='4k')
     hetero = fetch_map(data="myelinmap", density="4k")[medmask]
-    hetero = sigmoid_rescale(hetero, alpha=1.0)
+    hetero = scale_hetero(hetero, scaling='sigmoid', alpha=1.0)
     return EigenSolver(mesh, mask=medmask, hetero=hetero).solve(n_modes=100, seed=0)
 
 def test_unusual_wave_speed(solver):
@@ -193,9 +193,9 @@ def test_calc_wave_speed(solver):
     assert isinstance(speed, float), "Output type is not float for hetero=None."
 
     # Heterogeneous case
-    speed = calc_wave_speed(r=18.0, gamma=116, hetero=solver.hetero)
-    assert np.all(speed > 0), "Output contains non-positive wave speeds when using hetero."
-    assert speed.shape == (solver.n_verts,), "Output shape is incorrect when using hetero." # type: ignore
+    speed = calc_wave_speed(r=18.0, gamma=116, scaled_hetero=solver.hetero)
+    assert np.all(speed > 0), "Output contains non-positive wave speeds when using scaled_hetero."
+    assert speed.shape == (solver.n_verts,), "Output shape is incorrect when using scaled_hetero." # type: ignore
 
 def test_analytical_fc(solver):
     sim_ts = solver.sim_nft_waves(nt=1000, dt=0.1, seed=0)

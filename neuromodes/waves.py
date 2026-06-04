@@ -33,7 +33,7 @@ def sim_nft_waves(
     decomp_method: _DecompositionKind = "project",
     mass: csc_matrix | None = None,
     speed_limits: tuple[float, float] | None = (0, 150),
-    hetero: NDArray[floating] | None = None,
+    scaled_hetero: NDArray[floating] | None = None,
     checks: _CheckKind = True,
     seed: int | None = None,
     cache_input: bool = False,
@@ -74,8 +74,8 @@ def sim_nft_waves(
     speed_limits : tuple, optional
         If any wave speeds are outside this range (in meters per second), a warning is raised. If
         ``None``, no warning is raised. Default is ``(0, 150)``.
-    hetero : array-like, optional
-        Heterogeneity map of shape ``(n_verts,)``, used only to check wave speeds (see
+    scaled_hetero : array-like, optional
+        Scaled heterogeneity map of shape ``(n_verts,)``, used only to check wave speeds (see
         ``speed_limits`` above). If not provided, wave speed is assumed to be spatially uniform. To
         scale a heterogeneity map, use :func:`eigen.scale_hetero`.
         Default is ``None``.
@@ -135,11 +135,11 @@ def sim_nft_waves(
     # Format / validate arguments
     if checks is not False:
         ved = EigenData(
-            emodes=emodes, evals=evals, mass=mass, hetero=hetero,
+            emodes=emodes, evals=evals, mass=mass, scaled_hetero=scaled_hetero,
             data = ext_input, checks=checks
             )
         emodes, evals, mass, ext_input = ved.emodes, ved.evals, ved.mass, ved.data
-        hetero = ved.hetero if hetero is not None else hetero
+        scaled_hetero = ved.scaled_hetero if scaled_hetero is not None else scaled_hetero
         
     r = float(r)
     gamma = float(gamma)
@@ -156,11 +156,11 @@ def sim_nft_waves(
             or speed_limits[0] < 0 or speed_limits[0] >= speed_limits[1]):
             raise ValueError("speed_limits must be a tuple of (min_speed, max_speed), where "
                              "0 ≤ min_speed < max_speed.")
-        speed = calc_wave_speed(r, gamma, hetero=hetero)
+        speed = calc_wave_speed(r, gamma, scaled_hetero=scaled_hetero)
         min_speed, max_speed = np.min(speed), np.max(speed)
         if min_speed < speed_limits[0] or max_speed > speed_limits[1]:
             calc_str = min_speed if min_speed == max_speed else f"{min_speed:.1f}-{max_speed:.1f}"
-            warn("The combination of r, gamma, and hetero leads to wave speeds "
+            warn("The combination of r, gamma, and scaled_hetero leads to wave speeds "
                  f"outside the range of {speed_limits[0]}-{speed_limits[1]} m/s (calculated "
                  f"{calc_str} m/s). Consider changing these parameters to ensure physiologically "
                  "plausible wave speeds, or adjust speed_limits.")
@@ -283,7 +283,7 @@ def balloon_model(
 def calc_wave_speed(
     r: float,
     gamma: float,
-    hetero: NDArray[floating] | None = None
+    scaled_hetero: NDArray[floating] | None = None
 ) -> float | NDArray[floating]:
     """
     Calculate wave speed (m/s) based on the two parameters of the wave model. If a scaled
@@ -295,7 +295,7 @@ def calc_wave_speed(
         Axonal length scale for wave propagation in millimeters.
     gamma : float
         Damping parameter for wave propagation in seconds^-1.
-    hetero : array-like, optional
+    scaled_hetero : array-like, optional
         Scaled heterogeneity map of shape (n_verts,). If ``None``, wave speed is assumed to be
         spatially uniform. To scale a heterogeneity map, use :func:eigen.scale_hetero. Default is
         ``None``.
@@ -304,11 +304,11 @@ def calc_wave_speed(
     -------
     float or np.ndarray
         Wave speed across the whole cortex in meters per second, or at each vertex if
-        ``hetero`` is provided.
+        ``scaled_hetero`` is provided.
     """
     speed = (r / 1000) * gamma # Convert r to meters
-    if hetero is not None:
-        speed *= np.sqrt(hetero)
+    if scaled_hetero is not None:
+        speed *= np.sqrt(scaled_hetero)
 
     return speed
 
@@ -680,7 +680,7 @@ def _sim_nft_waves_fem(
     r: float = 17.4,
     gamma: float = 116.0,
     speed_limits: tuple[float, float] | None = (0, 150),
-    hetero: NDArray[floating] | None = None,
+    scaled_hetero: NDArray[floating] | None = None,
     n_jobs: int = 1,
     verbose: int = 0,
     seed: int | None = None,
@@ -732,11 +732,11 @@ def _sim_nft_waves_fem(
             or speed_limits[0] < 0 or speed_limits[0] >= speed_limits[1]):
             raise ValueError("speed_limits must be a tuple of (min_speed, max_speed), where "
                              "0 ≤ min_speed < max_speed.")
-        speed = calc_wave_speed(r, gamma, hetero=hetero)
+        speed = calc_wave_speed(r, gamma, scaled_hetero=scaled_hetero)
         min_speed, max_speed = np.min(speed), np.max(speed)
         if min_speed < speed_limits[0] or max_speed > speed_limits[1]:
             calc_str = min_speed if min_speed == max_speed else f"{min_speed:.1f}-{max_speed:.1f}"
-            warn("The combination of r, gamma, and hetero leads to wave speeds "
+            warn("The combination of r, gamma, and scaled_hetero leads to wave speeds "
                  f"outside the range of {speed_limits[0]}-{speed_limits[1]} m/s (calculated "
                  f"{calc_str} m/s). Consider changing these parameters to ensure physiologically "
                  "plausible wave speeds, or adjust speed_limits.")

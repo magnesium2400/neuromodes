@@ -2,7 +2,7 @@ from pathlib import Path
 from lapy.shapedna import normalize_ev
 import numpy as np
 import pytest
-from neuromodes.eigen import EigenSolver, is_orthonormal_basis, sigmoid_rescale, get_eigengroup_inds
+from neuromodes.eigen import EigenSolver, is_orthonormal_basis, scale_hetero, get_eigengroup_inds
 from neuromodes.io import fetch_surf, fetch_map
 from neuromodes.mesh import mask_mesh
 
@@ -10,7 +10,7 @@ from neuromodes.mesh import mask_mesh
 def surf_medmask_hetero():
     mesh, medmask = fetch_surf(density='4k')
     hetero = fetch_map(data="myelinmap", density="4k")
-    hetero = sigmoid_rescale(hetero, alpha=0.5)
+    hetero = scale_hetero(hetero, scaling='sigmoid', alpha=0.5)
     return mesh, medmask, hetero
 
 def test_init_params(surf_medmask_hetero):
@@ -316,12 +316,22 @@ def test_check_euclidean_orthonorm():
     assert is_orthonormal_basis(vecs, mass=np.eye(5)) # type: ignore
     assert not is_orthonormal_basis(vecs, mass=np.ones((5, 5))) # type: ignore
 
-def test_sigmoid_rescale(surf_medmask_hetero):
+def test_scale_hetero(surf_medmask_hetero):
     _, _, hetero = surf_medmask_hetero
 
-    # Check that sigmoid-scaled hetero is within (0, 2) by default
-    hetero_sig = sigmoid_rescale(hetero, alpha=0.5)
+    # Check that sigmoid-scaled hetero is within (0, 2)
+    hetero_sig = scale_hetero(hetero)
     assert np.all((hetero_sig > 0) & (hetero_sig < 2))
+
+    # Check that exponential-scaled hetero is all positive
+    hetero_exp = scale_hetero(hetero, scaling='exponential')
+    assert np.all(hetero_exp > 0)
+
+def test_invalid_scale_hetero(surf_medmask_hetero):
+    _, _, hetero = surf_medmask_hetero
+
+    with pytest.raises(ValueError, match="Invalid scaling 'plantasia'"):
+        scale_hetero(hetero, scaling='plantasia')
 
 def test_get_eigengroup_inds(solver):
     # Test that function returns correct groups for 8 modes
