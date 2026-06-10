@@ -669,7 +669,7 @@ class EigenData:
     mass: csc_matrix
     stiffness: csc_matrix
     scaled_hetero: NDArray[np.floating]
-    data: NDArray[np.floating]
+    data: NDArray[np.floating] | tuple[NDArray[np.floating]] | list[NDArray[np.floating]]
     """
     Helper dataclass for validating and standardising common arguments.
     """
@@ -680,9 +680,10 @@ class EigenData:
         mass: csc_matrix | None = _MISSING, # type: ignore[assignment]
         stiffness: csc_matrix | None = _MISSING, # type: ignore[assignment]
         scaled_hetero: NDArray[np.floating] | None = _MISSING, # type: ignore[assignment]
-        data: NDArray[np.floating] | None = _MISSING, # type: ignore[assignment]
+        data: NDArray[np.floating] | tuple[NDArray[np.floating]] | list[NDArray[np.floating]] | None = _MISSING, # type: ignore[assignment]
         checks: _CheckKind = True
     ):  # TODO: add mask?
+        # TODO: refactor to use helper functions
 
         # Local helper to bypass 'frozen' restriction during initialization
         def _set(name, val):
@@ -768,15 +769,30 @@ class EigenData:
                     )
             
         if data is not _MISSING:
-            if check_maps and data is not None: # if check_maps is True, always check the shape
-                data = np.asarray(data)
-                if np.isnan(data).any(): 
-                    warn("NaN values detected in data, which may cause issues with computations.")
-                if np.isinf(data).any():
-                    warn("Inf values detected in data, which may cause issues with computations.")
-                if n_verts is not None and data.shape[0] != n_verts:
-                    raise ValueError(f"data must have first dimension {n_verts} to match the other "
-                                     "variables.")
+            if check_maps: # if check_maps is True, always check the shape
+                # Convert single data array to iterable for consistent processing
+                if not isinstance(data, (tuple, list)):
+                    data = [data]
+                
+                # check shape and for NaN/Inf values in each data array
+                data_proc = []
+                for d in data:
+                    if d is not None:
+                        d = np.asarray(d)
+                        if np.isnan(d).any(): 
+                            warn("NaN values detected in data, which may cause issues with computations.")
+                        if np.isinf(d).any():
+                            warn("Inf values detected in data, which may cause issues with computations.")
+                        if n_verts is None:
+                            n_verts = d.shape[0]  # Establish the ground truth if not set
+                        elif n_verts != d.shape[0]:
+                            raise ValueError(f"data must have first dimension n_verts = {n_verts} to "
+                                            "match the other arguments.")
+                    data_proc.append(d)
+                
+                # Convert to tuple if needed
+                data = tuple(data_proc) if len(data_proc) > 1 else data_proc[0]
+                    
             _set('data', data)
 
         # Check mass-orthonormality

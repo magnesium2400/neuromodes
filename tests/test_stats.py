@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+from scipy import sparse
 from scipy.spatial.distance import cdist, pdist
 from scipy.stats import zscore
 from neuromodes.stats import (gramw, dotw, ssqw, lstsqw, solvew, cdistw, pdistw, meanw, demeanw,
@@ -15,8 +16,8 @@ def random_data():
     X = rng.standard_normal(size=(n_verts, n_maps))
     Y = rng.standard_normal(size=(n_verts, n_maps))
 
-    eye = np.eye(n_verts) # identity mass for testing
-    noneye = np.arange(1, n_verts + 1)[:, None] * eye
+    eye = sparse.eye(n_verts)  # identity mass for testing
+    noneye = sparse.diags(np.arange(1, n_verts + 1), dtype=np.float64)
 
     return X, Y, eye, noneye
 
