@@ -14,14 +14,6 @@ def surf_medmask_hetero():
     mass = EigenSolver(surf, mask=medmask).compute_lbo().mass
     hetero = sigmoid_rescale(zscorew(hetero, mass), steepness=0.5, upper=2.0)
     return surf, medmask, hetero
-    
-def test_unmasked_hetero(surf_medmask_hetero):
-    surf, medmask, hetero = surf_medmask_hetero
-
-    # check that hetero can be provided as unmasked (TODO: consider banning this actually, because
-    # z-scoring should be done on the masked data and will be different on unmasked)
-    hetero = np.concatenate([hetero, np.ones((~medmask).sum())])
-    _ = EigenSolver(surf, mask=medmask, hetero=hetero)
 
 def test_invalid_mask_shape(surf_medmask_hetero):
     surf, _, _ = surf_medmask_hetero
@@ -48,7 +40,7 @@ def test_no_hetero(surf_medmask_hetero):
 def test_invalid_hetero_shape(surf_medmask_hetero):
     surf, medmask, _ = surf_medmask_hetero
     bad_hetero = np.ones(10)
-    with pytest.raises(ValueError, match=r"vertices in the provided mesh \(3619\)"):
+    with pytest.raises(ValueError, match=r"shape \(n_verts,\) = \(3619,\)"):
         EigenSolver(surf, mask=medmask, hetero=bad_hetero)
 
 def test_nan_hetero(surf_medmask_hetero):
@@ -61,14 +53,6 @@ def test_nan_hetero(surf_medmask_hetero):
     bad_hetero[0] = np.inf
     with pytest.raises(ValueError, match="array must not contain infs or NaNs"):
         EigenSolver(surf, mask=medmask, hetero=bad_hetero)
-
-def test_constant_hetero(surf_medmask_hetero):
-    surf, medmask, _ = surf_medmask_hetero
-
-    hetero = np.ones(surf.v.shape[0])
-
-    with pytest.warns(UserWarning, match="Provided hetero is constant"):
-        EigenSolver(surf, mask=medmask, hetero=hetero)
 
 def test_nan_hetero_medmask(surf_medmask_hetero):
     # Inject NaN at a cortical vertex (should raise error)
@@ -87,8 +71,7 @@ def test_hetero_ones(surf_medmask_hetero):
     hetero = np.ones(sum(medmask))
 
     homo_solver = EigenSolver(surf, mask=medmask).solve(20, seed=0)
-    with pytest.warns(UserWarning, match="Provided hetero is constant"):
-        het_solver = EigenSolver(surf, mask=medmask, hetero=hetero).solve(20, seed=0)
+    het_solver = EigenSolver(surf, mask=medmask, hetero=hetero).solve(20, seed=0)
 
     assert np.allclose(het_solver.evals, homo_solver.evals), \
         'Eigenvalues with hetero=ones do not match homogeneous eigenvalues.'
@@ -96,10 +79,10 @@ def test_hetero_ones(surf_medmask_hetero):
         assert np.allclose(het_solver.emodes[:, i], homo_solver.emodes[:, i], atol=1e-4), \
             f'Eigenmode {i+1} with hetero=ones does not match its homogeneous equivalent.'
 
-def test_real_heteromaps(surf_medmask_hetero):
+def test_real_heteromaps():
     mesh, medmask = fetch_example_surf() # 32k density to match real maps
     for map in ['fcgradient1', 'myelinmap', 'ndi', 'odi', 'thickness']:
-        hetero = fetch_example_map(map)
+        hetero = fetch_example_map(map)[medmask]
         EigenSolver(mesh, mask=medmask, hetero=hetero) # just test that it initializes without error
 
 @pytest.fixture(scope="module")
