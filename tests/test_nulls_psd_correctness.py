@@ -69,3 +69,5 @@ def test_randomize_True(solver, n_nulls):
 # TODO: consider testing the distributions of the null beta coefficients: 
 #   - each null should be chi-square distributed with dof = number of modes in group
 #   -  mean = function of group PSD, and original beta of that mode if randomize=False
+
+# TODO: test that default params preserve mass-weighted mean of map
