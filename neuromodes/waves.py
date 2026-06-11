@@ -15,7 +15,6 @@ from neuromodes.basis import decompose
 
 if TYPE_CHECKING:
     from typing import Literal
-    from numpy import floating
     from scipy.sparse import csc_matrix
     from neuromodes.eigen import _CheckKind
     from neuromodes.basis import _DecompositionKind
@@ -33,7 +32,7 @@ def sim_nft_waves(
     mass: csc_matrix | None = None,
     stiffness: csc_matrix | None = None, # only used for FEM
     speed_limits: tuple[float, float] | None = (0, 150),
-    scaled_hetero: NDArray | None = None,
+    hetero: NDArray[np.floating] | None = None,
     checks: _CheckKind = True,
     seed: int | None = None,
     cache_input: bool = False,
@@ -71,8 +70,8 @@ def sim_nft_waves(
     speed_limits : tuple, optional
         If any wave speeds are outside this range (in meters per second), a warning is raised. If
         ``None``, no warning is raised. Default is ``(0, 150)``.
-    scaled_hetero : array-like, optional
-        Scaled heterogeneity map of shape ``(n_verts,)``, used only to check wave speeds (see
+    hetero : array-like, optional
+        Heterogeneity map of shape ``(n_verts,)``, used only to check wave speeds (see
         ``speed_limits`` above). If not provided, wave speed is assumed to be spatially uniform. To
         scale a heterogeneity map, use :func:`eigen.scale_hetero`.
         Default is ``None``.
@@ -133,10 +132,10 @@ def sim_nft_waves(
     if checks is not False:
         ved = EigenData(
             emodes=emodes, evals=evals, mass=mass, stiffness=stiffness, 
-            scaled_hetero=scaled_hetero, data=ext_input, checks=checks
+            hetero=hetero, data=ext_input, checks=checks
             )
-        emodes, evals, mass, stiffness, ext_input, scaled_hetero = \
-            ved.emodes, ved.evals, ved.mass, ved.stiffness, ved.data, ved.scaled_hetero
+        emodes, evals, mass, stiffness, ext_input, hetero = \
+            ved.emodes, ved.evals, ved.mass, ved.stiffness, ved.data, ved.hetero
         
     if emodes is not None: 
         n_verts = emodes.shape[0]
@@ -162,11 +161,11 @@ def sim_nft_waves(
             or speed_limits[0] < 0 or speed_limits[0] >= speed_limits[1]):
             raise ValueError("speed_limits must be a tuple of (min_speed, max_speed), where "
                              "0 ≤ min_speed < max_speed.")
-        speed = calc_wave_speed(r, gamma, scaled_hetero=scaled_hetero)
+        speed = calc_wave_speed(r, gamma, hetero=hetero)
         min_speed, max_speed = np.min(speed), np.max(speed)
         if min_speed < speed_limits[0] or max_speed > speed_limits[1]:
             calc_str = min_speed if min_speed == max_speed else f"{min_speed:.1f}-{max_speed:.1f}"
-            warn("The combination of r, gamma, and scaled_hetero leads to wave speeds "
+            warn("The combination of r, gamma, and hetero leads to wave speeds "
                  f"outside the range of {speed_limits[0]}-{speed_limits[1]} m/s (calculated "
                  f"{calc_str} m/s). Consider changing these parameters to ensure physiologically "
                  "plausible wave speeds, or adjust speed_limits.")
@@ -210,14 +209,14 @@ def sim_nft_waves(
     return emodes @ activity_coeffs
 
 def balloon_model(
-    activity: NDArray[floating],
+    activity: NDArray[np.floating],
     dt: float,
-    emodes: NDArray[floating],
+    emodes: NDArray[np.floating],
     pde_method: _PDEKind = "fourier",
     mass: csc_matrix | None = None,
     checks: _CheckKind = True,
     **params
-) -> NDArray[floating]:
+) -> NDArray[np.floating]:
     """
     Transform simulated activity to blood oxygen level-dependent (BOLD) signal using the
     Balloon-Windkessel model [1]_ [2]_.
@@ -291,8 +290,8 @@ def balloon_model(
 def calc_wave_speed(
     r: float,
     gamma: float,
-    scaled_hetero: NDArray[floating] | None = None
-) -> float | NDArray[floating]:
+    hetero: NDArray[np.floating] | None = None
+) -> float | NDArray[np.floating]:
     """
     Calculate wave speed (m/s) based on the two parameters of the wave model. If a scaled
     heterogeneity map is provided, wave speeds are calculated for each cortical vertex.
@@ -303,7 +302,7 @@ def calc_wave_speed(
         Axonal length scale for wave propagation in millimeters.
     gamma : float
         Damping parameter for wave propagation in seconds^-1.
-    scaled_hetero : array-like, optional
+    hetero : array-like, optional
         Scaled heterogeneity map of shape (n_verts,). If ``None``, wave speed is assumed to be
         spatially uniform. To scale a heterogeneity map, use :func:eigen.scale_hetero. Default is
         ``None``.
@@ -312,11 +311,11 @@ def calc_wave_speed(
     -------
     float or np.ndarray
         Wave speed across the whole cortex in meters per second, or at each vertex if
-        ``scaled_hetero`` is provided.
+        ``hetero`` is provided.
     """
     speed = (r / 1000) * gamma # Convert r to meters
-    if scaled_hetero is not None:
-        speed *= np.sqrt(scaled_hetero)
+    if hetero is not None:
+        speed *= np.sqrt(hetero)
 
     return speed
 
@@ -324,7 +323,7 @@ def _gen_noise(
     n_verts: int,
     nt: int,
     seed: int | None
-) -> NDArray[floating]:
+) -> NDArray[np.floating]:
     """
     Generate reproducible white noise of shape ``(n_verts, nt)`` for a given ``seed``, derived from
     a standard normal distribution. The output is reproducible across nt (i.e.,
@@ -349,12 +348,12 @@ def _gen_noise(
     return rng.standard_normal((nt, n_verts)).T
 
 def _model_wave_fourier(
-    input_coeffs: NDArray[floating],
+    input_coeffs: NDArray[np.floating],
     dt: float,
     r: float,
     gamma: float,
-    evals: NDArray[floating]
-) -> NDArray[floating]:
+    evals: NDArray[np.floating]
+) -> NDArray[np.floating]:
     """
     Simulates the time evolution of wave models for all modes using a frequency-domain approach.
     This function applies a Fourier transform to the input mode coefficients, computes the system's
@@ -421,12 +420,12 @@ def _model_wave_fourier(
     return out_full[:, nt:]
 
 def _model_wave_ode(
-    input_coeffs: NDArray[floating],
+    input_coeffs: NDArray[np.floating],
     dt: float,
     r: float,
     gamma: float,
-    evals: NDArray[floating]
-) -> NDArray[floating]:
+    evals: NDArray[np.floating]
+) -> NDArray[np.floating]:
     """
     Solves the damped wave ODE for all eigenmodes.
 
@@ -493,7 +492,7 @@ def _model_wave_ode(
     return mode_coeffs
 
 def _model_balloon_fourier(
-    activity_coeffs: NDArray[floating],
+    activity_coeffs: NDArray[np.floating],
     dt: float,
     kappa: float = 0.65,
     tau: float = 0.98,
@@ -504,7 +503,7 @@ def _model_balloon_fourier(
     k1: float = 3.72,
     k2: float = 0.527,
     k3: float = 0.48
-) -> NDArray[floating]:
+) -> NDArray[np.floating]:
     """
     Simulates the hemodynamic response of all modes using the balloon model in the frequency domain.
     This function computes the balloon model's frequency response and applies it to the input mode
@@ -586,7 +585,7 @@ def _model_balloon_fourier(
     return out_full[:, nt:]
 
 def _model_balloon_ode(
-    activity_coeffs: NDArray[floating],
+    activity_coeffs: NDArray[np.floating],
     dt: float,
     kappa: float = 0.65,
     tau: float = 0.98,
@@ -597,7 +596,7 @@ def _model_balloon_ode(
     k1: float = 3.72,
     k2: float = 0.527,
     k3: float = 0.48
-) -> NDArray[floating]:
+) -> NDArray[np.floating]:
     """
     Simulates the hemodynamic response of all modes using the balloon model in the time domain (ODE 
     approach). This function numerically integrates the balloon model ODEs for each input mode 
@@ -687,6 +686,8 @@ def _model_wave_fem(
     dt: float = 1e-4,
     r: float = 17.4,
     gamma: float = 116.0,
+    speed_limits: tuple[float, float] | None = (0, 150),
+    hetero: NDArray[np.floating] | None = None,
     n_jobs: int = 1,
     verbose: int = 0 # for Parallel only (consider making **Parallel_kwargs)
 ) -> NDArray[np.floating]:
@@ -694,7 +695,77 @@ def _model_wave_fem(
     Full FEM version of ``sim_nft_waves()``, for validating the eigenmode expansion approach.
     """
     # Format / validate arguments
-    nt = ext_input.shape[1]
+    parallel = False
+    if n_jobs > 1 or n_jobs == -1:
+        try:
+            from joblib import Parallel, delayed
+            parallel = True
+        except ImportError:
+            warn("joblib is not installed; parallel computation of frequencies will be disabled. "
+                "Neuromodes can be installed with the 'cache' extra to include joblib as a "
+                "dependency (e.g., pip install neuromodes[cache]).")
+
+    r = float(r)
+    gamma = float(gamma)
+
+    if checks:
+        ved = EigenData(mass=mass, stiffness=stiffness)
+        mass, stiffness = ved.mass, ved.stiffness
+    else: 
+        mass = csc_matrix(mass)
+        stiffness = csc_matrix(stiffness)
+    assert mass is not None
+    
+    mass_diag = mass.diagonal()
+    mass_off_diag = mass - diags(mass_diag, format='csc')
+    if np.any(mass_diag <= 0) or np.any(~np.isfinite(mass_diag)) or mass_off_diag.nnz != 0:
+        raise ValueError("mass matrix must have positive, finite diagonal entries and no "
+                         "off-diagonal elements (lumped).")
+    if np.any(stiffness.diagonal() < 0) or np.any(~np.isfinite(stiffness.diagonal())):
+        raise ValueError("stiffness matrix must have non-negative, finite diagonal entries.")
+    if r <= 0:
+        raise ValueError("Parameter r must be positive.")
+    if gamma <= 0:
+        raise ValueError("Parameter gamma must be positive.")
+    if dt <= 0:
+        raise ValueError("dt must be positive.")
+    if nt is not None and (not isinstance(nt, int) or nt <= 0):
+        raise ValueError("nt must be None or a positive integer.")
+    if speed_limits is not None:
+        if (not isinstance(speed_limits, tuple) or not len(speed_limits) == 2
+            or speed_limits[0] < 0 or speed_limits[0] >= speed_limits[1]):
+            raise ValueError("speed_limits must be a tuple of (min_speed, max_speed), where "
+                             "0 ≤ min_speed < max_speed.")
+        speed = calc_wave_speed(r, gamma, hetero=hetero)
+        min_speed, max_speed = np.min(speed), np.max(speed)
+        if min_speed < speed_limits[0] or max_speed > speed_limits[1]:
+            calc_str = min_speed if min_speed == max_speed else f"{min_speed:.1f}-{max_speed:.1f}"
+            warn("The combination of r, gamma, and hetero leads to wave speeds "
+                 f"outside the range of {speed_limits[0]}-{speed_limits[1]} m/s (calculated "
+                 f"{calc_str} m/s). Consider changing these parameters to ensure physiologically "
+                 "plausible wave speeds, or adjust speed_limits.")
+
+    if ext_input is not None:
+        ext_input = np.asarray_chkfinite(ext_input)
+        if nt is not None:
+            warn("nt is ignored when ext_input is provided.")
+        if seed is not None:
+            warn("seed is ignored when ext_input is provided.")
+        if cache_input:
+            warn("cache_input is ignored when ext_input is provided.")
+        nt = ext_input.shape[1]
+    elif nt is not None:
+        if cache_input and seed is not None:
+            from neuromodes.io import _cache_output
+            noise_func = _cache_output(_gen_noise)
+        else:
+            if cache_input and seed is None:
+                warn("cache_input is ignored when seed is None.")
+            noise_func = _gen_noise
+
+        ext_input = np.asarray(noise_func(mass.shape[0], nt, seed=seed))
+    else:
+        raise ValueError("Either nt or ext_input must be provided.")
 
     # Pad input with zeros on negative side to ensure causality (system is only driven for t >= 0)
     # This is required for the correct Green's function solution of the damped wave equation.
@@ -749,10 +820,10 @@ def _solve_fem_freq(
     return linalg.splu(operator).solve(input)
 
 def _analytical_fc(
-    emodes: NDArray[floating],
-    evals: NDArray[floating],
+    emodes: NDArray[np.floating],
+    evals: NDArray[np.floating],
     r: float
-) -> NDArray[floating]:
+) -> NDArray[np.floating]:
     """
     Calculate the analytical FC for the wave model under white noise input.
 

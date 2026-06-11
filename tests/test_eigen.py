@@ -2,20 +2,21 @@ from pathlib import Path
 from lapy.shapedna import normalize_ev
 import numpy as np
 import pytest
-from neuromodes.eigen import EigenSolver, is_orthonormal_basis, scale_hetero, get_eigengroup_inds
+from scipy.stats import zscore  # TODO: replace with stats.zscorew
+from neuromodes.eigen import EigenSolver, is_orthonormal_basis, sigmoid_rescale, get_eigengroup_inds
 from neuromodes.io import fetch_example_surf, fetch_example_map
 from neuromodes.mesh import mask_mesh
 
 @pytest.fixture(scope="module")
 def surf_medmask_hetero():
     mesh, medmask = fetch_example_surf(density='4k')
-    hetero = fetch_example_map(data="myelinmap", density="4k")
+    hetero = fetch_map(data="myelinmap", density="4k")
+    hetero = sigmoid_rescale(zscore(hetero), steepness=0.5, upper=2.0)
     return mesh, medmask, hetero
 
 def test_init_params(surf_medmask_hetero):
     surf, medmask, hetero = surf_medmask_hetero
-    _ = EigenSolver(surf, mask=medmask, hetero=hetero, alpha=0.5,
-                         scaling='exponential')
+    _ = EigenSolver(surf, mask=medmask, hetero=hetero)
     
 def test_premasked_surf(surf_medmask_hetero):
     surf, medmask, hetero = surf_medmask_hetero
@@ -47,13 +48,6 @@ def test_no_hetero(surf_medmask_hetero):
             f'Eigenmode {i} does not match the previously computed homogeneous result.'
         assert np.allclose(homogenous_solver.evals[i], prior_evals[i], rtol=0.1), \
             f'Eigenvalue {i} does not match the previously computed homogeneous result.'
-        
-def test_no_hetero_alpha_scaling(surf_medmask_hetero):
-    surf, medmask, _ = surf_medmask_hetero
-    with pytest.warns(UserWarning, match="alpha is ignored"):
-        EigenSolver(surf, mask=medmask, hetero=None, alpha=0.5)
-    with pytest.warns(UserWarning, match="scaling is ignored"):
-        EigenSolver(surf, mask=medmask, hetero=None, scaling='exponential')
 
 def test_invalid_hetero_shape(surf_medmask_hetero):
     surf, _, _ = surf_medmask_hetero
@@ -323,22 +317,12 @@ def test_check_euclidean_orthonorm():
     assert is_orthonormal_basis(vecs, mass=np.eye(5)) # type: ignore
     assert not is_orthonormal_basis(vecs, mass=np.ones((5, 5))) # type: ignore
 
-def test_scale_hetero(surf_medmask_hetero):
-    _, _, hetero = surf_medmask_hetero
+def test_sigmoid_rescale():
+    hetero = np.random.default_rng().normal(loc=100, scale=10, size=1000)
 
     # Check that sigmoid-scaled hetero is within (0, 2)
-    hetero_sig = scale_hetero(hetero)
+    hetero_sig = sigmoid_rescale(zscore(hetero), steepness=0.5, upper=2.0)
     assert np.all((hetero_sig > 0) & (hetero_sig < 2))
-
-    # Check that exponential-scaled hetero is all positive
-    hetero_exp = scale_hetero(hetero, scaling='exponential')
-    assert np.all(hetero_exp > 0)
-
-def test_invalid_scale_hetero(surf_medmask_hetero):
-    _, _, hetero = surf_medmask_hetero
-
-    with pytest.raises(ValueError, match="Invalid scaling 'plantasia'"):
-        scale_hetero(hetero, scaling='plantasia')
 
 def test_get_eigengroup_inds(solver):
     # Test that function returns correct groups for 8 modes

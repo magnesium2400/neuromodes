@@ -85,8 +85,6 @@ class EigenSolver(Solver):
         mask: NDArray[np.bool_] | None = None,
         normalize: bool = False,
         hetero: NDArray[np.floating] | None = None,
-        alpha: float | None = None, # default to 1.0 if hetero given (and remains None)
-        scaling: Literal['sigmoid', 'exponential'] | None = None  # default to "sigmoid" if hetero given (and remains None)
     ):
         # Read in surface mesh
         geometry = read_surf(geometry)
@@ -105,34 +103,26 @@ class EigenSolver(Solver):
 
         # Hetero inputs
         if hetero is None:
-            if scaling is not None:
-                warn("scaling is ignored as hetero is None.")
-            if alpha is not None:
-                warn("alpha is ignored as hetero is None.")
+            self.hetero = None
+        elif hetero.ndim != 1:
+            raise ValueError("hetero must be a 1D array of length matching the number of vertices.")
+        elif hetero.shape == (geometry.v.shape[0],):
+            self.hetero = np.asarray_chkfinite(hetero)
+        elif mask is not None and hetero.shape == (mask.shape[0],):
+            self.hetero = np.asarray_chkfinite(hetero[mask])
         else:
-            hetero = np.asarray(hetero)  # chkfinite in scale_hetero
-            alpha = 1.0 if alpha is None else float(alpha)
-            scaling = "sigmoid" if scaling is None else scaling
-
-            # Ensure hetero has correct length (masked or unmasked)
-            if mask is not None and hetero.shape == (len(mask),):
-                hetero = hetero[mask]
-            elif hetero.shape != (geometry.v.shape[0],):
-                err_str = f"the number of vertices in the provided mesh ({geometry.v.shape[0]})"
-                if mask is not None:
-                    err_str += f" or the masked mesh ({mask.sum()})"
-                raise ValueError(f"hetero must be a 1D array with length matching {err_str}.")
-
-            # Scale the heterogeneity map
-            hetero = scale_hetero(hetero, alpha=alpha, scaling=scaling)
+            err_str = f"the number of vertices in the provided mesh ({geometry.v.shape[0]})"
+            if mask is not None:
+                err_str += f" or the masked mesh ({mask.sum()})"
+            raise ValueError(f"hetero must be a 1D array with length matching {err_str}.")
+        
+        if self.hetero is not None and np.all(self.hetero == self.hetero[0]):
+            warn("Provided hetero is constant")
 
         # Assign attributes
         self.geometry = geometry
         self.n_verts = geometry.v.shape[0]  # Nicety
         self.mask = mask
-        self.hetero = hetero
-        self._scaling = scaling    
-        self._alpha = alpha
         self.use_cholmod = False  # Permit lapy.eigs()
 
     def __str__(self) -> str:
@@ -422,7 +412,7 @@ class EigenSolver(Solver):
     ) -> NDArray[np.floating]:
         """
         This is a wrapper for :func:`~neuromodes.waves.sim_nft_waves`. Note that ``emodes``,
-        ``evals``, ``mass``, ``scaled_hetero``, and ``checks`` are passed automatically by the
+        ``evals``, ``mass``, ``hetero``, and ``checks`` are passed automatically by the
         ``EigenSolver`` instance.
         """
         from neuromodes.waves import sim_nft_waves
@@ -433,8 +423,8 @@ class EigenSolver(Solver):
             emodes=self.emodes,
             evals=self.evals,
             mass=self.mass,
+            hetero=self.hetero,
             stiffness=self.stiffness,
-            scaled_hetero=self.hetero,
             checks='maps',
             **kwargs
         )
@@ -504,56 +494,56 @@ class EigenSolver(Solver):
             **kwargs
         )
 
-def scale_hetero(
-    hetero: NDArray[np.floating],
-    alpha: float = 1.0,
-    scaling: Literal['sigmoid', 'exponential'] = "sigmoid"
+# TODO: move to stats.py
+def sigmoid_rescale(
+    data: NDArray[np.floating],
+    steepness: float = 1.0,
+    upper: float = 1.0,
+    lower: float = 0.0,
+    center: float = 0.0,
+    checks: bool = True
 ) -> NDArray[np.floating]:
     """
-    Scales a heterogeneity map using specified normalization and scaling functions.
-    
+    Rescales the input data to be within the range ``(lower, upper)`` by applying to each ``data``
+    value ``x`` the sigmoid function ``f(x) = lower + (upper - lower) / (1 + exp(-steepness * (x -
+    center)))``.
+
+    If scaling heterogeneity maps for use in ``EigenSolver``, it is recommended to first z-score
+    each map, then use ``lower=0``, ``upper=2``, and ``center=0``. In this case, ``steepness`` will
+    match the alpha parameter used in previous work [1]_.
+
     Parameters
     ----------
-    hetero : array-like
-        The heterogeneity map to be scaled.
-    alpha : float, optional
-        Scaling parameter controlling the strength of the transformation. Default is ``1.0``.
-    scaling : str, optional
-        The scaling function to apply to the heterogeneity map, either ``'sigmoid'`` or
-        ``'exponential'``. Default is ``'sigmoid'``.
-    
+    data : array-like
+        The data to be rescaled, of shape ``(n_verts, ...)``. Maps are along the remaining axes and
+        are rescaled independently.
+    steepness : float, optional
+        The steepness of the sigmoid function. Negative values will flip the function. Default is
+        ``1.0``.
+    upper : float, optional
+        The upper bound of the rescaled data. Default is ``1.0``.
+    lower : float, optional
+        The lower bound of the rescaled data. Default is ``0.0``.
+    center : float, optional
+        The center of the sigmoid function, such that ``f(center) = (upper + lower) / 2``. Default
+        is ``0.0``.
+
+
     Returns
     -------
     ndarray
-        The scaled heterogeneity map.
+        The scaled data, of shape ``(n_verts, ...)``.
 
-    Raises
-    ------
-    ValueError
-        If ``hetero`` is not a 1D array.
-    ValueError
-        If ``scaling`` is not ``'exponential'`` or ``'sigmoid'``.
+    References
+    ----------
+    ..  [1] Barnes, V., et al. (2026). Regional heterogeneity shapes macroscopic wave dynamics of
+        the human and non-human primate cortex. bioRxiv. https://doi.org/10.64898/2026.01.22.701178
     """
     # Format / validate arguments
-    hetero = np.asarray_chkfinite(hetero)
-    alpha = float(alpha)
-    if hetero.ndim != 1:
-        raise ValueError("hetero must be a 1D array.")
-    if scaling not in ["exponential", "sigmoid"]:
-        raise ValueError(f"Invalid scaling '{scaling}'. Must be 'exponential' or 'sigmoid'.")
-    if alpha == 0:
-        warn("alpha is set to 0, meaning hetero will have no effect.")
-    std = np.std(hetero)
-    if std == 0:
-        warn("Provided hetero is constant; scaling hetero to a vector of ones.")
-        hetero_scaled = np.ones_like(hetero)
-    else:
-        # Scale the heterogeneity map
-        hetero_z = (hetero - np.mean(hetero)) / std
-        hetero_scaled = (2 / (1 + np.exp(-alpha * hetero_z))
-                         if scaling == 'sigmoid' else np.exp(alpha * hetero_z))
+    if checks is not False:
+        data = EigenData(data=data).data
     
-    return hetero_scaled
+    return lower + (upper - lower) / (1 + np.exp(-steepness * (data - center)))
 
 def standardize_emodes(
     emodes: NDArray[np.floating],
@@ -669,18 +659,16 @@ class EigenData:
     evals: NDArray[np.floating] 
     mass: csc_matrix
     stiffness: csc_matrix
-    scaled_hetero: NDArray[np.floating]
-    data: NDArray[np.floating] | tuple[NDArray[np.floating]] | list[NDArray[np.floating]]
-    """
-    Helper dataclass for validating and standardising common arguments.
-    """
+    hetero: NDArray[np.floating]
+    data: NDArray[np.floating]
+
     def __init__(
         self,
         emodes: NDArray[np.floating] | None = _MISSING, # type: ignore[assignment]
         evals: NDArray[np.floating] | None = _MISSING, # type: ignore[assignment] 
         mass: csc_matrix | None = _MISSING, # type: ignore[assignment]
         stiffness: csc_matrix | None = _MISSING, # type: ignore[assignment]
-        scaled_hetero: NDArray[np.floating] | None = _MISSING, # type: ignore[assignment]
+        hetero: NDArray[np.floating] | None = _MISSING, # type: ignore[assignment]
         data: NDArray[np.floating] | tuple[NDArray[np.floating]] | list[NDArray[np.floating]] | None = _MISSING, # type: ignore[assignment]
         checks: _CheckKind = True
     ):  # TODO: add mask?
@@ -741,14 +729,15 @@ class EigenData:
                     raise ValueError("stiffness must be a square matrix.")
             _set('stiffness', stiffness)
 
-        if scaled_hetero is not _MISSING:
-            all_inputs.append('scaled_hetero')
-            if scaled_hetero is not None:
-                scaled_hetero = np.asarray_chkfinite(scaled_hetero)
+        # TODO: consider removing, data can just accept a list of arrays instead
+        if hetero is not _MISSING:
+            all_inputs.append('hetero')
+            if hetero is not None:
+                hetero = np.asarray_chkfinite(hetero)
                 if check_shape:
-                    if scaled_hetero.ndim != 1:
-                        raise ValueError("scaled_hetero must have shape (n_verts,).")
-            _set('scaled_hetero', scaled_hetero)
+                    if hetero.ndim != 1:
+                        raise ValueError("hetero must have shape (n_verts,).")
+            _set('hetero', hetero)
 
         n_verts = None
         # Check first dimension of each map at the same time (after self.name is set)

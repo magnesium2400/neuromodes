@@ -1,14 +1,16 @@
 import numpy as np
 import pytest
-from neuromodes.basis import decompose, reconstruct, recon_error
-from neuromodes.eigen import EigenSolver
 from scipy.sparse import csc_matrix, eye
+from scipy.stats import zscore  # TODO: replace with stats.zscorew
+from neuromodes.basis import decompose, reconstruct, recon_error
+from neuromodes.eigen import EigenSolver, sigmoid_rescale
 from neuromodes.io import fetch_example_surf, fetch_example_map
 
 @pytest.fixture(scope='module')
 def solver():
     surf, medmask = fetch_example_surf(density='4k')
     hetero = np.random.default_rng(0).standard_normal(size=len(medmask))
+    hetero = sigmoid_rescale(zscore(hetero), steepness=0.5, upper=2.0)
     return EigenSolver(surf, mask=medmask, hetero=hetero).solve(n_modes=10, seed=0)
 
 def test_decompose_eigenmodes_1d(solver):
@@ -177,8 +179,8 @@ def test_reconstruct_regress_method(solver, gen_eigenmap):
     euclidean_error = recon_error(eigenmaps, recon, metric='euclidean', mass=csc_matrix(eye(solver.n_verts)))
 
     # Errors should strictly decrease when adding modes
-    assert np.all(np.diff(correlation_error, axis=1) < 0), \
-        'Correlation error does not strictly decrease when adding modes.'
+    assert np.all(np.diff(correlation_error[:, 1:], axis=1) < 0), \
+        'Correlation error does not strictly decrease when adding modes.'  # nan error for constant mode (col 0), so ignore
     assert np.all(np.diff(euclidean_error, axis=1) < 0), \
         'Euclidean error does not strictly decrease when adding modes.'
 
