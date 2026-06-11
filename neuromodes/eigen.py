@@ -433,6 +433,7 @@ class EigenSolver(Solver):
             emodes=self.emodes,
             evals=self.evals,
             mass=self.mass,
+            stiffness=self.stiffness,
             scaled_hetero=self.hetero,
             checks='maps',
             **kwargs
