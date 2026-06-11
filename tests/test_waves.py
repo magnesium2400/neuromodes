@@ -4,8 +4,8 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 from neuromodes.io import fetch_example_surf, fetch_example_map
-from neuromodes.eigen import EigenSolver, sigmoid_rescale
-from neuromodes.stats import zscorew
+from neuromodes import EigenSolver
+from neuromodes.stats import zscorew, sigmoid_rescale
 from neuromodes.waves import sim_nft_waves, calc_wave_speed, _gen_noise, _analytical_fc
 
 @pytest.fixture(scope="module")

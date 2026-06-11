@@ -483,57 +483,6 @@ class EigenSolver(Solver):
             **kwargs
         )
 
-# TODO: move to stats.py
-def sigmoid_rescale(
-    data: NDArray[np.floating],
-    steepness: float = 1.0,
-    upper: float = 1.0,
-    lower: float = 0.0,
-    center: float = 0.0,
-    checks: bool = True
-) -> NDArray[np.floating]:
-    """
-    Rescales the input data to be within the range ``(lower, upper)`` by applying to each ``data``
-    value ``x`` the sigmoid function ``f(x) = lower + (upper - lower) / (1 + exp(-steepness * (x -
-    center)))``.
-
-    If scaling heterogeneity maps for use in ``EigenSolver``, it is recommended to first z-score
-    each map, then use ``lower=0``, ``upper=2``, and ``center=0``. In this case, ``steepness`` will
-    match the alpha parameter used in previous work [1]_.
-
-    Parameters
-    ----------
-    data : array-like
-        The data to be rescaled, of shape ``(n_verts, ...)``. Maps are along the remaining axes and
-        are rescaled independently.
-    steepness : float, optional
-        The steepness of the sigmoid function. Negative values will flip the function. Default is
-        ``1.0``.
-    upper : float, optional
-        The upper bound of the rescaled data. Default is ``1.0``.
-    lower : float, optional
-        The lower bound of the rescaled data. Default is ``0.0``.
-    center : float, optional
-        The center of the sigmoid function, such that ``f(center) = (upper + lower) / 2``. Default
-        is ``0.0``.
-
-
-    Returns
-    -------
-    ndarray
-        The scaled data, of shape ``(n_verts, ...)``.
-
-    References
-    ----------
-    ..  [1] Barnes, V., et al. (2026). Regional heterogeneity shapes macroscopic wave dynamics of
-        the human and non-human primate cortex. bioRxiv. https://doi.org/10.64898/2026.01.22.701178
-    """
-    # Format / validate arguments
-    if checks is not False:
-        data = EigenData(data=data).data
-    
-    return lower + (upper - lower) / (1 + np.exp(-steepness * (data - center)))
-
 def standardize_emodes(
     emodes: NDArray[np.floating],
     checks: bool = True
