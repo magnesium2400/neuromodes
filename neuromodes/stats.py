@@ -18,124 +18,124 @@ if TYPE_CHECKING:
     from scipy.spatial.distance import _MetricCallback, _MetricKind
 
 def gramw(
-    A: NDArray[np.floating],
-    B: NDArray[np.floating] | None = None,
+    data: NDArray[np.floating],
+    data_b: NDArray[np.floating] | None = None,
     *,
     mass: spmatrix | NDArray[np.floating]
 ) -> NDArray[np.floating]:
     """Dot product between all columns (pairwise)."""
-    ved = EigenData(data=(A, B), mass=mass)
-    A, B = ved.data
-    mass = _process_vertex_areas(ved.mass, A.shape[0])
+    ved = EigenData(data=(data, data_b), mass=mass)
+    a, b = ved.data
+    mass = _process_vertex_areas(ved.mass, a.shape[0])
 
-    if B is None:
-        B = A
-    return A.T @ (mass @ B)
+    if b is None:
+        b = a
+    return a.T @ (mass @ b)
 
 # TODO: ensure that all functions support nD input, not just 2D
 def dotw(
-    A: NDArray[np.floating],
-    B: NDArray[np.floating],
+    data_a: NDArray[np.floating],
+    data_b: NDArray[np.floating],
     mass: spmatrix | NDArray[np.floating],
     keepdims: bool = False
 ) -> NDArray[np.floating]:
     """Dot product between corresponding brain maps (not pairwise).
     """
-    ved = EigenData(data=(A, B), mass=mass)
-    A, B = ved.data
+    ved = EigenData(data=(data_a, data_b), mass=mass)
+    a, b = ved.data
 
-    if A.shape != B.shape:
-        raise ValueError(f"A and B must have matching shapes; got {A.shape} and {B.shape}.")
+    if a.shape != b.shape:
+        raise ValueError(f"data_a and data_b must have matching shapes; got {a.shape} and {b.shape}.")
 
-    n_verts = A.shape[0]
+    n_verts = a.shape[0]
     mass = _process_vertex_areas(ved.mass, n_verts)
-    A_2d = A.reshape(n_verts, -1)
-    B_2d = B.reshape(n_verts, -1)
-    out = np.sum(A_2d * (mass @ B_2d), axis=0).reshape(A.shape[1:])
+    a_2d = a.reshape(n_verts, -1)
+    b_2d = b.reshape(n_verts, -1)
+    out = np.sum(a_2d * (mass @ b_2d), axis=0).reshape(a.shape[1:])
     return np.expand_dims(out, axis=0) if keepdims else out
 
 def ssqw(
-    A: NDArray[np.floating],
+    data: NDArray[np.floating],
     mass: spmatrix | NDArray[np.floating],
     keepdims: bool = False
 ) -> NDArray[np.floating]:
     """Energy (sum of squares) of each column."""
-    return dotw(A, A, mass=mass, keepdims=keepdims)
+    return dotw(data, data, mass=mass, keepdims=keepdims)
 
 def meanw(
-    A: NDArray[np.floating],
+    data: NDArray[np.floating],
     mass: spmatrix | NDArray[np.floating],
     keepdims: bool = False
 ) -> float:
     """Area-weighted mean. Note that this is equivalent to the more general
-    sum(mass @ A) / mass.sum()."""
-    ved = EigenData(data=A, mass=mass)  # FIXME: areas vector
-    A, mass = ved.data, ved.mass
+    sum(mass @ data) / mass.sum()."""
+    ved = EigenData(data=data, mass=mass)  # FIXME: areas vector
+    data, mass = ved.data, ved.mass
 
-    areas = _mass_to_areas(mass, A.shape[0])
-    out = np.average(A, axis=0, weights=areas)
-    return out[None, :] if keepdims else out  # TODO: test for A.ndim /= 2 cases
+    areas = _mass_to_areas(mass, data.shape[0])
+    out = np.average(data, axis=0, weights=areas)
+    return out[None, :] if keepdims else out  # TODO: test for data.ndim /= 2 cases
 
 def demeanw(
-    A: NDArray[np.floating],
+    data: NDArray[np.floating],
     mass: spmatrix | NDArray[np.floating]
 ) -> NDArray[np.floating]:
     """Remove the area-weighted mean."""
-    A = np.asarray(A)
-    return A - meanw(A, mass)
+    data = np.asarray(data)
+    return data - meanw(data, mass)
 
 def varw(
-    A: NDArray[np.floating],
+    data: NDArray[np.floating],
     mass: spmatrix | NDArray[np.floating],
     keepdims: bool = False
 ) -> float:
     """Area-weighted variance."""
-    A = np.asarray(A)
-    mass = _process_vertex_areas(mass, A.shape[0])
+    data = np.asarray(data)
+    mass = _process_vertex_areas(mass, data.shape[0])
 
-    B = demeanw(A, mass)
+    B = demeanw(data, mass)
     out = ssqw(B, mass) / mass.sum()
-    return out[None, :] if keepdims else out  # TODO: test for A.ndim /= 2 cases
+    return out[None, :] if keepdims else out  # TODO: test for data.ndim /= 2 cases
 
 def momentw(
-    A: NDArray[np.floating],
+    data: NDArray[np.floating],
     mass: spmatrix | NDArray[np.floating],
     order: int,
     keepdims: bool = False
 ) -> float:
     """Area-weighted statistical moment of a given order."""
-    A = np.asarray(A)
+    data = np.asarray(data)
 
     if order == 1:
-        n_maps = A.shape[1] if A.ndim == 2 else 1
+        n_maps = data.shape[1] if data.ndim == 2 else 1
         return np.zeros(n_maps)
     elif order == 2:
-        return varw(A, mass, keepdims=keepdims)
+        return varw(data, mass, keepdims=keepdims)
     else:
         # Approximate by lumping
-        areas = _mass_to_areas(mass, A.shape[0])
-        B = demeanw(A, areas)
+        areas = _mass_to_areas(mass, data.shape[0])
+        data_dm = demeanw(data, areas)
         # Sum rows of the sparse matrix to get a lumped vector, safely flattened
-        return meanw(B ** order, areas, keepdims=keepdims)
+        return meanw(data_dm ** order, areas, keepdims=keepdims)
 
 def stdw(
-    A: NDArray[np.floating],
+    data: NDArray[np.floating],
     mass: spmatrix | NDArray[np.floating],
     keepdims: bool = False
 ) -> float:
     """Area-weighted standard deviation."""
-    return np.sqrt(varw(A, mass, keepdims=keepdims))
+    return np.sqrt(varw(data, mass, keepdims=keepdims))
 
 def zscorew(
-    A: NDArray[np.floating],
+    data: NDArray[np.floating],
     mass: spmatrix | NDArray[np.floating]
 ) -> NDArray[np.floating]:
     """Z-score using area-weighted mean and standard deviation."""
-    return demeanw(A, mass) / stdw(A, mass)
+    return demeanw(data, mass) / stdw(data, mass)
 
 def covw(
-    A: NDArray[np.floating],
-    B: NDArray[np.floating] | None = None,
+    data: NDArray[np.floating],
+    data_b: NDArray[np.floating] | None = None,
     *,
     mass: spmatrix | NDArray[np.floating]
 ) -> NDArray[np.floating]:
@@ -147,121 +147,121 @@ def covw(
     IID samples and maps typically display spatial autocorrelation, Bessel's N-1 correction is not
     appropriate.
     """
-    A = np.asarray(A)
+    a = np.asarray(data)
 
-    mass = _process_vertex_areas(mass, A.shape[0])
+    mass = _process_vertex_areas(mass, a.shape[0])
     total_area = mass.sum()
     
-    A_d = demeanw(A, mass)
-    B_d = demeanw(B, mass) if B is not None else A_d
-    gram = gramw(A_d, B_d, mass=mass)
+    a_dm = demeanw(a, mass)
+    b_dm = demeanw(data_b, mass) if data_b is not None else a_dm
+    gram = gramw(a_dm, b_dm, mass=mass)
     
     return gram / total_area
 
 def vecnormw(
-    A: NDArray[np.floating],
+    data: NDArray[np.floating],
     mass: spmatrix | NDArray[np.floating],
     p: int = 2,
     keepdims: bool = False
 ) -> NDArray[np.floating]:
     """Calculates the area-weighted L^p norm of spatial maps."""
     if p == 2: # Exact (well-defined)
-        return np.sqrt(ssqw(A, mass, keepdims=keepdims))
+        return np.sqrt(ssqw(data, mass, keepdims=keepdims))
     
     elif p == np.inf: # Exact (ignores the mass matrix)
-        out = np.max(np.abs(A), axis=0)
+        out = np.max(np.abs(data), axis=0)
         return out[None, :] if keepdims else out
     
     else: # Approximate by lumping
-        A = np.asarray(A)
-        areas = _mass_to_areas(mass, A.shape[0])
-        out = np.sum(areas * (np.abs(A) ** p), axis=0) ** (1 / p)
+        data = np.asarray(data)
+        areas = _mass_to_areas(mass, data.shape[0])
+        out = np.sum(areas * (np.abs(data) ** p), axis=0) ** (1 / p)
         return out[None, :] if keepdims else out
 
 def cdistw(
-    X: NDArray[np.floating],
-    Y: NDArray[np.floating],
+    data_a: NDArray[np.floating],
+    data_b: NDArray[np.floating],
     mass: spmatrix | NDArray[np.floating],
     metric: _MetricCallback | _MetricKind = 'euclidean'
 ) -> NDArray[np.floating]:
     """Pairwise distance between columns of X and Y, accounting for mass matrix. Some functions support
     exact calculation (these have been reimplemented); some functions are approximated by lumping
     (scipy.spatial.distance.cdist with weights)."""
-    ved = EigenData(data=(X, Y), mass=mass)  # a lot of redundancy, especially for correlation. TODO: consider adding `checks`, and `checks='mass'` to EigenData
-    X, Y = ved.data
+    ved = EigenData(data=(data_a, data_b), mass=mass)  # a lot of redundancy, especially for correlation. TODO: consider adding `checks`, and `checks='mass'` to EigenData
+    a, b = ved.data
     mass = ved.mass
 
-    if X.ndim == 1:
-        X = X[:, None]
-    if Y.ndim == 1:
-        Y = Y[:, None]
+    if a.ndim == 1:
+        a = a[:, None]
+    if b.ndim == 1:
+        b = b[:, None]
 
     # Reimplement these to support unlumped mass matrix
     if metric == 'sqeuclidean':
-        D = ssqw(X, mass)[:, None] + ssqw(Y, mass)[None, :] - 2 * gramw(X, Y, mass=mass)
+        D = ssqw(a, mass)[:, None] + ssqw(b, mass)[None, :] - 2 * gramw(a, b, mass=mass)
         
     elif metric == 'euclidean':
-        D = np.sqrt(cdistw(X, Y, mass, 'sqeuclidean'))
+        D = np.sqrt(cdistw(a, b, mass, 'sqeuclidean'))
         
     elif metric == 'cosine':
-        Num = gramw(X, Y, mass=mass)
-        DenX = vecnormw(X, mass, 2)[:, None]
-        DenY = vecnormw(Y, mass, 2)[None, :]
+        Num = gramw(a, b, mass=mass)
+        DenX = vecnormw(a, mass, 2)[:, None]
+        DenY = vecnormw(b, mass, 2)[None, :]
         D = 1 - Num / (DenX * DenY)
         
     elif metric == 'correlation':
-        D = cdistw(demeanw(X, mass), demeanw(Y, mass), mass, 'cosine')
+        D = cdistw(demeanw(a, mass), demeanw(b, mass), mass, 'cosine')
         
     else:
-        areas = _mass_to_areas(mass, X.shape[0])
-        D = cdist(X, Y, metric=metric, mass=areas)
+        areas = _mass_to_areas(mass, a.shape[0])
+        D = cdist(a, b, metric=metric, mass=areas)
 
     return np.maximum(D, 0)
 
 def pdistw(
-    X: NDArray[np.floating],
+    data: NDArray[np.floating],
     mass: spmatrix | NDArray[np.floating],
     metric: _MetricCallback | _MetricKind = 'euclidean'
 ) -> NDArray[np.floating]:
     """Pairwise distances between observations in X, outputting a condensed vector."""
-    X = np.asarray(X)
-    if X.ndim != 2 or X.shape[1] < 2:
-        raise ValueError(f"X must be a 2D array with at least 2 columns; got shape {X.shape}.")
+    data = np.asarray(data)
+    if data.ndim != 2 or data.shape[1] < 2:
+        raise ValueError(f"data must be a 2D array with at least 2 columns; got shape {data.shape}.")
 
-    D2 = cdistw(X, X, mass, metric)
+    D2 = cdistw(data, data, mass, metric)
     np.fill_diagonal(D2, 0) # Ensures exact 0 on diagonal
     return squareform(D2, checks=False)
 
 def solvew(
-    A: NDArray[np.floating],
-    B: NDArray[np.floating],
+    data_a: NDArray[np.floating],
+    data_b: NDArray[np.floating],
     mass: spmatrix | NDArray[np.floating]
 ) -> NDArray[np.floating]:
     """
     Use method of normal equations to give area-weighted least squares error.
     See https://en.wikipedia.org/wiki/Weighted_least_squares#Motivation
     """
-    ved = EigenData(data=(A, B), mass=mass)
-    A, B = ved.data
-    mass = _process_vertex_areas(ved.mass, A.shape[0])
-    # Solves (A'WA)x = (A'WB)
-    return np.linalg.solve(A.T @ mass @ A, A.T @ mass @ B)
+    ved = EigenData(data=(data_a, data_b), mass=mass)
+    a, b = ved.data
+    mass = _process_vertex_areas(ved.mass, a.shape[0])
+    # Solves (a'Wa)x = (a'Wb)
+    return np.linalg.solve(a.T @ mass @ a, a.T @ mass @ b)
 
 def lstsqw(
-    A: NDArray[np.floating],
-    B: NDArray[np.floating],
+    data_a: NDArray[np.floating],
+    data_b: NDArray[np.floating],
     mass: spmatrix | NDArray[np.floating],
     rcond: float | None = None
 ) -> tuple[NDArray[np.floating], int, float, NDArray[np.floating]]:
     """
     Solve the weighted least squares by lumping the mass matrix and weighting each vertex.
     """
-    ved = EigenData(data=(A, B), mass=mass)
-    A, B = ved.data
+    ved = EigenData(data=(data_a, data_b), mass=mass)
+    a, b = ved.data
 
-    va = np.sqrt(_mass_to_areas(ved.mass, A.shape[0])) # (n_verts,)
-    aw = A * va[:, np.newaxis]
-    bw = B * va[:, np.newaxis] if B.ndim != 1 else B * va
+    va = np.sqrt(_mass_to_areas(ved.mass, a.shape[0])) # (n_verts,)
+    aw = a * va[:, np.newaxis]
+    bw = b * va[:, np.newaxis] if b.ndim != 1 else b * va
     return np.linalg.lstsq(aw, bw, rcond=rcond)
 
 def _mass_to_areas(
