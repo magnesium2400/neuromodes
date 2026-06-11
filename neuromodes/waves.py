@@ -91,7 +91,7 @@ def sim_nft_waves(
     Returns
     -------
     np.ndarray
-        Simulated neural activity or BOLD signal of shape ``(n_verts, n_timepoints)``.
+        Simulated neural activity of shape ``(n_verts, n_timepoints)``.
 
     Raises
     ------

@@ -3,14 +3,14 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 import numpy as np
 import pytest
-from neuromodes.io import fetch_surf, fetch_map
+from neuromodes.io import fetch_example_surf, fetch_example_map
 from neuromodes.eigen import EigenSolver
 from neuromodes.waves import (sim_nft_waves, calc_wave_speed, _gen_noise, _analytical_fc)
 
 @pytest.fixture(scope="module")
 def solver():
-    mesh, medmask = fetch_surf(density='4k')
-    hetero = fetch_map(data="myelinmap", density="4k")[medmask]
+    mesh, medmask = fetch_example_surf(density='4k')
+    hetero = fetch_example_map(data="myelinmap", density="4k")[medmask]
     return EigenSolver(mesh, mask=medmask, hetero=hetero).solve(n_modes=100, seed=0)
 
 def test_unusual_wave_speed(solver):
@@ -98,6 +98,8 @@ def test_sim_nft_waves_methods_bold(solver):
     for t in range(75, nt):
         assert np.corrcoef(bold_fourier[:, t], bold_ode[:, t])[0, 1] > 0.6, \
             f'Fourier and ODE BOLD solutions are not correlated at r>.6 at t={t}.'
+        
+# TODO: add test that BOLD FC is very similar to neural FC
         
 def test_gen_noise_reproducibility():
     seed = 0
