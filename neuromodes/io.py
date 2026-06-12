@@ -26,12 +26,13 @@ def read_surf(
     Parameters
     ----------
     surf : str, Path, GiftiImage, lapy.TriaMesh, or dict
-        Surface mesh specified as a file path (``str`` or ``Path``) to a VTK (``.vtk``), GIFTI
-        (``.gii``), or FreeSurfer file (``.white``, ``.pial``, ``.inflated``, ``.orig``,
-        ``.sphere``, ``.smoothwm``, ``.qsphere``, ``.fsaverage``), an instance of
-        ``nibabel.GiftiImage`` or ``lapy.TriaMesh``, or a dictionary with ``'vertices'`` and
-        ``'faces'`` keys, referencing arrays of shapes ``(n_verts, 3)`` and ``(n_trias, 3)``,
-        respectively.
+        Surface mesh specified as one of:
+        - a path (``str`` or ``Path``) to a VTK (``.vtk``), GIFTI (``.gii``), or FreeSurfer file
+          (``.white``, ``.pial``, ``.inflated``, ``.orig``, ``.sphere``, ``.smoothwm``,``.qsphere``,
+          ``.fsaverage``)
+        - an instance of either ``nibabel.GiftiImage`` or ``lapy.TriaMesh``
+        - a dictionary with ``'vertices'`` and ``'faces'`` keys, referencing arrays of shapes
+        ``(n_verts, 3)`` and ``(n_trias, 3)``, respectively.
 
     Returns
     -------
@@ -41,9 +42,11 @@ def read_surf(
     Raises
     ------
     ValueError
-        If ``surf`` is a path-like string to an unsupported format.
+        If ``surf`` is not in a supported format.
+    ValueError
+        If ``surf`` is a path to an unsupported format.
     FileNotFoundError
-        If ``surf`` is a path-like string to a file that does not exist.
+        If ``surf`` is a path to a file that does not exist.
     """
     if isinstance(surf, TriaMesh):
         return surf
@@ -53,7 +56,7 @@ def read_surf(
     elif isinstance(surf, dict):
         vertices=surf['vertices']
         faces=surf['faces']
-    else:
+    elif isinstance(surf, (str, Path)):
         surf_str = str(surf)
         # check that file exists
         if not Path(surf_str).is_file():
@@ -67,11 +70,16 @@ def read_surf(
             return TriaMesh.read_fssurf(surf_str)
         else:
             raise ValueError(
-                'surf must be a path-like string to a valid VTK (.vtk), GIFTI (.gii), or '
-                f'FreeSurfer file {fs_extensions}, an instance of nibabel.GiftiImage or '
-                "lapy.TriaMesh, or a dictionary of 'faces' and 'vertices' with shapes (n_verts, 3) "
-                'and (n_trias, 3), respectively.'
-                )
+                f'File type not supported: {surf_str}. Supported formats include VTK (.vtk), GIFTI '
+                f'(.gii), and FreeSurfer files ({", ".join(fs_extensions)})'
+            )
+    else:
+        raise ValueError(
+            'surf must be a path (str or Path) to a valid VTK (.vtk), GIFTI (.gii), or Freesurfer'
+            f'file {fs_extensions}, an instance of nibabel.GiftiImage or lapy.TriaMesh, or a '
+            "dictionary of 'faces' and 'vertices' with shapes (n_verts, 3) 'and (n_trias, 3), "
+            'respectively.'
+            )
         
     return TriaMesh(v=vertices, t=faces)
 
@@ -213,6 +221,8 @@ def _cache_output(
 
     Raises
     ------
+    ImportError
+        If ``joblib`` is not installed.
     """
     try:
         from joblib import Memory

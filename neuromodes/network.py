@@ -19,7 +19,7 @@ def compute_gem(
     checks: _CheckKind = 'shape'
 ) -> NDArray[np.floating]:
     """
-    Generate a vertex-wise structural connectivity matrix using the Geometric Eigenmode Model [1]_.
+    Generate a model structural connectome using the Geometric Eigenmode Model [1]_.
 
     Parameters
     ----------
@@ -33,13 +33,13 @@ def compute_gem(
     k : int, optional
         Number of eigenmodes to use. Default is ``108``.
     checks : bool, optional
-        Whether to verify types and shapes of ``emodes`` and ``evals`` before computation. Default
+        Whether to validate types and shapes of ``emodes`` and ``evals`` before computation. Default
         is ``True``.
 
     Returns
     -------
     np.ndarray
-        The generated vertex-wise structural connectivity matrix.
+        The generated structural connectivity matrix of shape ``(n_verts, n_verts)``.
 
     Raises
     ------
@@ -50,8 +50,8 @@ def compute_gem(
 
     Notes
     -----
-    If comparing this model to empirical connectomes, consider thresholding the returned matrix to
-    match the density of the empirical data.
+    If comparing this model to empirical connectomes, it is recommended to threshold the returned
+    matrix to match the density of the empirical data.
 
     Prior work has treated ``r`` and ``k`` as free parameters to fit empirical data [1]_, with the
     default value reflecting an optimal fit to human diffusion MRI data. Consider adjusting these

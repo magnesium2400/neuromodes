@@ -1,36 +1,36 @@
 """
-Module for reading, validating, manipulating, and creating meshes of brain structures.
+Module for validating and manipulating meshes of brain structures.
 """
 
 from __future__ import annotations
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
-    from lapy import TriaMesh, TetMesh
+    from lapy import TriaMesh
     from numpy import floating, bool_
     from numpy.typing import NDArray
-    MeshType = TypeVar('MeshType', TriaMesh, TetMesh)
 
 def mask_mesh(
-    geometry: MeshType,
+    geometry: TriaMesh,
     mask: NDArray[bool_]
-) -> MeshType:
+) -> TriaMesh:
     """
-    Remove specified vertices and corresponding elements from a triangular surface mesh. Returns a
-    ``lapy.TriaMesh`` object.
+    Remove specified vertices and corresponding faces from a triangular surface mesh. Note that this
+    may produce a non-contiguous mesh with unreferenced vertices--use :func:`check_surf` to validate
+    the resulting mesh.
 
     Parameters
     ----------
-    geometry : lapy.TriaMesh or lapy.TetMesh
-        The input surface or volume mesh.
+    geometry : lapy.TriaMesh
+        The input surface mesh.
     mask : array-like
         A boolean array indicating which vertices to keep (``True``) or remove (``False``).
 
     Returns
     -------
-    lapy.TriaMesh or lapy.TetMesh
-        The masked surface or volume mesh.
+    lapy.TriaMesh
+        The masked surface mesh.
 
     Raises
     ------
@@ -47,20 +47,20 @@ def mask_mesh(
     v_masked = geometry.v[mask] # inherit original type
 
     # Update vertex indices of elements
-    v_map = unmask_data(np.arange(np.sum(mask)), mask, fill_val=0).astype(geometry.t.dtype) 
+    v_map = unmask_data(np.arange(np.sum(mask)), mask, fill_value=0).astype(geometry.t.dtype) 
     t_remapped = v_map[geometry.t]
     
     # Keep only elements where all vertices are in the mask
     elem_mask = np.all(mask[geometry.t], axis=1)
     t_masked = t_remapped[elem_mask]
 
-    # Create a new TriaMesh or TetMesh with the masked vertices and elements
+    # Create a new TriaMesh with the masked vertices and elements
     return geometry.__class__(v=v_masked, t=t_masked)
 
 def unmask_data(
     data: NDArray[floating],
     mask: NDArray[bool_],
-    fill_val: float = np.nan
+    fill_value: float = np.nan
 ) -> NDArray[floating]:
     """
     Unmasks data by inserting it into a full array with the same length as the medial wall mask.
@@ -68,11 +68,13 @@ def unmask_data(
     Parameters
     ----------
     data : numpy.ndarray
-        The data to be unmasked, of shape ``(n_verts)`` or ``(n_verts, n_maps)``.
+        The data to be unmasked, of shape ``(n_verts)`` or ``(n_verts, ...)``, where ``n_verts`` is
+        the number of vertices in the masked mesh and additional axes represent maps to be unmasked
+        independently.
     mask : numpy.ndarray
-        A boolean array-like of shape ``(n_verts + n_extra_verts)`` where ``True`` indicates the
+        A boolean array-like of shape ``(n_verts + n_extra_verts)``, where ``True`` indicates the
         positions of the data in the full array. Must contain exactly ``n_verts`` ``True`` values.
-    fill_val : float, optional
+    fill_value : float, optional
         The value to fill in the positions outside the mask. Default is NaN.
 
     Returns
@@ -101,11 +103,11 @@ def unmask_data(
     # out_size
     out_size = (len(mask),) + data.shape[1:]
 
-    # out_dtype: the safest dtype that can hold BOTH the data and the fill_val
-    out_dtype = np.result_type(data.dtype, np.array(fill_val).dtype)
+    # out_dtype: the safest dtype that can hold BOTH the data and the fill_value
+    out_dtype = np.result_type(data.dtype, np.array(fill_value).dtype)
     
     # Initialise array of fill values
-    data_unmasked = np.full(out_size, fill_val, dtype=out_dtype)
+    data_unmasked = np.full(out_size, fill_value, dtype=out_dtype)
 
     # Overwrite rows with data where mask is True
     data_unmasked[mask, ...] = data
@@ -126,7 +128,7 @@ def check_surf(
     Raises
     ------
     ValueError
-        If the surface mesh contains unreferenced vertices.
+        If the surface mesh contains unreferenced (i.e., faceless) vertices.
     ValueError
         If the surface mesh is not contiguous.
     ValueError
@@ -137,7 +139,7 @@ def check_surf(
     referenced[surf.t] = True
     if not np.all(referenced):
         raise ValueError(f'Surface mesh contains {np.sum(~referenced)} unreferenced '
-                         'vertices (i.e., not part of any face).')
+                         '(i.e., faceless) vertices.')
 
     # Ensure surface is contiguous
     n_components = surf.connected_components()[0]

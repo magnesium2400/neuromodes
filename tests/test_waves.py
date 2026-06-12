@@ -52,7 +52,7 @@ def test_sim_nft_waves_impulse(solver):
     ext_input[:, i_start:i_stop] = impulse[:, np.newaxis]
 
     fourier_ts = solver.sim_nft_waves(ext_input=ext_input, dt=dt)
-    ode_ts = solver.sim_nft_waves(ext_input=ext_input, dt=dt, pde_method='ode')
+    ode_ts = solver.sim_nft_waves(ext_input=ext_input, dt=dt, method='ode')
 
     # Check output shapes
     assert fourier_ts.shape == (solver.n_verts, nt), 'Fourier output shape is incorrect.'
@@ -78,7 +78,7 @@ def test_sim_nft_waves_methods(solver):
 
     # Check that Fourier and ODE methods produce similar neural activity at selected timepoints
     fourier_ts = solver.sim_nft_waves(nt=nt, dt=dt, seed=seed)
-    ode_ts = solver.sim_nft_waves(nt=nt, dt=dt, seed=seed, pde_method='ode')
+    ode_ts = solver.sim_nft_waves(nt=nt, dt=dt, seed=seed, method='ode')
 
     for t in range(50, nt):
         assert np.corrcoef(fourier_ts[:, t], ode_ts[:, t])[0, 1] > 0.85, \
@@ -92,9 +92,9 @@ def test_sim_nft_waves_methods_bold(solver):
 
     # Check that Fourier and ODE methods produce similar BOLD signal at selected timepoints
     activity_fourier = solver.sim_nft_waves(nt=nt, dt=dt, seed=seed)
-    activity_ode = solver.sim_nft_waves(nt=nt, dt=dt, seed=seed, pde_method='ode')
+    activity_ode = solver.sim_nft_waves(nt=nt, dt=dt, seed=seed, method='ode')
     bold_fourier = solver.balloon_model(activity_fourier, dt=dt)
-    bold_ode = solver.balloon_model(activity_ode, dt=dt, pde_method='ode')
+    bold_ode = solver.balloon_model(activity_ode, dt=dt, method='ode')
 
     # Methods converge to r=.98 by t=500, but this takes too long to run, so just anchor the test
     # to a lower value to catch if the alignment ever drops (TODO: add to validation?)
@@ -136,10 +136,10 @@ def test_sim_nft_waves_invalid_input_shape(solver):
     with pytest.raises(ValueError, match=r"data.*first dimension.*3619"):
         solver.sim_nft_waves(ext_input=np.ones((4002, 1000)))
 
-def test_sim_nft_waves_invalid_pde_method(solver):
+def test_sim_nft_waves_invalid_method(solver):
 
     with pytest.raises(ValueError, match="Invalid PDE method 'zote'"):
-        solver.sim_nft_waves(nt=10, pde_method='zote')
+        solver.sim_nft_waves(nt=10, method='zote')
 
 @pytest.mark.filterwarnings("ignore:overflow encountered in scalar power:RuntimeWarning")
 @pytest.mark.filterwarnings("ignore:invalid value encountered in dot:RuntimeWarning")
@@ -151,8 +151,8 @@ def test_sim_nft_waves_ode_balloon_overflow(solver):
     dt = 1
 
     with pytest.raises(RuntimeError, match="message: Required step size is less than spacing"):
-        activity = solver.sim_nft_waves(dt=dt, nt=10, pde_method='ode')
-        solver.balloon_model(activity, pde_method='ode', dt=dt)
+        activity = solver.sim_nft_waves(dt=dt, nt=10, method='ode')
+        solver.balloon_model(activity, method='ode', dt=dt)
 
 def test_sim_nft_waves_cached(solver):
     # Get CACHE_DIR
@@ -217,7 +217,7 @@ def test_fem_alignment(solver):
     fourier_ts = solver.sim_nft_waves(nt=nt, dt=dt, seed=seed)
 
     # Run FEM simulation
-    fem_ts = solver.sim_nft_waves(nt=nt, dt=dt, seed=seed, n_jobs=1, pde_method='fem')
+    fem_ts = solver.sim_nft_waves(nt=nt, dt=dt, seed=seed, n_jobs=1, method='fem')
 
     # Assess
     for t in range(10, nt):
@@ -232,7 +232,7 @@ def test_fem_no_joblib(solver):
 
     with patch.dict('sys.modules', {'joblib': None}):
         with pytest.warns(UserWarning, match="joblib is not installed"):
-            fem_ts = solver.sim_nft_waves(nt=nt, dt=dt, seed=seed, n_jobs=-1, pde_method='fem')
+            fem_ts = solver.sim_nft_waves(nt=nt, dt=dt, seed=seed, n_jobs=-1, method='fem')
 
         assert fem_ts.shape == (solver.n_verts, nt), \
             "FEM output shape is incorrect when joblib is not installed."

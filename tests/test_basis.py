@@ -88,7 +88,10 @@ def test_decompose_nans(solver_32k):
          fetch_example_map('myelinmap')[solver_32k.mask]),
         axis=1
     )
-    coeffs = decompose(data, solver_32k.emodes, method='regress', mass=csc_matrix(eye(solver_32k.n_verts)))
+
+    # turn checks off to simplify use of mass, which is irrelevant to this test
+    coeffs = decompose(data, solver_32k.emodes, method='regress',
+                       mass=csc_matrix(eye(solver_32k.n_verts)), checks='maps')
 
     # Append data with NaNs (+100 vertices)
     extraverts = 100
@@ -103,7 +106,8 @@ def test_decompose_nans(solver_32k):
 
     # emodes/mass get masked according to the nans/s in data, leading to original coeffs values
     with pytest.warns(UserWarning, match="values detected in data"):
-        coeffs_masked = decompose(data_nans, modes_noise, method='regress', checks='maps', mass=csc_matrix(eye(solver_32k.n_verts+extraverts)))
+        coeffs_masked = decompose(data_nans, modes_noise, method='regress', checks='maps',
+                                  mass=csc_matrix(eye(solver_32k.n_verts+extraverts)))
     assert np.allclose(coeffs, coeffs_masked, atol=1e-2), \
         'coeffs values for project method are not close when data contains NaNs'
 
@@ -174,7 +178,8 @@ def test_reconstruct_regress_method(solver, gen_eigenmap):
     kwargs = dict(emodes=solver.emodes, 
                   method='regress', 
                   mass=csc_matrix(eye(solver.n_verts)),
-                  mode_counts=np.arange(solver.n_modes)+1)
+                  mode_counts=np.arange(solver.n_modes)+1,
+                  checks='maps')
     coeffs = decompose(eigenmaps, **kwargs) # type: ignore
     recon = reconstruct(coeffs=coeffs, **kwargs) # type: ignore
     correlation_error = recon_error(eigenmaps, recon, metric='correlation', mass=csc_matrix(eye(solver.n_verts)))

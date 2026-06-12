@@ -86,7 +86,7 @@ def test_residual_options(solver, test_data, residual):
     assert np.isfinite(nulls).all(), \
         f"Nulls contain non-finite values for residual method '{residual}'"
 
-@pytest.mark.parametrize("resample", ['exact', 'affine', 'mean', 'range', None])
+@pytest.mark.parametrize("resample", ['exact', 'affine', 'range', None])
 def test_resample_options(solver, test_data, resample):
     """Test different resample methods run without errors"""
     nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, resample=resample)
@@ -148,11 +148,11 @@ def test_residual_permute(solver, test_data):
     assert np.allclose(np.sort(nulls_residuals, axis=0), np.sort(data_residuals)[:, np.newaxis]), \
         "Nulls should have permuted residuals added when residual='permute'"
     
-def test_resample_none(test_data, nulls):
-    """Nulls should approximately preserve mean of original data even without using resample='mean'"""
-    data_mean = np.mean(test_data)
-    null_means = np.mean(nulls, axis=0)
-    assert np.allclose(null_means, data_mean, atol=0.05), \
+def test_resample_none(solver, test_data, nulls):
+    """Nulls should preserve area-weighted mean of original data even without using resample='mean'"""
+    data_mean = meanw(test_data, solver.mass)
+    null_means = meanw(nulls, solver.mass)
+    assert np.allclose(null_means, data_mean, atol=1e-10), \
         f"Null means are not close to data mean {data_mean}"
 
 def test_resample_exact(solver, test_data):
@@ -223,16 +223,6 @@ def test_resample_affine(solver, test_data):
         assert np.isclose(mean, meanw(test_data, solver.mass)), f"Null {i} mean is not close to data mean"
         assert np.isclose(std, stdw(test_data, solver.mass)), f"Null {i} std is not close to data std"
 
-def test_resample_mean(solver, test_data):
-    """With resample='mean', nulls should have mean equal to original data mean"""
-    nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, resample="mean")
-    
-    data_mean = meanw(test_data, solver.mass)
-
-    for i in range(nulls.shape[1]):
-        null_mean = meanw(nulls[:, i], solver.mass)
-        assert np.isclose(null_mean, data_mean), f"Null {i} mean is not close to data mean"
-
 def test_resample_range(solver, test_data):
     """With resample='range', nulls should have same min and max as original data"""
     nulls = solver.eigenstrap(test_data, n_nulls=n_nulls, resample="range")
@@ -287,7 +277,7 @@ def test_residual_options_2d(solver, test_data_2d, residual):
     assert np.isfinite(nulls).all(), \
         f"Nulls contain non-finite values for `residual='{residual}'`"
     
-@pytest.mark.parametrize("resample", ['exact', 'affine', 'mean', 'range', None])    
+@pytest.mark.parametrize("resample", ['exact', 'affine', 'range', None])    
 def test_resample_options_2d(solver, test_data_2d, resample):
     """Test different resample methods run without errors"""
     nulls = solver.eigenstrap(test_data_2d, n_nulls=n_nulls, resample=resample)
@@ -327,11 +317,11 @@ def test_different_maps(solver, test_data_2d):
                 f"Nulls {i} should be different to nulls {j}"
 
 def test_resample_none_2d(solver, test_data_2d):
-    """Nulls should approximately preserve mean of original data even without using resample='mean'"""
+    """Nulls should preserve area-weighted mean of original data even without using resample='mean'"""
     data_means = meanw(test_data_2d, solver.mass)
     null_means = meanw(solver.eigenstrap(test_data_2d, n_nulls=n_nulls, resample=None), solver.mass)
 
-    assert np.allclose(null_means, data_means, atol=0.05), \
+    assert np.allclose(null_means, data_means, atol=1e-10), \
         f"Null means are not close to data means {data_means}"
 
 def test_resample_exact_2d(solver, test_data_2d):
@@ -359,17 +349,6 @@ def test_resample_affine_2d(solver, test_data_2d):
             data_std = stdw(test_data_2d[:, j], solver.mass)
             assert np.isclose(mean, data_mean), f"Null {i} map {j} mean is not close to data mean"
             assert np.isclose(std, data_std), f"Null {i} map {j} std is not close to data std"
-
-def test_resample_mean_2d(solver, test_data_2d):
-    """With resample='mean', nulls should have mean equal to original data mean"""
-    nulls = solver.eigenstrap(test_data_2d, n_nulls=n_nulls, resample="mean")
-    
-    for j in range(test_data_2d.shape[1]):
-        data_mean = meanw(test_data_2d[:, j], solver.mass)
-        for i in range(nulls.shape[1]):
-            null_mean = meanw(nulls[:, i, j], solver.mass)
-            assert np.isclose(null_mean, data_mean), \
-                f"Null {i} map {j} mean is not close to data mean"
 
 def test_resample_range_2d(solver, test_data_2d):
     """With resample='range', nulls should have same min and max as original data"""

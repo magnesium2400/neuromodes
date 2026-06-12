@@ -24,7 +24,7 @@ def eigenstrap(
     emodes: NDArray[np.floating],
     evals: NDArray[np.floating], 
     n_nulls: int = 1000,
-    resample: Literal['exact', 'affine', 'mean', 'range'] | None = None,
+    resample: Literal['exact', 'affine', 'range'] | None = None,
     residual: Literal['add', 'permute'] | None = None,
     randomize: bool = False,
     n_groups: int | None = None,
@@ -39,8 +39,8 @@ def eigenstrap(
     
     This function generates spatial null maps that preserve the spatial autocorrelation structure of
     brain maps through random rotation of geometric eigenmodes. The method works by rotating
-    eigenmodes within eigengroups (sets of modes with similar eigenvalues), then reconstructing null
-    maps using the original decomposition coefficients.
+    eigenmodes within eigengroups (defined by spherical harmonics), then reconstructing null maps
+    using the original decomposition coefficients.
     
     Parameters
     ----------
@@ -50,21 +50,18 @@ def eigenstrap(
         each null (see Notes). 
     emodes : array-like
         The eigenmodes array of shape ``(n_verts, n_modes)``. This function rotates modes within
-        eigengroups. Note that, unlike the original implementation [1]_, this requires the constant
-        mode (the first column) to be input too. By default (if ``n_groups`` is None), if the number
-        of eigenmodes is not a perfect square (i.e., the number of modes does not allow for complete
-        eigengroups), then the last incomplete eigengroup will be excluded.
+        eigengroups. By default (if ``n_groups`` is None), if the number of eigenmodes is not a
+        perfect square (i.e., the number of modes does not allow for complete eigengroups), then the
+        last incomplete eigengroup will be excluded.
     evals : array-like
-        The eigenvalues array of shape ``(n_modes,)``. Note that, unlike the original
-        implementation [1]_, this requires the zero eigenvalue (the first eigenvalue) to be input
-        too. 
+        The eigenvalues array of shape ``(n_modes,)``.
     n_nulls : int, optional
         Number of null maps to generate per input map. Default is 1000.
     resample : bool, optional
         How to resample values from original data. Options are ``'exact'`` to match the sorted
         distribution of the original data, ``'affine'`` to match the original mean and standard
-        deviation, ``'mean'`` to match the mean, and ``'range'`` to match the minimum and maximum.
-        Default is ``None`` for no resampling.
+        deviation, ``'range'`` to match the minimum and maximum, or ``None`` for no resampling,
+        which by construction matches the original mean. Default is ``None``.
     residual : str, optional
         How to handle reconstruction residuals after generating null maps. Either ``None`` to
         exclude residuals, ``'add'`` to add original residuals, or ``'permute'`` to add shuffled
@@ -83,11 +80,10 @@ def eigenstrap(
         ``scipy.stats.special_ortho_group.rvs``. Default is ``'qr'``. See Notes for details on which
         option to choose.
     decomp_method : str, optional
-        The method used for eigendecomposition, either ``'project'`` to project data into a
-        mass-orthonormal space or ``'regress'`` for least-squares fitting. Default is ``'project'``.
+        The method used for decomposition, either ``'project'`` or ``'regress'`` (see
+        :func:`~neuromodes.basis.decompose`). Default is ``'project'``.
     mass : array-like, optional
-        The mass matrix of shape ``(n_verts, n_verts)`` used for the decomposition when
-        ``decomp_method`` is ``'project'``. Default is ``None``.
+        The mass matrix of shape ``(n_verts, n_verts)``. Default is ``None``.
     seed : array-like or int, optional
         Random seed for reproducibility. If an array of shape ``(n_nulls,)`` is provided, it is used
         directly as the seed for each null. Otherwise, if a single integer is provided, it is used
@@ -108,8 +104,7 @@ def eigenstrap(
     ValueError
         If ``residual`` is not one of ``None``, ``'add'``, or ``'permute'``.
     ValueError
-        If ``resample`` is not one of ``None``, ``'exact'``, ``'affine'``, ``'mean'``, or
-        ``'range'``.
+        If ``resample`` is not one of ``None``, ``'exact'``, ``'affine'``, or ``'range'``.
     ValueError
         If ``rotation_method`` is not one of ``'qr'`` or ``'scipy'``.
     ValueError
@@ -136,15 +131,13 @@ def eigenstrap(
        the notes below.
 
     4. ``resample``. The choice of ``resample`` will affect the distribution of values in the nulls.
-       ``'mean'``, ``'affine'``, and ``'range'`` are linear transformations, while ``'exact'`` is a
-       non-linear transformation. ``'mean'`` preserves the location (mean) of the distribution,
-       while ``'affine'`` preserves the location and scale (mean and standard deviation) of the
-       distribution. As these are both affine transformations, they preserve the "relative PSD" of
-       the distribution. In contrast, ``'range'`` and ``'exact'`` do not preserve the relative PSD
-       of the distribution, as they change the location and scale of the reconstructed nulls. The
-       choice of ``resample`` should be guided by the importance of matching the original
-       distribution of values and ultimately by whichever option produces the lowest false discovery
-       rate (FDR). See ref [1]_ for an example of how to compute the FDR.
+       ``'affine'`` and ``'range'`` are linear transformations, while ``'exact'`` is a non-linear
+       transformation. ``'affine'`` preserves the "relative PSD" of the distribution. In contrast,
+       ``'range'`` and ``'exact'`` do not preserve the relative PSD of the distribution, as they
+       change the location and scale of the reconstructed nulls. The choice of ``resample`` should
+       be guided by the importance of matching the original distribution of values and ultimately by
+       whichever option produces the lowest false discovery rate (FDR). See ref [1]_ for an example
+       of how to compute the FDR.
 
     5. ``seed``. Seeding is handled in one or two stages. First, if ``seed`` is None or a scalar
        integer, it is used to generate an array of size ``(n_nulls,)``. (If ``seed`` is already an
@@ -159,10 +152,10 @@ def eigenstrap(
        implementation of eigenstrapping in ref [1]_, which is available `here
        <https://github.com/SNG-Newy/eigenstrapping/tree/c2d8e5a5e7af47649f6358334644a6b49d22cf8e>`__.
        In this function, we have made a few changes to the implementation. These changes simplify
-       installation, increase speed, process multiple maps concurrently, and facilitate
-       reproducibility. Nonetheless, under a specific configuration, the function can exactly match
-       the default usage of the implementation (i.e. generating the same nulls when the
-       corresponding seed is set). See `this notebook
+       installation, increase speed, process multiple maps concurrently, implement mass-weighted
+       statistics, and facilitate reproducibility. Nonetheless, under a specific configuration, the
+       function can exactly match the default usage of the implementation (i.e. generating the same
+       nulls when the corresponding seed is set). See `this notebook
        <https://neuromodes.readthedocs.io/en/latest/validation/nulls_eigenstrap_orig.html>`__
        for an example.
 
@@ -199,12 +192,13 @@ def eigenstrap(
 
        e. Only match default. We are able to exactly match the default functionality of the original
           implementation, but not all possible configurations. This is because of some changes we
-          have made to increase speed and facilitate reproducibility. In particular, when
-          ``randomize=False`` and ``residual=None``, the output of
-          ``eigenstrap(rotation_method='scipy')`` will match the original output (see below for more
-          parameters which also need to be specified). However, if ``randomize=True`` or
-          ``residual='permute'``, it is not possible to match results between the two
-          implementations. This is because of changes we have made to increase speed.
+          have made to increase speed, account for mesh irregularity, and facilitate
+          reproducibility. In particular, when ``randomize=False`` and ``residual=None``, the output
+          of ``eigenstrap(rotation_method='scipy')`` will match the original output (see below for
+          more parameters which also need to be specified). However, if ``randomize=True``,
+          ``resample='affine'`` or ``residual='permute'``, it is not possible to match results
+          between the two implementations. This is because of changes we have made to increase
+          speed and account for mesh irregularity.
 
        f. Changes to RNG. Here, we have changed to ``numpy``'s newer ``Generator`` for random number
           generation, which means that the global seed does not affect the output of the function
@@ -222,8 +216,8 @@ def eigenstrap(
           expected to input ``emodes`` and ``evals`` with the constant mode/eigenvalue removed
           (something of the form ``emodes[:, 1:]`` and ``evals[1:]``), here users are expected to
           input ``emodes`` and ``evals`` with the constant mode/eigenvalue included. This has
-          minimal changes to the functionality of the code, other than this syntactic change.
-          TODO: this means mass-mean is preserved by default, get rid of option?
+          the advantage of preserving the original (mass-weighted) mean of the data without need for
+          resampling.
 
        h. Concurrent processing of multiple maps. This function can process multiple maps at the
           same time. This was possible in the original implementation, but required users to save
@@ -237,18 +231,21 @@ def eigenstrap(
           remain intact. This difference is only relevant if both ``resample`` and ``residual`` are
           used.
 
-        TODO: area-weighted mean and std in resampling
+       j. Mass-weighted decomposition and statistics. To account for mesh irregularity, the mass
+          matrix is used when decomposing input maps into modal coefficients. In contrast, the
+          original implementation performs ordinary least-squares regression. Additionally,
+          mass-weighted means and standard deviations are used for ``resample='affine'``.
 
-       j. Syntax for exact replication. To exactly match the default version of the original
+       k. Syntax for exact replication. To exactly match the default version of the original
           implementation of eigenstrapping in ref [1]_, users specify the following input parameters
           to this function:
 
           - Ensure ``data`` has a mean of zero.
+          - Set ``mass`` to the identity matrix.
           - Set ``seed=seed``
           - Set ``resample="range"``
           - Set ``decomp_method="regress"``
           - Set ``rotation_method="scipy"``
-          TODO: set mass to eye
 
           Note that the original implementation (``eigenstrapping.SurfaceEigenstrapping``) must also
           be run with a particular configuration to ensure reproducibility/compatibility:
@@ -298,9 +295,9 @@ def eigenstrap(
     if residual not in (None, 'add', 'permute'):
         raise ValueError(f"Invalid residual method '{residual}'; must be 'add', 'permute', or "
                          "None.")
-    if resample not in (None, 'exact', 'affine', 'mean', 'range'):
+    if resample not in (None, 'exact', 'affine', 'range'):
         raise ValueError(f"Invalid resampling method '{resample}'; must be 'exact', 'affine', "
-                         "'mean', 'range', or None.")
+                         "'range', or None.")
     
     # seed : Need to ultimately generate n_nulls * 3 Generators to use for each step of the process
     # (randomize, residual, rotate). (i) If `seed` is an array of shape (n_nulls,), we use each seed
@@ -389,7 +386,7 @@ def eigenstrap(
             for i, s in enumerate(seeds_residual):
                 nulls[:, i, :] += np.random.default_rng(s).permutation(residual_data, axis=0)
 
-    # Resample values to match stats of original data
+    # Resample values to match stats of original data (TODO: move to stats.py)
     if resample == 'exact':
         # check for NaNs / Infs
         data_finite = np.isfinite(data)
@@ -413,10 +410,6 @@ def eigenstrap(
                 for j, map in enumerate(map_idx):
                     nulls[mask, :, map] = resampled[:, :, j]
                     nulls[~mask, :, map] = data[~mask, map][:, np.newaxis]
-
-    elif resample == 'mean':  # TODO: consider removing, as default should already do this
-        nulls -= meanw(nulls, mass, keepdims=True)
-        nulls += meanw(data, mass, keepdims=True)
     elif resample == 'affine':
         nulls -= meanw(nulls, mass, keepdims=True)
         nulls /= stdw(nulls, mass, keepdims=True)

@@ -4,7 +4,7 @@ from scipy import sparse
 from scipy.spatial.distance import cdist, pdist
 from scipy.stats import zscore
 from neuromodes.stats import (gramw, dotw, ssqw, lstsqw, solvew, cdistw, pdistw, meanw, demeanw,
-                              varw, stdw, zscorew, covw, vecnormw, sigmoid_rescale)
+                              varw, stdw, zscorew, covw, vecnormw, parcellate, sigmoid_rescale)
 
 @pytest.fixture(scope='module')
 def random_data():
@@ -184,24 +184,105 @@ class TestEye:
                 f"pairwise distances for metric '{metric}'."
             )
 
-class TestShapes:  # TODO: test all funcs, and test 1D
-    def test_dotw_ssqw_3d(self, random_data):
-        X, Y, eye, noneye = random_data
-        X3 = np.stack([X, X + 1.0], axis=-1)
-        Y3 = np.stack([Y, Y - 1.0], axis=-1)
-
-        dot_w = dotw(X3, Y3, mass=eye)
-        dot_u = np.einsum('vij,vij->ij', X3, Y3)
-        assert dot_w.shape == X3.shape[1:]
-        assert np.allclose(dot_w, dot_u)
-
-        dot_wn = dotw(X3, Y3, mass=noneye)
-        assert not np.allclose(dot_wn, dot_w)
-
-        ssq_w = ssqw(X3, mass=eye)
-        ssq_u = np.sum(X3**2, axis=0)
-        assert ssq_w.shape == X3.shape[1:]
-        assert np.allclose(ssq_w, ssq_u)
+class Test1D:
+    def test_dotw_1d(self, random_data):
+        X, Y, eye, _ = random_data
+        x_1d = X[:, 0]
+        y_1d = Y[:, 0]
+        assert np.allclose(dotw(x_1d, y_1d, mass=eye), np.dot(x_1d, y_1d))
+    
+    def test_gramw_1d(self, random_data):
+        X, Y, eye, _ = random_data
+        x_1d = X[:, 0]
+        y_1d = Y[:, 0]
+        gram_w = gramw(x_1d, y_1d, mass=eye)
+        gram_u = np.dot(x_1d, y_1d)
+        assert np.allclose(gram_w, gram_u), "Gramw with 1D input should match dot product."
+    
+    def test_ssqw_1d(self, random_data):
+        X, _, eye, _ = random_data
+        x_1d = X[:, 0]
+        ssq_w = ssqw(x_1d, mass=eye)
+        ssq_u = np.sum(x_1d**2)
+        assert np.allclose(ssq_w, ssq_u), "Ssqw with 1D input should match sum of squares."
+    
+    def test_meanw_1d(self, random_data):
+        X, _, eye, _ = random_data
+        x_1d = X[:, 0]
+        mean_w = meanw(x_1d, mass=eye)
+        mean_u = np.mean(x_1d)
+        assert np.allclose(mean_w, mean_u), "Meanw with 1D input should match unweighted mean."
+    
+    def test_demeanw_1d(self, random_data):
+        X, _, eye, _ = random_data
+        x_1d = X[:, 0]
+        demean_w = demeanw(x_1d, mass=eye)
+        demean_u = x_1d - np.mean(x_1d)
+        assert np.allclose(demean_w, demean_u), "Demeanw with 1D input should match unweighted demean."
+    
+    def test_varw_1d(self, random_data):
+        X, _, eye, _ = random_data
+        x_1d = X[:, 0]
+        var_w = varw(x_1d, mass=eye)
+        var_u = np.var(x_1d, ddof=0)
+        assert np.allclose(var_w, var_u), "Varw with 1D input should match unweighted variance."
+    
+    def test_stdw_1d(self, random_data):
+        X, _, eye, _ = random_data
+        x_1d = X[:, 0]
+        std_w = stdw(x_1d, mass=eye)
+        std_u = np.std(x_1d)
+        assert np.allclose(std_w, std_u), "Stdw with 1D input should match unweighted std dev."
+    
+    def test_zscorew_1d(self, random_data):
+        X, _, eye, _ = random_data
+        x_1d = X[:, 0]
+        zscore_w = zscorew(x_1d, mass=eye)
+        zscore_u = zscore(x_1d)
+        assert np.allclose(zscore_w, zscore_u), "Zscorew with 1D input should match unweighted z-score."
+    
+    def test_covw_1d(self, random_data):
+        X, Y, eye, _ = random_data
+        x_1d = X[:, 0]
+        y_1d = Y[:, 0]
+        cov_w = covw(x_1d, y_1d, mass=eye)
+        cov_u = np.cov(x_1d, y_1d, bias=True)[0, 1]
+        assert np.allclose(cov_w, cov_u), "Covw with 1D input should match unweighted covariance."
+    
+    def test_vecnormw_1d(self, random_data):
+        X, _, eye, _ = random_data
+        x_1d = X[:, 0]
+        norm_w = vecnormw(x_1d, mass=eye)
+        norm_u = np.linalg.norm(x_1d)
+        assert np.allclose(norm_w, norm_u), "Vecnormw with 1D input should match unweighted norm."
+    
+    def test_lstsqw_1d(self, random_data):
+        X, Y, eye, _ = random_data
+        x_1d = X[:, 0]
+        y_1d = Y[:, 0]
+        # lstsqw expects 2D, so reshape 1D to (n, 1)
+        lstsq_w = lstsqw(x_1d[:, np.newaxis], y_1d[:, np.newaxis], mass=eye)[0]
+        lstsq_u = np.linalg.lstsq(x_1d[:, np.newaxis], y_1d[:, np.newaxis], rcond=None)[0]
+        assert np.allclose(lstsq_w, lstsq_u), "Lstsqw with 1D input should match unweighted lstsq."
+    
+    def test_solvew_1d(self, random_data):
+        X, Y, eye, _ = random_data
+        x_1d = X[:, 0]
+        y_1d = Y[:, 0]
+        # solvew expects 2D, so reshape 1D to (n, 1)
+        solve_w = solvew(x_1d[:, np.newaxis], y_1d[:, np.newaxis], mass=eye)
+        solve_u = np.linalg.solve(x_1d[:, np.newaxis].T @ x_1d[:, np.newaxis], 
+                                  x_1d[:, np.newaxis].T @ y_1d[:, np.newaxis])
+        assert np.allclose(solve_w, solve_u), "Solvew with 1D input should match unweighted solve."
+    
+    def test_cdistw_1d(self, random_data):
+        X, Y, eye, _ = random_data
+        x_1d = X[:, 0]
+        y_1d = Y[:, 0]
+        # cdistw expects column vectors
+        cdist_w = cdistw(x_1d, y_1d, mass=eye)
+        cdist_u = cdist(x_1d[:, np.newaxis].T, y_1d[:, np.newaxis].T)
+        assert np.allclose(cdist_w, cdist_u), "Cdistw with 1D input should match unweighted cdist."
 
 def test_sigmoid_rescale():
     size = 1000
@@ -220,3 +301,94 @@ def test_sigmoid_rescale():
     # TODO: check that steepness controls the range of values in the sigmoid rescaled map
     # TODO: check that lower and upper bounds are respected
     # TODO: check that negative steepness reverses rank order exactly
+
+class TestParcellate:
+    @pytest.fixture(scope='class')
+    def parcellation(self, random_data):
+        n_verts = random_data[0].shape[0]
+        parc = np.zeros(n_verts, dtype=int)
+        parc[n_verts//3:] = 1
+        parc[2*n_verts//3:] = 2
+        return parc
+
+    def test_parcellate_sum_eye(self, random_data, parcellation):
+        X, _, eye, _ = random_data
+        n_verts = X.shape[0]
+
+        # identity mass and method='sum' should sum values within parcels
+        parc_sum = parcellate(X, parcellation, mass=eye, method='sum')
+        expected_sum = np.array([
+            X[:n_verts//3].sum(axis=0),
+            X[n_verts//3:2*n_verts//3].sum(axis=0),
+            X[2*n_verts//3:].sum(axis=0)
+            ])
+        assert np.allclose(parc_sum, expected_sum), \
+            "Parcellate with identity mass and method='sum' should sum vertex values."
+    
+    def test_parcellate_mean_eye(self, random_data, parcellation):
+        X, _, eye, _ = random_data
+        n_verts = X.shape[0]
+
+        # identity mass and method='mean' should average values within parcels
+        parc_mean = parcellate(X, parcellation, mass=eye, method='mean')
+        expected_mean = np.array([
+            X[:n_verts//3].mean(axis=0),
+            X[n_verts//3:2*n_verts//3].mean(axis=0),
+            X[2*n_verts//3:].mean(axis=0)
+            ])
+        assert np.allclose(parc_mean, expected_mean), \
+            "Parcellate with identity mass and method='mean' should average vertex values."
+
+    def test_parcellate_sum_vs_mean(self, random_data, parcellation):
+        X, _, eye, _ = random_data
+        X_abs = np.abs(X)
+
+        parc_sum = parcellate(X_abs, parcellation, mass=eye, method='sum')
+        parc_mean = parcellate(X_abs, parcellation, mass=eye, method='mean')
+
+        # Sum should be larger than mean for positive values (as in random data)
+        assert np.all(parc_sum > parc_mean), \
+            "Parcellate sum should be > mean for positive data."
+    
+    def test_parcellate_1d_data(self, random_data, parcellation):
+        X, _, eye, _ = random_data
+        X_1d = X[:, 0]  # Get first column as 1D
+
+        # Test with 1D data should return 1D result
+        parc_result = parcellate(X_1d, parcellation, mass=eye, method='mean')
+        assert parc_result.ndim == 1, "Parcellate with 1D data should return 1D result."
+        assert parc_result.shape[0] == 3, "Result should have 3 parcels."
+    
+    def test_parcellate_nonidentity_mass(self, random_data, parcellation):
+        X, _, eye, noneye = random_data
+        
+        parc_eye = parcellate(X, parcellation, mass=eye, method='mean')
+        parc_noneye = parcellate(X, parcellation, mass=noneye, method='mean')
+        
+        # Non-identity mass should produce different results
+        assert not np.allclose(parc_eye, parc_noneye), \
+            "Parcellate with non-identity mass should produce different results."
+    
+    def test_parcellate_invalid_method(self, random_data, parcellation):
+        X, _, eye, _ = random_data
+        
+        with pytest.raises(ValueError, match="method must be 'mean' or 'sum'"):
+            parcellate(X, parcellation, mass=eye, method='how2say')
+    
+    def test_parcellate_invalid_data_dim(self, random_data, parcellation):
+        X, _, eye, _ = random_data
+        X_3d = X[:, :, np.newaxis]
+        
+        with pytest.raises(ValueError, match="data must be 1D or 2D"):
+            parcellate(X_3d, parcellation, mass=eye)
+    
+    def test_parcellate_invalid_parc_dim(self, random_data, parcellation):
+        X, _, eye, _ = random_data
+        parc_2d = np.stack([parcellation, parcellation], axis=-1)
+        
+        with pytest.raises(ValueError, match="Parcellation map must be 1D"):
+            parcellate(X, parc_2d, mass=eye)
+
+    # TODO: add something similar to MGH's example where a simple function is irregularly sampled
+    # but accounted for by the mass matrix, and check that parcellation recovers the expected values
+    # in each parcel.

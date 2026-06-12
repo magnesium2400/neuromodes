@@ -7,10 +7,10 @@ vertex has Voronoi area/volume of 1.
 from __future__ import annotations
 
 import numpy as np
-from typing import TYPE_CHECKING
+from typing import Literal, TYPE_CHECKING
 from warnings import warn
 from scipy.spatial.distance import squareform, cdist
-from scipy.sparse import csc_matrix, spmatrix, diags
+from scipy.sparse import csc_matrix, csr_matrix, spmatrix, diags
 from neuromodes.eigen import EigenData
 
 if TYPE_CHECKING:
@@ -21,9 +21,27 @@ def gramw(
     data: NDArray[np.floating],
     data_b: NDArray[np.floating] | None = None,
     *,
-    mass: spmatrix | NDArray[np.floating]
+    mass: spmatrix | NDArray[np.floating] | None
 ) -> NDArray[np.floating]:
-    """Dot product between all columns (pairwise)."""
+    """
+    Dot product between all brain maps (pairwise), equivalent to ``data.T @ (mass @ data_b)``.
+
+    Parameters
+    ----------
+    data : array-like
+        The first set of spatial maps, of shape ``(n_verts, n_maps)``.
+    data_b : array-like, optional
+        The second set of spatial maps, of shape ``(n_verts, n_maps_b)``. If not provided, the
+        function computes the Gram matrix of ``data`` with itself. Default is ``None``.
+    mass : array-like
+        The mass matrix, of shape ``(n_verts, n_verts)``.
+
+    Returns
+    -------
+    np.ndarray
+        The Gram matrix of shape ``(n_maps, n_maps_b)`` if ``data_b`` is provided, or
+        ``(n_maps, n_maps)`` if not.
+    """
     ved = EigenData(data=(data, data_b), mass=mass)
     a, b = ved.data
     mass = _process_vertex_areas(ved.mass, a.shape[0])
@@ -32,20 +50,46 @@ def gramw(
         b = a
     return a.T @ (mass @ b)
 
-# TODO: ensure that all functions support nD input, not just 2D
+# TODO: ensure that all functions support nD input, not just 1D/2D
 def dotw(
     data_a: NDArray[np.floating],
     data_b: NDArray[np.floating],
-    mass: spmatrix | NDArray[np.floating],
+    mass: spmatrix | NDArray[np.floating] | None,
     keepdims: bool = False
 ) -> NDArray[np.floating]:
-    """Dot product between corresponding brain maps (not pairwise).
+    """
+    Dot product between corresponding brain maps (not pairwise), equivalent to ``sum(data_a * (mass
+    @ data_b), axis=0)``.
+
+    Parameters
+    ----------
+    data_a : array-like
+        The first set of spatial maps, of shape ``(n_verts, n_maps)``.
+    data_b : array-like
+        The second set of spatial maps, of shape ``(n_verts, n_maps)``.
+    mass : array-like
+        The mass matrix, of shape ``(n_verts, n_verts)``.
+    keepdims : bool, optional
+        If True, the output will have the same number of dimensions as the input arrays. Default is
+        False.
+
+    Returns
+    -------
+    np.ndarray
+        The dot product of shape ``(n_maps,)`` if ``keepdims=False``, or ``(1, n_maps)`` if
+        ``keepdims=True``.
+
+    Raises
+    ------
+    ValueError
+        If ``data_a`` and ``data_b`` do not have the same number of maps (columns).
     """
     ved = EigenData(data=(data_a, data_b), mass=mass)
     a, b = ved.data
 
     if a.shape != b.shape:
-        raise ValueError(f"data_a and data_b must have matching shapes; got {a.shape} and {b.shape}.")
+        raise ValueError(f"data_a and data_b must have the same shape; got {a.shape} and "
+                         f"{b.shape}.")
 
     n_verts = a.shape[0]
     mass = _process_vertex_areas(ved.mass, n_verts)
@@ -56,19 +100,54 @@ def dotw(
 
 def ssqw(
     data: NDArray[np.floating],
-    mass: spmatrix | NDArray[np.floating],
+    mass: spmatrix | NDArray[np.floating] | None,
     keepdims: bool = False
 ) -> NDArray[np.floating]:
-    """Energy (sum of squares) of each column."""
+    """
+    Sums of squares of each brain map, equivalent to ``sum(data * (mass @ data), axis=0)``.
+
+    Parameters
+    ----------
+    data : array-like
+        The spatial maps, of shape ``(n_verts, n_maps)``.
+    mass : array-like
+        The mass matrix, of shape ``(n_verts, n_verts)``.
+    keepdims : bool, optional
+        If True, the output will have the same number of dimensions as the input array. Default is
+        False.
+
+    Returns
+    -------
+    np.ndarray
+        The sums of squares of shape ``(n_maps,)`` if ``keepdims=False``, or ``(1, n_maps)`` if
+        ``keepdims=True``.
+    """
     return dotw(data, data, mass=mass, keepdims=keepdims)
 
 def meanw(
     data: NDArray[np.floating],
-    mass: spmatrix | NDArray[np.floating],
+    mass: spmatrix | NDArray[np.floating] | None,
     keepdims: bool = False
 ) -> float:
-    """Area-weighted mean. Note that this is equivalent to the more general
-    sum(mass @ data) / mass.sum()."""
+    """
+    Area-weighted mean of each brain map, equivalent to ``sum(mass @ data) / mass.sum()``.
+
+    Parameters
+    ----------
+    data : array-like
+        The spatial maps, of shape ``(n_verts, n_maps)``.
+    mass : array-like
+        The mass matrix, of shape ``(n_verts, n_verts)``.
+    keepdims : bool, optional
+        If True, the output will have the same number of dimensions as the input array. Default is
+        False.
+
+    Returns
+    -------
+    np.ndarray
+        The area-weighted mean of shape ``(n_maps,)`` if ``keepdims=False``, or ``(1, n_maps)`` if
+        ``keepdims=True``.
+    """
     ved = EigenData(data=data, mass=mass)  # FIXME: areas vector
     data, mass = ved.data, ved.mass
 
@@ -78,18 +157,52 @@ def meanw(
 
 def demeanw(
     data: NDArray[np.floating],
-    mass: spmatrix | NDArray[np.floating]
+    mass: spmatrix | NDArray[np.floating] | None
 ) -> NDArray[np.floating]:
-    """Remove the area-weighted mean."""
+    """
+    Removes the area-weighted mean from each brain map.
+
+    Parameters
+    ----------
+    data : array-like
+        The spatial maps, of shape ``(n_verts, n_maps)``.
+    mass : array-like
+        The mass matrix, of shape ``(n_verts, n_verts)``.
+
+    Returns
+    -------
+    np.ndarray
+        The demeaned spatial maps, of shape ``(n_verts, n_maps)``.
+    """
     data = np.asarray(data)
     return data - meanw(data, mass)
 
 def varw(
     data: NDArray[np.floating],
-    mass: spmatrix | NDArray[np.floating],
+    mass: spmatrix | NDArray[np.floating] | None,
     keepdims: bool = False
 ) -> float:
-    """Area-weighted variance."""
+    """
+    Mass-weighted variance of each brain map, equivalent to ``sum((data - mean) * (mass @ (data -
+    mean))) / mass.sum()``. Note that this function does not offer Bessel's correction, as mesh
+    vertices are not IID samples and maps typically display spatial autocorrelation.
+
+    Parameters
+    ----------
+    data : array-like
+        The spatial maps, of shape ``(n_verts, n_maps)``.
+    mass : array-like
+        The mass matrix, of shape ``(n_verts, n_verts)``.
+    keepdims : bool, optional
+        If True, the output will have the same number of dimensions as the input array. Default is
+        False.
+
+    Returns
+    -------
+    np.ndarray
+        The area-weighted variance of shape ``(n_maps,)`` if ``keepdims=False``, or ``(1, n_maps)``
+        if ``keepdims=True``.
+    """
     data = np.asarray(data)
     mass = _process_vertex_areas(mass, data.shape[0])
 
@@ -99,16 +212,38 @@ def varw(
 
 def momentw(
     data: NDArray[np.floating],
-    mass: spmatrix | NDArray[np.floating],
+    mass: spmatrix | NDArray[np.floating] | None,
     order: int,
     keepdims: bool = False
 ) -> float:
-    """Area-weighted statistical moment of a given order."""
+    """
+    Mass-weighted central moment of a given order, of each brain map. Central moments are computed
+    about the weighted mean. For order 1, the moment is always 0. For order 2, the moment is the
+    variance. For higher orders, the moment is approximated using vertex areas (i.e., lumped mass). 
+
+    Parameters
+    ----------
+    data : array-like
+        The spatial maps, of shape ``(n_verts, n_maps)``.
+    mass : array-like
+        The mass matrix, of shape ``(n_verts, n_verts)``.
+    order : int
+        The order of the moment to compute.
+    keepdims : bool, optional
+        If True, the output will have the same number of dimensions as the input array. Default is
+        False.
+
+    Returns
+    -------
+    np.ndarray
+        The area-weighted central moment of shape ``(n_maps,)`` if ``keepdims=False``, or ``(1,
+        n_maps)`` if ``keepdims=True``.
+    """
     data = np.asarray(data)
 
     if order == 1:
-        n_maps = data.shape[1] if data.ndim == 2 else 1
-        return np.zeros(n_maps)
+        out = np.zeros(data.shape[1]) if data.ndim == 2 else 0
+        return out[None, :] if keepdims else out
     elif order == 2:
         return varw(data, mass, keepdims=keepdims)
     else:
@@ -120,32 +255,83 @@ def momentw(
 
 def stdw(
     data: NDArray[np.floating],
-    mass: spmatrix | NDArray[np.floating],
+    mass: spmatrix | NDArray[np.floating] | None,
     keepdims: bool = False
 ) -> float:
-    """Area-weighted standard deviation."""
+    """
+    Mass-weighted standard deviation of each brain map.
+
+    Parameters
+    ----------
+    data : array-like
+        The spatial maps, of shape ``(n_verts, n_maps)``.
+    mass : array-like
+        The mass matrix, of shape ``(n_verts, n_verts)``.
+    keepdims : bool, optional
+        If True, the output will have the same number of dimensions as the input array. Default is
+        False.
+
+    Returns
+    -------
+    np.ndarray
+        The mass-weighted standard deviation of shape ``(n_maps,)`` if ``keepdims=False``, or ``(1,
+        n_maps)`` if ``keepdims=True``.
+    """
     return np.sqrt(varw(data, mass, keepdims=keepdims))
 
 def zscorew(
     data: NDArray[np.floating],
-    mass: spmatrix | NDArray[np.floating]
+    mass: spmatrix | NDArray[np.floating] | None
 ) -> NDArray[np.floating]:
-    """Z-score using area-weighted mean and standard deviation."""
+    """
+    Mass-weighted z-scoring of each brain map.
+    
+    Parameters
+    ----------
+    data : array-like
+        The spatial maps, of shape ``(n_verts, n_maps)``.
+    mass : array-like
+        The mass matrix, of shape ``(n_verts, n_verts)``.
+
+    Returns
+    -------
+    np.ndarray
+        The mass-weighted z-scored spatial maps, of shape ``(n_verts, n_maps)``.
+    """
+    # TODO: consider inefficiency of demeaning twice, could be expanded
     return demeanw(data, mass) / stdw(data, mass)
 
 def covw(
     data: NDArray[np.floating],
     data_b: NDArray[np.floating] | None = None,
     *,
-    mass: spmatrix | NDArray[np.floating]
+    mass: spmatrix | NDArray[np.floating] | None
 ) -> NDArray[np.floating]:
     """
-    Weighted covariance.
-    Usage: covw(A, mass=w) computes covariance of A with itself.
-           covw(A, B, mass=w) computes cross-covariance between A and B.
-    No bias correction is applied, equivalent to np.cov(..., bias=True). Since mesh vertices are not
-    IID samples and maps typically display spatial autocorrelation, Bessel's N-1 correction is not
-    appropriate.
+    Mass-weighted covariance amongst or between brain maps.
+    
+    Usage:
+    - ``covw(A, mass=mass)`` computes covariance of maps ``A`` amongst themselves.
+    - ``covw(A, B, mass=mass)`` computes cross-covariance between maps ``A`` and maps ``B``.
+    
+    Note that this function does not offer Bessel's correction, as mesh vertices are not IID samples
+    and maps typically display spatial autocorrelation.
+
+    Parameters
+    ----------
+    data : array-like
+        The first set of spatial maps, of shape ``(n_verts, n_maps)``.
+    data_b : array-like, optional
+        The second set of spatial maps, of shape ``(n_verts, n_maps_b)``. If not provided, the
+        function computes the covariance of ``data`` with itself. Default is ``None``.
+    mass : array-like
+        The mass matrix, of shape ``(n_verts, n_verts)``.
+
+    Returns
+    -------
+    np.ndarray
+        The mass-weighted covariance matrix, of shape ``(n_maps, n_maps_b)`` if ``data_b`` is
+        provided, or ``(n_maps, n_maps)`` if not.
     """
     a = np.asarray(data)
 
@@ -160,34 +346,79 @@ def covw(
 
 def vecnormw(
     data: NDArray[np.floating],
-    mass: spmatrix | NDArray[np.floating],
+    mass: spmatrix | NDArray[np.floating] | None,
     p: int = 2,
     keepdims: bool = False
 ) -> NDArray[np.floating]:
-    """Calculates the area-weighted L^p norm of spatial maps."""
+    """
+    Calculates the mass-weighted L^p norm of each brain map.
+    
+    Cases
+    - ``p=2``: exact, square root of sum of squares
+    - ``p=np.inf``: exact, maximum absolute value (no mass needed)
+    - ``p!=2 and p!=np.inf``: approximate using vertex areas (i.e., lumped mass matrix)
+
+    Parameters
+    ----------
+    data : array-like
+        The spatial maps, of shape ``(n_verts, n_maps)``.
+    mass : array-like
+        The mass matrix, of shape ``(n_verts, n_verts)``.
+    p : int, optional
+        The order of the norm. Default is 2.
+    keepdims : bool, optional
+        If True, the output will have the same number of dimensions as the input array. Default is
+        False.
+
+    Returns
+    -------
+    np.ndarray
+        The mass-weighted L^p norm of each brain map.
+    """
+    data = np.asarray(data)
+    
     if p == 2: # Exact (well-defined)
         return np.sqrt(ssqw(data, mass, keepdims=keepdims))
     
     elif p == np.inf: # Exact (ignores the mass matrix)
         out = np.max(np.abs(data), axis=0)
-        return out[None, :] if keepdims else out
+        return out[None, :] if (keepdims and data.ndim == 2) else out
     
     else: # Approximate by lumping
-        data = np.asarray(data)
         areas = _mass_to_areas(mass, data.shape[0])
         out = np.sum(areas * (np.abs(data) ** p), axis=0) ** (1 / p)
-        return out[None, :] if keepdims else out
+        return out[None, :] if (keepdims and data.ndim == 2) else out
 
 def cdistw(
     data_a: NDArray[np.floating],
     data_b: NDArray[np.floating],
-    mass: spmatrix | NDArray[np.floating],
+    mass: spmatrix | NDArray[np.floating] | None,
     metric: _MetricCallback | _MetricKind = 'euclidean'
 ) -> NDArray[np.floating]:
-    """Pairwise distance between columns of X and Y, accounting for mass matrix. Some functions support
-    exact calculation (these have been reimplemented); some functions are approximated by lumping
-    (scipy.spatial.distance.cdist with weights)."""
-    ved = EigenData(data=(data_a, data_b), mass=mass)  # a lot of redundancy, especially for correlation. TODO: consider adding `checks`, and `checks='mass'` to EigenData
+    """
+    Mass-weighted pairwise distances between two sets of brain maps. Some metrics are
+    reimplementation as exact calculations, while others are approximated using vertex areas (i.e.,
+    lumped mass matrix; :func:`~scipy.spatial.distance.cdist` with weights).
+
+    Parameters
+    ----------
+    data_a : array-like
+        The first set of spatial maps, of shape ``(n_verts, n_maps_a)``.
+    data_b : array-like
+        The second set of spatial maps, of shape ``(n_verts, n_maps_b)``.
+    mass : array-like
+        The mass matrix, of shape ``(n_verts, n_verts)``.
+    metric : str or callable, optional
+        The distance metric to use. Can be a string recognized by ``scipy.spatial.distance.cdist``
+        or a custom function. Default is ``'euclidean'``.
+
+    Returns
+    -------
+    np.ndarray
+        The mass-weighted distance matrix of shape ``(n_maps_a, n_maps_b)``.
+    """
+    # a lot of redundancy, especially for correlation. TODO: consider adding `checks`, and `checks='mass'` to EigenData
+    ved = EigenData(data=(data_a, data_b), mass=mass)
     a, b = ved.data
     mass = ved.mass
 
@@ -220,10 +451,27 @@ def cdistw(
 
 def pdistw(
     data: NDArray[np.floating],
-    mass: spmatrix | NDArray[np.floating],
+    mass: spmatrix | NDArray[np.floating] | None,
     metric: _MetricCallback | _MetricKind = 'euclidean'
 ) -> NDArray[np.floating]:
-    """Pairwise distances between observations in X, outputting a condensed vector."""
+    """
+    Mass-weighted pairwise distances amongst a set of brain maps, outputting a condensed vector.
+
+    Parameters
+    ----------
+    data : array-like
+        The spatial maps, of shape ``(n_verts, n_maps)``.
+    mass : array-like
+        The mass matrix, of shape ``(n_verts, n_verts)``.
+    metric : str or callable, optional
+        The distance metric to use. Can be a string recognized by ``scipy.spatial.distance.cdist``
+        or a custom function. Default is ``'euclidean'``.
+
+    Returns
+    -------
+    np.ndarray
+        The mass-weighted distance vector of shape ``(n_maps * (n_maps - 1) // 2,)``.
+    """
     data = np.asarray(data)
     if data.ndim != 2 or data.shape[1] < 2:
         raise ValueError(f"data must be a 2D array with at least 2 columns; got shape {data.shape}.")
@@ -235,11 +483,26 @@ def pdistw(
 def solvew(
     data_a: NDArray[np.floating],
     data_b: NDArray[np.floating],
-    mass: spmatrix | NDArray[np.floating]
+    mass: spmatrix | NDArray[np.floating] | None
 ) -> NDArray[np.floating]:
     """
-    Use method of normal equations to give area-weighted least squares error.
-    See https://en.wikipedia.org/wiki/Weighted_least_squares#Motivation
+    Solves the weighted least squares problem using the normal equations ``(aᵀMa)x = aᵀMb``, where
+    ``M`` is the mass matrix. See https://en.wikipedia.org/wiki/Weighted_least_squares#Motivation
+    for details. Consider instead using :func:`lstsqw` for a numerically stable approximation.
+
+    Parameters
+    ----------
+    data_a : array-like
+        The first set of spatial maps, of shape ``(n_verts, n_maps_a)``.
+    data_b : array-like
+        The second set of spatial maps, of shape ``(n_verts, n_maps_b)``.
+    mass : array-like
+        The mass matrix, of shape ``(n_verts, n_verts)``.
+
+    Returns
+    -------
+    np.ndarray
+        The solution to the weighted least squares problem, of shape ``(n_maps_a, n_maps_b)``.
     """
     ved = EigenData(data=(data_a, data_b), mass=mass)
     a, b = ved.data
@@ -250,11 +513,32 @@ def solvew(
 def lstsqw(
     data_a: NDArray[np.floating],
     data_b: NDArray[np.floating],
-    mass: spmatrix | NDArray[np.floating],
+    mass: spmatrix | NDArray[np.floating] | None,
     rcond: float | None = None
 ) -> tuple[NDArray[np.floating], int, float, NDArray[np.floating]]:
     """
-    Solve the weighted least squares by lumping the mass matrix and weighting each vertex.
+    Solve the weighted least squares problem using the vertex areas (i.e., lumped mass matrix),
+    equivalent to the approximation ``(√(areas)a)x ≈ √(areas)b``.
+
+    Parameters
+    ----------
+    data_a : array-like
+        The first set of spatial maps, of shape ``(n_verts, n_maps_a)``.
+    data_b : array-like
+        The second set of spatial maps, of shape ``(n_verts, n_maps_b)``.
+    mass : array-like
+        The mass matrix, of shape ``(n_verts, n_verts)``.
+    rcond : float or None, optional
+        Cut-off ratio for small singular values of ``data_a``. For the purposes of rank
+        determination, singular values are treated as zero if they are smaller than ``rcond`` times
+        the largest singular value of ``data_a``. The default uses the machine precision times
+        ``max(n_verts, n_maps_a)``. Passing -1 will use machine precision. 
+
+    Returns
+    -------
+    np.ndarray
+        Least-squares solution. Shape is ``(n_maps_a, n_maps_b)`` if ``data_b`` is 2D, or
+        ``(n_maps_a,)`` if ``data_b`` is 1D.
     """
     ved = EigenData(data=(data_a, data_b), mass=mass)
     a, b = ved.data
@@ -263,6 +547,80 @@ def lstsqw(
     aw = a * va[:, np.newaxis]
     bw = b * va[:, np.newaxis] if b.ndim != 1 else b * va
     return np.linalg.lstsq(aw, bw, rcond=rcond)
+
+def parcellate(
+    data: NDArray[np.floating],
+    parcellation: NDArray[np.integer],
+    mass: spmatrix | NDArray[np.floating] | None,
+    method: Literal['mean', 'sum'] = 'mean'
+) -> NDArray[np.floating]:
+    """
+    Area-weighted parcellation of each brain map.
+
+    Parameters
+    ----------
+    data : array-like
+        The spatial maps, of shape ``(n_verts, n_maps)``.
+    parcellation : array-like
+        The parcellation map, of shape ``(n_verts,)``, where each value is an integer representing
+        the parcel ID for the corresponding vertex.
+    mass : array-like
+        The mass matrix, of shape ``(n_verts, n_verts)``.
+    method : {'mean', 'sum'}, optional
+        The method for aggregating vertex values within each parcel. If 'mean', the function
+        computes the area-weighted mean of each parcel. If 'sum', the function computes the
+        area-weighted sum of each parcel. Default is 'mean'.
+
+    Returns
+    -------
+    np.ndarray
+        The parcellated spatial maps, of shape ``(n_parcels, n_maps)``.
+
+    Raises
+    ------
+    ValueError
+        If ``method`` is not 'mean' or 'sum'.
+    ValueError
+        If ``data`` is not 1D or 2D.
+    ValueError
+        If ``parcellation`` is not 1D.
+    """
+    # Format / validate arguments
+    if method not in ('mean', 'sum'):
+        raise ValueError(f"method must be 'mean' or 'sum'; got {method}.")
+    
+    ved = EigenData(data=(data, parcellation), mass=mass)
+    data, parcellation = ved.data
+    n_verts = data.shape[0]
+    areas = _mass_to_areas(ved.mass, n_verts)
+    parcellation = np.asarray(parcellation, dtype=int, copy=True)
+    
+    if data.ndim > 2:
+        raise ValueError("data must be 1D or 2D.")
+    if parcellation.ndim != 1:
+        raise ValueError("Parcellation map must be 1D.")
+    
+    parc_ids = np.unique(parcellation)
+    n_parcels = len(parc_ids)
+    is_data_vec = (data.ndim == 1)
+    data_2d = data[:, np.newaxis] if is_data_vec else data
+
+    # Construct sparse parcellation matrix as (n_parcels, n_verts)
+    parc_mat = csr_matrix(
+        (np.ones(n_verts),
+         (parcellation, np.arange(n_verts))),
+        shape=(n_parcels, n_verts)
+        )
+
+    # Adjust parcellation matrix for vertex areas
+    parc_areas = parc_mat @ areas
+    parc_mat = parc_mat.multiply(areas)
+    if method == 'mean':
+        parc_mat /= parc_areas[:, np.newaxis]
+
+    # Apply parcellation matrix to data
+    data_parc = parc_mat @ data_2d
+    return data_parc.squeeze(axis=1) if is_data_vec else data_parc
 
 def sigmoid_rescale(
     data: NDArray[np.floating],

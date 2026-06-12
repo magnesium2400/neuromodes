@@ -39,7 +39,7 @@ def test_surf_unreferenced_verts():
     invalid_mesh = TriaMesh(v=vertices, t=faces)
    
     # check_surf should raise ValueError due to unreferenced vertex
-    with raises(ValueError, match="Surface mesh contains .* unreferenced vertices"):
+    with raises(ValueError, match=r"Surface mesh contains 1 unreferenced \(i.e., faceless\)"):
         check_surf(invalid_mesh)
 
 def test_surf_not_contiguous():

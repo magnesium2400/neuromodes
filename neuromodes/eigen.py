@@ -28,8 +28,8 @@ class EigenSolver(Solver):
     Class for computing and using eigenmodes and eigenvalues of a brain structure mesh [1]_ via the
     Finite Element Method, which discretizes the Laplace-Beltrami eigenvalue problem using mass and
     stiffness matrices [2]_ [3]_. Spatial heterogeneity can be optionally incorporated, modifying
-    the Laplace-Beltrami operator via an isotropic diffusion tensor [4]_. After calling
-    :meth:`solve` to compute modes, a range of analysis methods can be called (:meth:`decompose`,
+    the stiffness matrix via an isotropic diffusion tensor [4]_. After calling :meth:`solve` to
+    compute modes, a range of analysis methods can be called (:meth:`decompose`,
     :meth:`reconstruct`, :meth:`reconstruct_timeseries`, :meth:`sim_nft_waves`,
     :meth:`balloon_model`, :meth:`compute_gem`).
 
@@ -42,26 +42,9 @@ class EigenSolver(Solver):
         - An instance of ``GiftiImage``, ``lapy.TriaMesh``
         - A dictionary with keys ``'vertices'`` and ``'faces'``
     mask : array-like, optional
-        A boolean mask to exclude certain vertices (e.g., medial wall) from the mesh. Default is
-        ``None``.
-    normalize : bool, optional
-        Whether to normalize the mesh to have unit surface area and centroid at origin. Note that
-        this will rescale the computed eigenmodes, eigenvalues, and mass matrix. Default is
-        ``False``.
-    hetero : array-like, optional
-        A heterogeneity map to scale the Laplace-Beltrami operator. Default is ``None``.
-    alpha : float, optional
-        Scaling parameter for the heterogeneity map. If a heterogenity map is specified, the default
-        is ``1.0``. Otherwise, this value is ignored (and is set to ``None``).
-    scaling : str, optional
-        Scaling function to apply to the heterogeneity map. Must be ``'sigmoid'`` or
-        ``'exponential'``. If a heterogenity map is specified, the default is ``'sigmoid'``.
-        Otherwise, this value is ignored (and is set to ``None``). 
-
-    Raises
-    ------
-    ValueError
-        If ``hetero`` length does not match the number of vertices (masked or unmasked).
+        A boolean mask to exclude certain vertices (e.g., medial wall) from the mesh. Note that some
+        masks may be invalid, if they lead to multiple connected components or faceless vertices.
+        Default is ``None``.
 
     Notes
     -----
@@ -114,38 +97,59 @@ class EigenSolver(Solver):
 
     @property
     def lump(self) -> bool:
+        """
+        Whether the mass matrix is lumped (i.e., diagonal) or consistent.
+        """
         return self._lump
     
     @property
     def hetero(self) -> NDArray[np.floating] | None:
+        """
+        The spatial heterogeneity map used to modify the stiffness matrix, or ``None`` if not used.
+        """
         return self._hetero
     
     @property
     def mass(self) -> csc_matrix:
+        """
+        The sparse mass matrix of the mesh.
+        """
         if self._mass is None:
             self._mass = self.fem_tria_mass(self.geometry, self._lump)
         return self._mass
 
     @property
     def stiffness(self) -> csc_matrix:
+        """
+        The sparse stiffness matrix of the mesh.
+        """
         if self._stiffness is None:
             self.compute_lbo(lump=self._lump, hetero=self._hetero)
         return self._stiffness
 
     @property
     def emodes(self) -> NDArray[np.floating]:
+        """
+        The geometric (i.e., Laplace-Beltrami) eigenmodes of the mesh.
+        """
         if self._emodes is None:
             raise ValueError("Eigenmodes not found. Please run the solve() method first.")
         return self._emodes
     
     @property
     def evals(self) -> NDArray[np.floating]:
+        """
+        The eigenvalues of the mesh.
+        """
         if self._evals is None:
             raise ValueError("Eigenvalues not found. Please run the solve() method first.")
         return self._evals
     
     @property
     def n_modes(self) -> int:
+        """
+        The number of computed eigenmodes and eigenvalues.
+        """
         if self._n_modes is None:
             raise ValueError("Eigenmodes not found. Please run the solve() method first.")
         return self._n_modes
@@ -183,19 +187,40 @@ class EigenSolver(Solver):
         hetero: NDArray[np.floating] | None = None
     ) -> EigenSolver:
         """
-        This method computes the Laplace-Beltrami operator using finite element methods on a
-        triangular or tetrahedral mesh, optionally incorporating spatial heterogeneity.
-        The resulting ``stiffness`` and ``mass`` matrices are stored as attributes.
+        This method computes the Laplace-Beltrami operator via the LaPy package [1]_ [2]_, optionally
+        incorporating spatial heterogeneity [3]_ [4]_. The resulting ``mass`` and ``stiffness``
+        matrices are cached as attributes. Note that changing ``lump`` or ``hetero`` will invalidate
+        any existing ``emodes`` and ``evals`` attributes, and these will be reset to ``None``.
 
         Parameters
         ----------
         lump : bool, optional
-            Whether to compute a lumped (i.e., diagonal) mass matrix. Default is ``False``.
+            Whether to compute the lumped (i.e., diagonal) mass matrix. Note that the lumped mass
+            can be obtained from the consistent mass by simply summing either rows or columns onto
+            the diagonal. Default is ``False``.
+        hetero : array-like, optional
+            A spatial heterogeneity map of shape ``(n_verts,)`` to modify the stiffness matrix via
+            an isotropic diffusion tensor. If ``None`` or all ones, the standard homogeneous LBO is
+            computed. In line with prior work [3]_, it is recommended that ``hetero`` is in the
+            range [0, 2] (see rescaling functions :func:`~neuromodes.stats.zscorew` and
+            :func:`~neuromodes.stats.sigmoid_rescale`). Default is ``None``. 
 
         Returns
         -------
         EigenSolver
             The ``EigenSolver`` instance.
+
+        References
+        ----------
+        ..  [1] Reuter, M., et al. (2006). Laplace-Beltrami spectra as 'Shape-DNA' of surfaces and
+            solids, Computer-Aided Design. https://doi.org/10.1016/j.cad.2005.10.011
+        ..  [2] Wachinger, C., et al. (2015). BrainPrint: a discriminative characterization of brain
+            morphology, Neuroimage. https://doi.org/10.1016/j.neuroimage.2015.01.032
+        ..  [3] Barnes, V., et al. (2026). Regional heterogeneity shapes macroscopic wave dynamics
+            of the human and non-human primate cortex, bioRxiv.
+            https://doi.org/10.64898/2026.01.22.701178
+        ..  [4] Andreux, M., et al. (2015). Anisotropic Laplace-Beltrami Operators for Shape
+            Analysis, Computer Vision. https://doi.org/10.1007/978-3-319-16220-1_21
         """
         # Cache validation
         if not np.array_equal(hetero, self._hetero):
@@ -245,37 +270,41 @@ class EigenSolver(Solver):
         lump: bool = False,
         set_emode1: bool = True,
         align_emodes: bool = True,
-        atol: float = 1e-3,
-        rtol: float = 1e-5,
         sigma: float = -0.01, # EASIEST way is to hard-code this to LaPy default (2026/03)
         seed: int | Generator | None = 0, 
         v0: NDArray[np.floating] | None = None
     ) -> EigenSolver:
         """
-        Solves the generalized eigenvalue problem for the Laplace-Beltrami operator and compute
-        eigenvalues and eigenmodes, which are stored as attributes (``emodes`` and ``evals``).
+        Solves the generalized eigenvalue problem for the Laplace-Beltrami operator, optionally
+        incorporating spatial heterogeneity. Resulting ``emodes`` and ``evals`` are stored as
+        attributes.
 
         Parameters
         ----------
         n_modes : int
-            Number of eigenmodes to compute. Must be a positive integer less than the number of
-            vertices.
-        standardize : bool, optional
-            If ``True``, standardizes the sign of the eigenmodes so the first element is positive.
-            Default is ``False``.
-        fix_mode1 : bool, optional
-            If ``True``, sets the first eigenmode to a constant value and the first eigenvalue to
-            zero, as is expected analytically. Default is ``True``. See the ``is_orthonormal_basis``
-            function for details.
+            Number of eigenmodes and eigenvalues to compute. Must be a positive integer less than
+            the number of vertices.
+        hetero : array-like, optional
+            A spatial heterogeneity map of shape ``(n_verts,)`` to modify the stiffness matrix via
+            an isotropic diffusion tensor. If ``None`` or all ones, the standard homogeneous LBO is
+            computed. In line with prior work [1]_, it is recommended that ``hetero`` is in the
+            range [0, 2] (see rescaling functions :func:`~neuromodes.stats.zscorew` and
+            :func:`~neuromodes.stats.sigmoid_rescale`). Default is ``None``.
         lump: bool, optional
-            Whether to use a lumped mass matrix for the Laplace-Beltrami operator. Default is
-            ``False``.
-        atol : float, optional
-            Absolute tolerance for mass-orthonormality validation. Default is ``1e-3``.
-        rtol : float, optional
-            Relative tolerance for mass-orthonormality validation. Default is ``1e-5``.
+            Whether to use the lumped (i.e., diagonal) mass matrix. Note that the lumped mass can be
+            obtained from the consistent mass by simply summing either rows or columns onto the
+            diagonal. Default is ``False``.
+        set_emode1 : bool, optional
+            Whether to set the first eigenmode to a constant ``1/sqrt(sum(mass))`` and the first
+            eigenvalue to ``0``, as is expected analytically for a single connected component.
+            Default is ``True``.
+        align_emodes : bool, optional
+            Whether to ensure that each eigenmode has a positive first element by flipping its sign
+            if necessary. Note that since these signs are arbitrary, this can be useful for
+            visualization. Default is ``True``.
         sigma : float, optional
             Shift-invert parameter to speed up the computation of eigenvalues close to this value.
+            Note that this changes the identity and ordering of returned eigenmodes and eigenvalues.
             Default is ``-0.01``.
         seed : int or numpy.random.Generator, optional
             Random seed for the generation of the initialization vector (see below). If ``None``,
@@ -297,6 +326,12 @@ class EigenSolver(Solver):
             If ``n_modes`` is not a positive integer less than ``n_verts``.
         ValueError
             If ``v0`` is provided but does not have shape ``(n_verts,)``.
+
+        References
+        ----------
+        ..  [1] Barnes, V., et al. (2026). Regional heterogeneity shapes macroscopic wave dynamics
+            of the human and non-human primate cortex, bioRxiv.
+            https://doi.org/10.64898/2026.01.22.701178
         """
         # Validate arguments
         if n_modes != int(n_modes) or n_modes <= 0 or n_modes >= self.n_verts:
@@ -312,10 +347,6 @@ class EigenSolver(Solver):
 
         # Solve the eigenvalue problem
         evals, emodes = self.eigs(k=n_modes, sigma=sigma, v0=v0, rng=seed)
-
-        # Validate results (TODO: reconsider if this is needed)
-        if not is_orthonormal_basis(emodes, self.mass, atol=atol, rtol=rtol, checks=False):
-            warn(f"Computed eigenmodes are not mass-orthonormal (atol={atol}, rtol={rtol}).")
 
         ## Post-process
         if set_emode1:
@@ -483,26 +514,6 @@ class EigenSolver(Solver):
             **kwargs
         )
     
-    def unmask_data(
-        self,
-        data: NDArray[np.floating],
-        **kwargs
-    ) -> NDArray[np.floating]:
-        """
-        This is a wrapper for :func:`~neuromodes.mesh.unmask_data`. Note that ``mask`` is passed
-        automatically by the ``EigenSolver`` instance.
-        """
-        from neuromodes.mesh import unmask_data
-
-        if self.mask is None:
-            raise ValueError("No mask found. This method is only applicable for masked meshes.")
-
-        return unmask_data(
-            data=data,
-            mask=self.mask,
-            **kwargs
-        )
-    
     def eigenstrap(
         self,
         data: NDArray[np.floating],
@@ -523,32 +534,49 @@ class EigenSolver(Solver):
             **kwargs
         )
 
-# TODO: consider renaming
+    def unmask_data(
+        self,
+        data: NDArray[np.floating],
+        **kwargs
+    ) -> NDArray[np.floating]:
+        """
+        This is a wrapper for :func:`~neuromodes.mesh.unmask_data`. Note that ``mask`` is passed
+        automatically by the ``EigenSolver`` instance.
+        """
+        from neuromodes.mesh import unmask_data
+
+        if self.mask is None:
+            raise ValueError("No mask found. This method is only applicable for masked meshes.")
+
+        return unmask_data(
+            data=data,
+            mask=self.mask,
+            **kwargs
+        )
+
 def align_basis(
     emodes: NDArray[np.floating],
     checks: bool = True
 ) -> NDArray[np.floating]:
     """
-    Flips the modes' signs such that the first element of each eigenmode has positive amplitude. 
-    Note that the sign of each mode is arbitrary--standardisation is only helpful to compare sets of
-    eigenmodes.
+    Ensures that the first element of each basis vector is positive by flipping its sign if
+    necessary. For basis sets with arbitrary signs (e.g., geometric eigenmodes, principal
+    components), this can be useful for visualization.
 
     Parameters
     ----------
     emodes : array-like
-        The eigenmodes array of shape ``(n_verts, n_modes)``, where n_modes is the number of
-        eigenmodes.
+        The basis vectors array of shape ``(n_verts, n_modes)``, where n_modes is the number of
+        vectors.
     checks : bool, optional
         Whether to validate the shape and type of ``emodes``. Default is ``True``.
 
     Returns
     -------
     numpy.ndarray
-        The standardized eigenmodes array of shape ``(n_verts, n_modes)``, with the first element of
-        each mode set to be positive.
+        The aligned basis vectors array of shape ``(n_verts, n_modes)``.
     """
-    if checks:
-        emodes = EigenData(emodes=emodes).emodes
+    emodes = EigenData(emodes=emodes, checks=checks).emodes
    
     # Flip modes where the first element is negative
     return emodes * np.copysign(1, np.sign(np.asarray(emodes)[0, :]))
@@ -561,7 +589,7 @@ def is_orthonormal_basis(
     checks: _CheckKind = 'shape'
 ) -> bool:
     """
-    Check if a set of vectors is orthonormal with respect to a mass matrix (i.e., ``emodes.T @ mass
+    Check if a basis set is orthonormal with respect to a mass matrix (i.e., ``emodes.T @ mass
     @ emodes == I``, where ``I`` is an identity matrix). ``mass = I`` corresponds to Euclidean
     orthonormality, and an assumption that all vertices in a mesh have equal Voronoi areas/volumes.
     Mass-orthonormality is expected for the geometric eigenmodes (see notes).
@@ -583,22 +611,20 @@ def is_orthonormal_basis(
     Returns
     -------
     bool
-        ``True`` if the set of vectors is orthonormal, ``False`` otherwise.
+        ``True`` if basis vectors are orthonormal, ``False`` otherwise.
 
     Notes
     -----
-    Under discretization, the set of solutions for any generalized eigenvalue problem ``stiffness @
-    emodes = - evals * mass @ emodes`` is expected to be mass-orthonormal, rather than orthonormal
-    with respect to the standard Euclidean inner (dot) product. It follows that the first mode is
-    expected to be a specific constant, but precision error during computation can introduce
-    spurious spatial heterogeneity. Since many eigenmode analyses rely on mass-orthonormality (e.g.,
-    decomposition, wave simulation), this function serves to ensure the validity of any calculated
-    or provided eigenmodes.
+    Under discretization, the set of eigenmodes ``x`` for any generalized eigenvalue problem ``A @
+    emodes = - evals * mass @ emodes`` is expected to be mass-orthonormal, rather than Euclidean
+    orthonormal. It follows that the first eigenmode is a constant ``1/sqrt(sum(mass))``, but
+    precision error during computation can introduce spurious spatial deviations. Since
+    mode-based analyses rely on mass-orthonormality, this function serves to ensure the validity of
+    any calculated or provided eigenmodes.
     """
     # Format / validate arguments
-    if checks is not False: 
-        ved = EigenData(emodes=emodes, mass=mass, checks=checks)
-        emodes, mass = ved.emodes, ved.mass
+    ved = EigenData(emodes=emodes, mass=mass, checks=checks)
+    emodes, mass = ved.emodes, ved.mass
 
     # Check Euclidean or mass-orthonormality
     prod = emodes.T @ emodes if mass is None else emodes.T @ (mass @ emodes)
@@ -611,7 +637,7 @@ def get_eigengroup_inds(
     """
     Identify eigengroups based on ordering of spherical harmonics. Each eigengroup 
     contains the next 2k+1 modes, where k is the eigengroup number (starting from 0). If
-    n_modes does not include a complete eigengroup, the final group will contain the 
+    ``n_modes`` does not include a complete eigengroup, the final group will contain the 
     remaining modes.
     
     Parameters
