@@ -11,10 +11,10 @@ from neuromodes.waves import sim_nft_waves, calc_wave_speed, _gen_noise, _analyt
 @pytest.fixture(scope="module")
 def solver():
     mesh, medmask = fetch_example_surf(density='4k')
-    hetero = fetch_example_map(data="myelinmap", density="4k")[medmask]
-    mass = EigenSolver(mesh, mask=medmask).compute_lbo().mass
-    hetero = sigmoid_rescale(zscorew(hetero, mass), steepness=1.0, upper=2.0)
-    return EigenSolver(mesh, mask=medmask, hetero=hetero).solve(n_modes=100, seed=0)
+    myelinmap = fetch_example_map(data="myelinmap", density="4k")[medmask]
+    solver = EigenSolver(mesh, mask=medmask)
+    hetero = sigmoid_rescale(zscorew(myelinmap, solver.mass), steepness=1.0, upper=2.0)
+    return solver.solve(n_modes=100, hetero=hetero)
 
 def test_unusual_wave_speed(solver):
     with pytest.warns(UserWarning, match=r'range of 0-150 m/s \(calculated 47.1-162.6 m/s\).'):

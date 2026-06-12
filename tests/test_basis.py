@@ -1,17 +1,18 @@
 import numpy as np
 import pytest
 from scipy.sparse import csc_matrix, eye
-from scipy.stats import zscore  # TODO: replace with stats.zscorew
 from neuromodes.basis import decompose, reconstruct, recon_error
-from neuromodes.eigen import EigenSolver, sigmoid_rescale
+from neuromodes.eigen import EigenSolver
 from neuromodes.io import fetch_example_surf, fetch_example_map
+from neuromodes.stats import sigmoid_rescale, zscorew
 
 @pytest.fixture(scope='module')
 def solver():
     surf, medmask = fetch_example_surf(density='4k')
-    hetero = np.random.default_rng(0).standard_normal(size=len(medmask))
-    hetero = sigmoid_rescale(zscore(hetero), steepness=0.5, upper=2.0)
-    return EigenSolver(surf, mask=medmask, hetero=hetero).solve(n_modes=10, seed=0)
+    randmap = np.random.default_rng(0).standard_normal(size=medmask.sum())
+    solver = EigenSolver(surf, mask=medmask)
+    hetero = sigmoid_rescale(zscorew(randmap, solver.mass), steepness=0.5, upper=2.0)
+    return solver.solve(n_modes=10, hetero=hetero)
 
 def test_decompose_eigenmodes_1d(solver):
     for i in range(solver.n_modes):
@@ -74,9 +75,10 @@ def solver_32k():
     # Get modes of fsLR 32k midthickness (data is in 32k)
     mesh, medmask = fetch_example_surf()
     rng = np.random.default_rng(0)
-    hetero = rng.standard_normal(size=len(medmask))
-    solver = EigenSolver(mesh, mask=medmask, hetero=hetero)
-    solver.solve(n_modes=10)
+    randmap = rng.standard_normal(size=medmask.sum())
+    solver = EigenSolver(mesh, mask=medmask)
+    hetero = sigmoid_rescale(zscorew(randmap, solver.mass), upper=2.0)
+    solver.solve(10, hetero=hetero)
     return solver
 
 def test_decompose_nans(solver_32k):

@@ -4,7 +4,7 @@ from scipy import sparse
 from scipy.spatial.distance import cdist, pdist
 from scipy.stats import zscore
 from neuromodes.stats import (gramw, dotw, ssqw, lstsqw, solvew, cdistw, pdistw, meanw, demeanw,
-                              varw, stdw, zscorew, covw, vecnormw)
+                              varw, stdw, zscorew, covw, vecnormw, sigmoid_rescale)
 
 @pytest.fixture(scope='module')
 def random_data():
@@ -184,7 +184,7 @@ class TestEye:
                 f"pairwise distances for metric '{metric}'."
             )
 
-class TestShapes:
+class TestShapes:  # TODO: test all funcs, and test 1D
     def test_dotw_ssqw_3d(self, random_data):
         X, Y, eye, noneye = random_data
         X3 = np.stack([X, X + 1.0], axis=-1)
@@ -202,3 +202,21 @@ class TestShapes:
         ssq_u = np.sum(X3**2, axis=0)
         assert ssq_w.shape == X3.shape[1:]
         assert np.allclose(ssq_w, ssq_u)
+
+def test_sigmoid_rescale():
+    size = 1000
+    randmap = np.random.default_rng().normal(loc=1e6, scale=10, size=size)
+
+    # check that sigmoid_rescaled map is all 2s due to high mean
+    hetero_sig = sigmoid_rescale(randmap, upper=2)
+    assert np.allclose(hetero_sig, 2.0), 'Sigmoid rescaled map with high mean should be all 2s.'
+
+    # Check that sigmoid-scaled z-scored map is within (0, 2)
+    heteroz_sig = sigmoid_rescale(zscorew(randmap, sparse.eye(size)), steepness=100, upper=2)
+    assert np.all((heteroz_sig >= 0) & (heteroz_sig <= 2)), \
+        'Sigmoid rescaled z-scored map should be within (0, 2).'
+    
+    # TODO: check that low values are close to 0 and high values are close to 2
+    # TODO: check that steepness controls the range of values in the sigmoid rescaled map
+    # TODO: check that lower and upper bounds are respected
+    # TODO: check that negative steepness reverses rank order exactly

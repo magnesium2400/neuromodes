@@ -217,7 +217,8 @@ class EigenSolver(Solver):
             self._lump = lump
 
         # Compute LBO as mass and stiffness matrices
-        if self._stiffness is not None:  # LaPy has no method to compute only stiffness
+        # LaPy has no method to compute only stiffness, so this recomputes mass as well
+        if self._stiffness is None:
             if self.hetero is None:
                 self._stiffness, self._mass = self._fem_tria(self.geometry, lump)
             else:
@@ -301,21 +302,18 @@ class EigenSolver(Solver):
         if n_modes != int(n_modes) or n_modes <= 0 or n_modes >= self.n_verts:
             raise ValueError("n_modes must be a positive integer less than the number of vertices"
                              f" ({self.n_verts}).")
-
-        # Ensure LBO is consistent with lump/hetero config
-        self.compute_lbo(lump, hetero)
-        
-        # Setup intitialization vector
         if v0 is not None:
             v0 = np.asarray_chkfinite(v0)
             if v0.shape != (self.n_verts,):
                 raise ValueError(f"v0 must have shape (n_verts,) = {(self.n_verts,)}.")
+            
+        # Ensure LBO is consistent with lump/hetero config
+        self.compute_lbo(lump, hetero)
 
         # Solve the eigenvalue problem
-        # can't pass sigma = None to LaPy
         evals, emodes = self.eigs(k=n_modes, sigma=sigma, v0=v0, rng=seed)
 
-        # Validate results
+        # Validate results (TODO: reconsider if this is needed)
         if not is_orthonormal_basis(emodes, self.mass, atol=atol, rtol=rtol, checks=False):
             warn(f"Computed eigenmodes are not mass-orthonormal (atol={atol}, rtol={rtol}).")
 
