@@ -68,7 +68,7 @@ def decompose(
     mass: csc_matrix | None = None,
     mode_counts: _IntSequenceKind | int | None = None,
     mode_ids: _SeqSequenceKind | None = None,
-    checks: _CheckKind | None = None,  
+    checks: _CheckKind | None = True,  
 ) -> NDArray[np.floating] | list[NDArray[np.floating]]:
     """
     Calculate the decomposition of the given data onto a basis set.
@@ -79,24 +79,32 @@ def decompose(
         The input data array of shape ``(n_verts, ...)``, where ``n_verts`` is the number of
         vertices and additional axes represent maps to be decomposed independently.
     emodes : array-like
-        The vectors array of shape ``(n_verts, n_modes)``, where ``n_modes`` is the number of basis
+        The basis vectors array of shape ``(n_verts, n_modes)``, where ``n_modes`` is the number of
         vectors.
     method : str, optional
-        The method used for the decomposition, either ``'project'`` to project data into the
-        mass-orthonormal space or ``'regress'`` for weighted least-squares fitting. Note that
-        ``'regress'`` should only be used when ``data`` contains missing values (NaNs), and the
-        methods are equivalent otherwise. Default is ``'project'``.
+        The method used for the decomposition, either ``'project'`` or ``'regress'``. Note that
+        ``'project'`` is faster and more accurate, while ``'regress'`` should only be used when
+        ``data`` contains missing values (NaNs; see Notes). The methods are otherwise equivalent.
+        Default is ``'project'``.
     mass : array-like, optional
         The mass matrix of shape ``(n_verts, n_verts)``. If vectors are orthonormal in Euclidean
         space, leave as ``None``. See :func:`eigen.is_orthonormal_basis` for more details. Default
         is ``None``.
+    mode_counts : array-like, optional
+        The sequence of vectors to be used for decomposition, of shape ``(n_recons,)``. For
+        example, ``mode_counts=np.array([10,20,30])`` will run three analyses: with the first 10
+        vectors, with the first 20 vectors, and with the first 30 vectors. Default is ``None``,
+        which uses ``n_modes``.
+    mode_ids : array-like, optional
+        The indices of the modes to be used for reconstruction, overriding ``mode_counts``. If
+        ``None``, all modes are used. Default is ``None``.
     checks : str or bool, optional
         Whether to validate arguments prior to analysis. Default is ``True``.
 
     Returns
     -------
     numpy.ndarray or list
-        The modal coefficients array of shape ``(n_modes, ...)`` or ``list of (n_modes, ...)``
+        The coefficients array of shape ``(n_modes, ...)`` or ``list of (n_modes, ...)`` 
         arrays, obtained from the decomposition.
     
     Raises
@@ -109,8 +117,9 @@ def decompose(
     Notes
     -----
     If ``data`` contains NaNs, these will be disregarded prior to decomposition (via
-    ``method='regress'``) by masking corresponding vertices from ``data``, ``emodes``, and ``mass``.
-    Extreme values may appear in the reconstructed data at these vertices, where . Consider instead interpolating missing data prior to decomposition.
+    ``method='regress'``) by removing corresponding entries from ``data``, ``emodes``, and ``mass``.
+    Note that extreme values may accumulate in the reconstructed data at these vertices, where data
+    provides no constraint. Consider instead interpolating missing data prior to decomposition.
     """
     # Format / validate inputs
     if method not in ['project', 'regress']:
@@ -132,7 +141,7 @@ def decompose(
     coeffs = [np.empty(shape, dtype=data.dtype) for shape in output_shapes]
     data_2d = data.reshape(data.shape[0], -1) # guaranteed 2d
     
-    # Handle NaNs by masking out afflicted vertices (separately for each NaN pattern)
+    # Handle NaNs with 'regress' by masking out afflicted vertices (separately for each NaN pattern)
     data_isnan = np.isnan(data_2d)
     if np.any(data_isnan):
         if method == 'project':
@@ -166,19 +175,6 @@ def decompose(
             coeffs[j] = coeffs_all[idxs, :].reshape(output_shapes[j])
 
     elif method == 'regress':
-        # Handle missing data
-        if np.any(data_isnan):
-            if checks is True or checks == 'maps':
-                warn("NaN values detected in data; these will be disregarded during decomposition "
-                     "by masking corresponding vertices from data, emodes, and mass. This may lead "
-                     "to extreme values in affected areas of the reconstructed data. Consider "
-                     "instead interpolating missing data prior to decomposition.")
-            masks, mask_indices = np.unique(~data_isnan, axis=1, return_inverse=True)
-        else:
-            # Keep all vertices, equivalent to project method
-            masks = np.ones((data_2d.shape[0], 1), dtype=bool)
-            mask_indices = np.zeros(data_2d.shape[1], dtype=int)
-
         # Have to loop over each set of mode indices
         for j in range(len(mode_ids)):
             coeffs_current = np.empty((n_modes[j], data_2d.shape[1]), dtype=data.dtype)
@@ -198,9 +194,9 @@ def decompose(
     return coeffs[0] if squeeze_output else coeffs # convert back to array if mode_counts was None/scalar
 
 def reconstruct(
-    emodes: NDArray,
-    data: NDArray | None = None,
-    coeffs: list[NDArray] | NDArray | None = None,
+    emodes: NDArray[np.floating],
+    data: NDArray[np.floating] | None = None,
+    coeffs: list[NDArray[np.floating]] | NDArray[np.floating] | None = None,
     method: _DecompositionKind = 'project',
     mass: csc_matrix | None = None,
     mode_counts: _IntSequenceKind | int | None = None,
@@ -208,13 +204,13 @@ def reconstruct(
     checks: _CheckKind | None = None
 ) -> NDArray[np.floating]:
     """
-    Calculate the reconstruction of the given independent data using the provided orthogonal vectors
-    (e.g., geometric eigenmodes).
+    Calculate the reconstruction of the given independent data using the provided orthonormal
+    vectors (e.g., geometric eigenmodes).
 
     Parameters
     ----------
     emodes : array-like
-        The vectors array of shape ``(n_verts, n_modes)``, where ``n_modes`` is the number of basis
+        The basis vectors array of shape ``(n_verts, n_modes)``, where ``n_modes`` is the number of
         vectors.
     data : array-like
         The input data array of shape ``(n_verts, ...)``, where ``n_verts`` is the number of
@@ -225,10 +221,10 @@ def reconstruct(
         arrays, obtained from the decomposition. If ``None``, ``data`` must be provided. Default is
         ``None``.
     method : str, optional
-        The method used for the decomposition, either ``'project'`` to project data into the
-        mass-orthonormal space or ``'regress'`` for weighted least-squares fitting. Note that
-        ``'regress'`` should only be used when ``data`` contains missing values (NaNs), and the
-        methods are equivalent otherwise. Default is ``'project'``.
+        The method used for the decomposition, either ``'project'`` or ``'regress'``. Note that
+        ``'project'`` is faster and more accurate, while ``'regress'`` should only be used when
+        ``data`` contains missing values (NaNs; see Notes). The methods are otherwise equivalent.
+        Default is ``'project'``.
     mass : array-like, optional
         The mass matrix of shape ``(n_verts, n_verts)``. If vectors are orthonormal in Euclidean
         space, leave as ``None``. See :func:`eigen.is_orthonormal_basis` for more details. Default
@@ -239,7 +235,9 @@ def reconstruct(
         vectors, with the first 20 vectors, and with the first 30 vectors. Default is ``None``,
         which uses ``n_modes``.
     mode_ids : array-like, optional
-        TODO
+        The indices of the modes to be used for reconstruction, overriding ``mode_counts``. If
+        ``None``, all modes are used. Default is ``None``.
+        Default is ``None``.
     checks : str or bool, optional
         Whether to validate arguments prior to analysis. Default is ``True``.
 
@@ -255,15 +253,14 @@ def reconstruct(
     Raises
     ------
     ValueError
-        If ``method`` is not ``'project'`` or ``'regress'``.
-    ValueError
-        If ``method`` is ``'project'`` and ``data`` contains NaNs.
+        If neither or both of ``data`` and ``coeffs`` are provided.
 
     Notes
     -----
     If ``data`` contains NaNs, these will be disregarded prior to decomposition (via
-    ``method='regress'``) by masking corresponding vertices from ``data``, ``emodes``, and ``mass``.
-    Extreme values may appear in the reconstructed data at these vertices, where . Consider instead interpolating missing data prior to decomposition.
+    ``method='regress'``) by removing corresponding entries from ``data``, ``emodes``, and ``mass``.
+    Note that extreme values may accumulate in the reconstructed data at these vertices, where data
+    provides no constraint. Consider instead interpolating missing data prior to decomposition.
     """
     # Format / validate inputs
     if checks is None:
@@ -306,8 +303,8 @@ def reconstruct(
     return recon_nd
 
 def recon_error(
-    data: NDArray,
-    recon: NDArray,
+    data: NDArray[np.floating],
+    recon: NDArray[np.floating],
     mass: csc_matrix | None = None,
     metric: _MetricCallback | _MetricKind = 'correlation',
     checks: _CheckKind = 'maps',
@@ -318,10 +315,9 @@ def recon_error(
     """
     # Format / validate checks
     if checks is not False: 
-        ved = EigenData(emodes=None, mass=mass, data=data, checks=checks)
-        mass, data = ved.mass, ved.data
-        ved = EigenData(emodes=None, mass=None, data=recon, checks=checks)
-        recon = ved.data
+        ved = EigenData(mass=mass, data=(data, recon), checks=checks)
+        mass = ved.mass
+        data, recon = ved.data
 
     # Get and check data/recon shapes
     data_shape = data.shape

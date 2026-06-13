@@ -10,7 +10,7 @@ API Reference
 
 .. _ref_eigen:
 
-:mod:`neuromodes.eigen` - Compute eigenmodes on cortical surface meshes
+:mod:`neuromodes.eigen` - Compute geometric eigenmodes of cortical surface meshes
 ---------------------------------------------------------------
 
 .. automodule:: neuromodes.eigen
@@ -43,18 +43,19 @@ API Reference
    balloon_model
    compute_gem
    eigenstrap
+   unmask_data
 
 .. autosummary::
    :template: function.rst
    :toctree: generated/
 
-   scale_hetero
-   standardize_emodes
+   align_basis
    is_orthonormal_basis
+   get_eigengroup_inds
 
 .. _ref_basis:
 
-:mod:`neuromodes.basis` - Decompose and reconstruct cortical maps
+:mod:`neuromodes.basis` - Decompose and reconstruct brain maps
 ---------------------------------------------------------------
 
 .. automodule:: neuromodes.basis
@@ -73,7 +74,7 @@ API Reference
 
 .. _ref_waves:
 
-:mod:`neuromodes.waves` - Simulate activity via wave propagation
+:mod:`neuromodes.waves` - Simulate neural activity and functional MRI signals
 ---------------------------------------------------------------
 
 .. automodule:: neuromodes.waves
@@ -92,7 +93,7 @@ API Reference
 
 .. _ref_network:
 
-:mod:`neuromodes.network` - Generative modelling of the structural connectome
+:mod:`neuromodes.network` - Generative modelling of structural connectivity
 ---------------------------------------------------------------
 
 .. automodule:: neuromodes.network
@@ -107,9 +108,42 @@ API Reference
 
    compute_gem
 
+.. _ref_stats:
+
+:mod:`neuromodes.stats` - Statistical functions for brain map analysis
+---------------------------------------------------------------
+
+.. automodule:: neuromodes.stats
+   :no-members:
+   :no-inherited-members:
+
+.. currentmodule:: neuromodes.stats
+
+.. autosummary::
+   :template: function.rst
+   :toctree: generated/
+
+   gramw
+   dotw
+   ssqw
+   meanw
+   demeanw
+   varw
+   momentw
+   stdw
+   zscorew
+   covw
+   vecnormw
+   cdistw
+   pdistw
+   solvew
+   lstsqw
+   parcellate
+   sigmoid_rescale
+
 .. _ref_mesh:
 
-:mod:`neuromodes.mesh` - Create, mask, and validate meshes of brain structures
+:mod:`neuromodes.mesh` - Mask and validate meshes of brain structures
 ---------------------------------------------------------------
 
 .. automodule:: neuromodes.mesh
@@ -128,7 +162,7 @@ API Reference
 
 .. _ref_nulls:
 
-:mod:`neuromodes.nulls` - Generate null brain maps preserving spatial autocorrelation
+:mod:`neuromodes.nulls` - Generate null brain maps
 ---------------------------------------------------------------
 
 .. automodule:: neuromodes.nulls
@@ -159,5 +193,5 @@ API Reference
    :toctree: generated/
 
    read_surf
-   fetch_surf
-   fetch_map
+   fetch_example_surf
+   fetch_example_map

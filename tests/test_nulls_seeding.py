@@ -275,7 +275,7 @@ def test_compared_to_original_seed_outside(nulls_orig):
     map = (map - np.mean(map)) # to match original implementation which doesn't use the constant mode
 
     # Compute new nulls
-    solver = EigenSolver(mesh, mask=medmask).solve(n_modes, fix_mode1=True)
+    solver = EigenSolver(mesh, mask=medmask).solve(n_modes, set_emode1=True)
     np.random.seed(seed)            # matches original seed=seed 
     nulls_neuromodes = eigenstrap(
         emodes=solver.emodes,
@@ -321,7 +321,7 @@ def test_compared_to_original_seed_inside(nulls_orig):
     map = (map - np.mean(map)) # to match original implementation which doesn't use the constant mode
 
     # Compute new nulls
-    solver = EigenSolver(mesh, mask=medmask).solve(n_modes, fix_mode1=True)
+    solver = EigenSolver(mesh, mask=medmask).solve(n_modes, set_emode1=True)
     nulls_neuromodes = eigenstrap(
         emodes=solver.emodes,
         evals=solver.evals,

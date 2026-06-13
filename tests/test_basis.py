@@ -1,17 +1,18 @@
 import numpy as np
 import pytest
 from scipy.sparse import csc_matrix, eye
-from scipy.stats import zscore  # TODO: replace with stats.zscorew
 from neuromodes.basis import decompose, reconstruct, recon_error
-from neuromodes.eigen import EigenSolver, sigmoid_rescale
+from neuromodes.eigen import EigenSolver
 from neuromodes.io import fetch_example_surf, fetch_example_map
+from neuromodes.stats import sigmoid_rescale, zscorew
 
 @pytest.fixture(scope='module')
 def solver():
     surf, medmask = fetch_example_surf(density='4k')
-    hetero = np.random.default_rng(0).standard_normal(size=len(medmask))
-    hetero = sigmoid_rescale(zscore(hetero), steepness=0.5, upper=2.0)
-    return EigenSolver(surf, mask=medmask, hetero=hetero).solve(n_modes=10, seed=0)
+    randmap = np.random.default_rng(0).standard_normal(size=medmask.sum())
+    solver = EigenSolver(surf, mask=medmask)
+    hetero = sigmoid_rescale(zscorew(randmap, solver.mass), steepness=0.5, upper=2.0)
+    return solver.solve(n_modes=10, hetero=hetero)
 
 def test_decompose_eigenmodes_1d(solver):
     for i in range(solver.n_modes):
@@ -74,9 +75,10 @@ def solver_32k():
     # Get modes of fsLR 32k midthickness (data is in 32k)
     mesh, medmask = fetch_example_surf()
     rng = np.random.default_rng(0)
-    hetero = rng.standard_normal(size=len(medmask))
-    solver = EigenSolver(mesh, mask=medmask, hetero=hetero)
-    solver.solve(n_modes=10)
+    randmap = rng.standard_normal(size=medmask.sum())
+    solver = EigenSolver(mesh, mask=medmask)
+    hetero = sigmoid_rescale(zscorew(randmap, solver.mass), upper=2.0)
+    solver.solve(10, hetero=hetero)
     return solver
 
 def test_decompose_nans(solver_32k):
@@ -86,7 +88,10 @@ def test_decompose_nans(solver_32k):
          fetch_example_map('myelinmap')[solver_32k.mask]),
         axis=1
     )
-    coeffs = decompose(data, solver_32k.emodes, method='regress', mass=csc_matrix(eye(solver_32k.n_verts)))
+
+    # turn checks off to simplify use of mass, which is irrelevant to this test
+    coeffs = decompose(data, solver_32k.emodes, method='regress',
+                       mass=csc_matrix(eye(solver_32k.n_verts)), checks='maps')
 
     # Append data with NaNs (+100 vertices)
     extraverts = 100
@@ -101,7 +106,8 @@ def test_decompose_nans(solver_32k):
 
     # emodes/mass get masked according to the nans/s in data, leading to original coeffs values
     with pytest.warns(UserWarning, match="values detected in data"):
-        coeffs_masked = decompose(data_nans, modes_noise, method='regress', checks='maps', mass=csc_matrix(eye(solver_32k.n_verts+extraverts)))
+        coeffs_masked = decompose(data_nans, modes_noise, method='regress', checks='maps',
+                                  mass=csc_matrix(eye(solver_32k.n_verts+extraverts)))
     assert np.allclose(coeffs, coeffs_masked, atol=1e-2), \
         'coeffs values for project method are not close when data contains NaNs'
 
@@ -172,7 +178,8 @@ def test_reconstruct_regress_method(solver, gen_eigenmap):
     kwargs = dict(emodes=solver.emodes, 
                   method='regress', 
                   mass=csc_matrix(eye(solver.n_verts)),
-                  mode_counts=np.arange(solver.n_modes)+1)
+                  mode_counts=np.arange(solver.n_modes)+1,
+                  checks='maps')
     coeffs = decompose(eigenmaps, **kwargs) # type: ignore
     recon = reconstruct(coeffs=coeffs, **kwargs) # type: ignore
     correlation_error = recon_error(eigenmaps, recon, metric='correlation', mass=csc_matrix(eye(solver.n_verts)))
