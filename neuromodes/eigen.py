@@ -1,61 +1,55 @@
 """
-Module for computing geometric eigenmodes on cortical surface meshes and decomposing/reconstructing 
-cortical maps.
+Module for computing geometric eigenmodes of brain structures from surface meshes.
 """
 
 from __future__ import annotations
-from pathlib import Path
-from typing import Union, Tuple, TYPE_CHECKING
+from typing import TYPE_CHECKING, overload
 from warnings import warn
-from lapy import Solver, TriaMesh
+from dataclasses import dataclass
+from lapy import Solver
 import numpy as np
-from scipy.sparse import spmatrix
-from scipy.sparse.linalg import LinearOperator, eigsh, splu
-from trimesh import Trimesh
-from neuromodes.io import read_surf, mask_surf, check_surf
+from neuromodes.io import read_surf
+from neuromodes.mesh import mask_mesh, check_surf
 
 if TYPE_CHECKING:
-    from numpy.typing import NDArray, ArrayLike
+    from pathlib import Path
+    from typing import Any, Literal, TypeAlias
+    from lapy import TriaMesh
+    from nibabel.gifti.gifti import GiftiImage
+    from numpy.random import Generator
+    from numpy.typing import NDArray
+    from scipy.sparse import csc_matrix
+
+    _CheckKind: TypeAlias = bool | Literal['maps', 'ortho', 'shape', 'evals']
+    from neuromodes.basis import _IntSequenceKind, _SeqSequenceKind
 
 class EigenSolver(Solver):
     """
-    EigenSolver class for spectral analysis and simulation on surface meshes.
-
-    This class computes the Laplace-Beltrami operator (LBO) [1] on a triangular mesh via 
-    the Finite Element Method [2][3], which discretizes the eigenvalue problem according 
-    to mass and stiffness matrices. It also provides an option to incorporate spatial 
-    heterogeneity via the generalised LBO [4].
+    Class for computing and using eigenmodes and eigenvalues of a brain structure mesh [1]_ via the
+    Finite Element Method, which discretizes the Laplace-Beltrami eigenvalue problem using mass and
+    stiffness matrices [2]_ [3]_. Spatial heterogeneity can be optionally incorporated, modifying
+    the stiffness matrix via an isotropic diffusion tensor [4]_. After calling :meth:`solve` to
+    compute modes, a range of analysis methods can be called (:meth:`decompose`,
+    :meth:`reconstruct`, :meth:`reconstruct_timeseries`, :meth:`sim_nft_waves`,
+    :meth:`balloon_model`, :meth:`compute_gem`).
 
     Parameters
     ----------
-    surf : str, pathlib.Path, trimesh.Trimesh, lapy.TriaMesh, or dict
-        The surface mesh to be used. Can be a file path to a supported format (see
-        `io.read_surf`), a supported mesh object, or a dictionary with `'vertices'` and
-        `'faces'` keys.
+    geometry : str, pathlib.Path, lapy.TriaMesh, or dict
+        The surface mesh of a brain structure. Can be:
+        - A path to one of the following file formats: ``.gii``, ``.vtk``, ``.white``, ``.pial``,
+        ``.inflated``, ``.orig``, ``.sphere``, ``.smoothwm``, ``.qsphere``, ``.fsaverage``
+        - An instance of ``GiftiImage``, ``lapy.TriaMesh``
+        - A dictionary with keys ``'vertices'`` and ``'faces'``
     mask : array-like, optional
-        A boolean mask to exclude certain points (e.g., medial wall) from the surface mesh.
-        Vertices labelled as `False` in the mask will be excluded. Default is `None`.
-    normalize : bool, optional
-        Whether to normalize the surface mesh to have unit surface area and centroid at the
-        origin (modifies the vertices). Default is `False`.
-    hetero : array-like, optional
-        A heterogeneity map to scale the Laplace-Beltrami operator. Default is `None`.
-    alpha : float, optional
-        Scaling parameter for the heterogeneity map. If a heterogenity map is specified, the
-        default is `1.0`. Otherwise, this value is ignored (and is set to `None`).
-    scaling : str, optional
-        Scaling function to apply to the heterogeneity map. Must be `'sigmoid'` or
-        `'exponential'`. If a heterogenity map is specified, the default is `'sigmoid'`.
-        Otherwise, this value is ignored (and is set to `None`).
+        A boolean mask to exclude certain vertices (e.g., medial wall) from the mesh. Note that some
+        masks may be invalid, if they lead to multiple connected components or faceless vertices.
+        Default is ``None``.
 
-    Raises
-    ------
-    ValueError
-        If `hetero` length does not match the number of vertices (masked or unmasked).
-    ValueError
-        If `scaling` is not 'sigmoid' or 'exponential' (raised by `scale_hetero`).
-    ValueError
-        If `hetero` is constant (raised by `scale_hetero`).
+    Notes
+    -----
+    The coordinates of vertices in ``geometry`` are assumed to be in millimetres, following the
+    convention of common neuroimaging software.
 
     References
     ----------
@@ -70,474 +64,745 @@ class EigenSolver(Solver):
     """
     def __init__(
         self,
-        surf: Union[str, Path, Trimesh, TriaMesh, dict],
-        mask: Union[ArrayLike, None] = None,
-        normalize: bool = False,
-        hetero: Union[ArrayLike, None] = None,
-        alpha: Union[float, None] = None, # default to 1.0 if hetero given (and remains None)
-        scaling: Union[str, None] = None  # default to "sigmoid" if hetero given (and remains None)
+        geometry: str | Path | GiftiImage | TriaMesh | dict,
+        mask: NDArray[np.bool_] | None = None
     ):
-        # Surface inputs and checks
-        surf = read_surf(surf)
+        # Read in surface mesh
+        geometry = read_surf(geometry)
+
+        # Optionally mask
         if mask is not None:
-            self.mask = np.asarray(mask, dtype=bool)
-            surf = mask_surf(surf, self.mask)
-        else:
-            self.mask = None
-        check_surf(surf)
+            mask = np.asarray(mask, dtype=bool)  # chkfinite in mask_mesh
+            geometry = mask_mesh(geometry, mask)
         
-        # Convert to lapy TriaMesh and normalize if desired
-        self.geometry = TriaMesh(surf.vertices, surf.faces)
-        if normalize:
-            self.geometry.normalize_()
-        self.n_verts = surf.vertices.shape[0]
+        # Validate mesh
+        check_surf(geometry)
 
-        # Hetero inputs
-        self._raw_hetero = hetero
-        if hetero is None: # Handle None case by setting to ones
-            if scaling is not None:
-                warn("`scaling` is ignored (and set to None) as `hetero` is None.")
-            if alpha is not None:
-                warn("`alpha` is ignored (and set to None) as `hetero` is None.")
-            self._scaling = None
-            self._alpha = None
-            self.hetero = np.ones(self.n_verts)
-        else:
-            hetero = np.asarray(hetero)
-            alpha = 1.0 if alpha is None else float(alpha)
-            scaling = "sigmoid" if scaling is None else scaling
+        # Assign attributes
+        self.geometry = geometry
+        self.n_verts = geometry.v.shape[0]  # Nicety
+        self.mask = mask
+        self.use_cholmod = False  # Permit lapy.eigs()
 
-            # Ensure hetero has correct length (masked or unmasked)
-            if hetero.shape == (self.n_verts,):
-                pass
-            elif self.mask is not None and hetero.shape == (len(self.mask),):
-                hetero = hetero[self.mask]
-            else:
-                err_str = f"the number of vertices in the surface mesh ({self.n_verts})"
-                if self.mask is not None:
-                    err_str += f" or the masked surface mesh (of size {self.mask.sum()})"
-                raise ValueError(
-                    f"`hetero` must be a 1D array with length matching {err_str}."
-                )
+        # Configuration states
+        self._lump = False
+        self._hetero = None
 
-            # Scale and assign the heterogeneity map
-            self._scaling = scaling    
-            self._alpha = alpha
-            self.hetero = scale_hetero(
-                hetero=hetero, 
-                alpha=self._alpha, 
-                scaling=self._scaling
-            )
+        # Internal caches
+        self._mass = None
+        self._stiffness = None
+        self._emodes = None
+        self._evals = None
+        self._n_modes = None
+
+    @property
+    def lump(self) -> bool:
+        """
+        Whether the mass matrix is lumped (i.e., diagonal) or consistent.
+        """
+        return self._lump
+    
+    @property
+    def hetero(self) -> NDArray[np.floating] | None:
+        """
+        The spatial heterogeneity map used to modify the stiffness matrix, or ``None`` if not used.
+        """
+        return self._hetero
+    
+    @property
+    def mass(self) -> csc_matrix:
+        """
+        The sparse mass matrix of the mesh.
+        """
+        if self._mass is None:
+            self._mass = self.fem_tria_mass(self.geometry, self._lump)
+        return self._mass
+
+    @property
+    def stiffness(self) -> csc_matrix:
+        """
+        The sparse stiffness matrix of the mesh.
+        """
+        if self._stiffness is None:
+            self.compute_lbo(lump=self._lump, hetero=self._hetero)
+        return self._stiffness
+
+    @property
+    def emodes(self) -> NDArray[np.floating]:
+        """
+        The geometric (i.e., Laplace-Beltrami) eigenmodes of the mesh.
+        """
+        if self._emodes is None:
+            raise ValueError("Eigenmodes not found. Please run the solve() method first.")
+        return self._emodes
+    
+    @property
+    def evals(self) -> NDArray[np.floating]:
+        """
+        The eigenvalues of the mesh.
+        """
+        if self._evals is None:
+            raise ValueError("Eigenvalues not found. Please run the solve() method first.")
+        return self._evals
+    
+    @property
+    def n_modes(self) -> int:
+        """
+        The number of computed eigenmodes and eigenvalues.
+        """
+        if self._n_modes is None:
+            raise ValueError("Eigenmodes not found. Please run the solve() method first.")
+        return self._n_modes
 
     def __str__(self) -> str:
-        """String representation of the EigenSolver object."""
-        str_out = f'EigenSolver\n-----------\nSurface mesh: {self.n_verts} vertices'
+        """String representation of the ``EigenSolver`` object."""
+        # Prepare mesh info
+        geom_type = "Surface"
+        elem_type = "triangles"
+
+        # Construct base output string
+        str_out = (
+            'EigenSolver\n'
+            '-----------\n'
+            f'{geom_type} mesh: {self.n_verts} vertices'
+            )
         if self.mask is not None:
-            str_out += f' ({np.sum(self.mask == 0)} vertices masked out)'
-        if self._raw_hetero is not None:
-            str_out += f'\nHeterogeneity map scaling: {self._scaling} (alpha={self._alpha})'
-        str_out += f'\n{self.n_modes if hasattr(self, "n_modes") else "No"} eigenmodes computed'
+            str_out += f' ({np.sum(self.mask == 0)} others masked out)'
+        str_out += f', {self.geometry.t.shape[0]} {elem_type}'
+
+        # FEM matrices and modes
+        if self._mass is not None:
+            str_out += f'\nMass matrix: {"lumped" if self._lump else "consistent"}'
+        if self._stiffness is not None:
+            str_out += ('\nStiffness matrix: '
+                        f'{("heterogeneous" if self._hetero is not None else "homogeneous")}')
+        if self._emodes is not None:
+            str_out += f'\nEigenmodes and eigenvalues: {self.n_modes} computed'
 
         return str_out
 
     def compute_lbo(
         self, 
-        lump: bool = False
+        lump: bool = False,
+        hetero: NDArray[np.floating] | None = None
     ) -> EigenSolver:
         """
-        This method computes the Laplace-Beltrami operator using finite element methods on a
-        triangular mesh, optionally incorporating spatial heterogeneity and smoothing of the
-        curvature. The resulting `stiffness` and `mass` matrices are stored as attributes.
+        This method computes the Laplace-Beltrami operator via the LaPy package [1]_ [2]_, optionally
+        incorporating spatial heterogeneity [3]_ [4]_. The resulting ``mass`` and ``stiffness``
+        matrices are cached as attributes. Note that changing ``lump`` or ``hetero`` will invalidate
+        any existing ``emodes`` and ``evals`` attributes, and these will be reset to ``None``.
 
         Parameters
         ----------
         lump : bool, optional
-            Whether to use lumped mass matrix for the Laplace-Beltrami operator. Default is `False`.
+            Whether to compute the lumped (i.e., diagonal) mass matrix. Note that the lumped mass
+            can be obtained from the consistent mass by simply summing either rows or columns onto
+            the diagonal. Default is ``False``.
+        hetero : array-like, optional
+            A spatial heterogeneity map of shape ``(n_verts,)`` to modify the stiffness matrix via
+            an isotropic diffusion tensor. If ``None`` or all ones, the standard homogeneous LBO is
+            computed. In line with prior work [3]_, it is recommended that ``hetero`` is in the
+            range [0, 2] (see rescaling functions :func:`~neuromodes.stats.zscorew` and
+            :func:`~neuromodes.stats.sigmoid_rescale`). Default is ``None``. 
 
         Returns
         -------
         EigenSolver
-            The EigenSolver instance.
+            The ``EigenSolver`` instance.
+
+        References
+        ----------
+        ..  [1] Reuter, M., et al. (2006). Laplace-Beltrami spectra as 'Shape-DNA' of surfaces and
+            solids, Computer-Aided Design. https://doi.org/10.1016/j.cad.2005.10.011
+        ..  [2] Wachinger, C., et al. (2015). BrainPrint: a discriminative characterization of brain
+            morphology, Neuroimage. https://doi.org/10.1016/j.neuroimage.2015.01.032
+        ..  [3] Barnes, V., et al. (2026). Regional heterogeneity shapes macroscopic wave dynamics
+            of the human and non-human primate cortex, bioRxiv.
+            https://doi.org/10.64898/2026.01.22.701178
+        ..  [4] Andreux, M., et al. (2015). Anisotropic Laplace-Beltrami Operators for Shape
+            Analysis, Computer Vision. https://doi.org/10.1007/978-3-319-16220-1_21
         """
-        u1, u2, _, _ = self.geometry.curvature_tria()
+        # Cache validation
+        if not np.array_equal(hetero, self._hetero):
+            self._stiffness = None  # hetero affects stiffness only
+            self._emodes = None
+            self._evals = None
+            self._n_modes = None
+            if hetero is not None:
+                hetero = np.asarray_chkfinite(hetero)
+                if hetero.shape != (self.n_verts,):
+                    raise ValueError(f"hetero must have shape (n_verts,) = ({self.n_verts},).")
+            self._hetero = hetero
+        
+        if lump != self._lump:
+            self._mass = None  # lump affects mass only
+            self._emodes = None
+            self._evals = None
+            self._n_modes = None
+            self._lump = lump
 
-        hetero_tri = self.geometry.map_vfunc_to_tfunc(self.hetero)
-        hetero_mat = np.tile(hetero_tri[:, np.newaxis], (1, 2))
+        # Compute LBO as mass and stiffness matrices
+        # LaPy has no method to compute only stiffness, so this recomputes mass as well
+        if self._stiffness is None:
+            if self.hetero is None:
+                self._stiffness, self._mass = self._fem_tria(self.geometry, lump)
+            else:
+                # Get principal curvatures to define direction of anisotropy
+                # Note: change of basis into (u1, u2) is not strictly needed for our isotropic
+                # diffusion tensor, but _fem_tria_aniso performs it
+                u1, u2, _, _ = self.geometry.curvature_tria()
 
-        self.stiffness, self.mass = self._fem_tria_aniso(self.geometry, u1, u2,
-                                                         hetero_mat, lump)
+                # Map hetero from vertices to triangles by averaging
+                hetero_tria = self.geometry.map_vfunc_to_tfunc(self.hetero)
+
+                # Construct isotropic diffusion tensor by using hetero for both u1 and u2 directions
+                hetero_mat = np.stack((hetero_tria, hetero_tria), axis=1)
+
+                # Compute FEM matrices under heterogeneous LBO
+                self._stiffness, self._mass = self._fem_tria_aniso(self.geometry, u1, u2,
+                                                                   hetero_mat, lump)
         return self
 
     def solve(
         self,
-        n_modes: int, 
-        standardize: bool = True,
-        fix_mode1: bool = True,
-        atol: float = 1e-3,
-        rtol: float = 1e-5,
-        sigma: Union[float, None] = -0.01,
-        seed: Union[int, ArrayLike, None] = None, 
-        lump: bool = False
+        n_modes: int,
+        hetero: NDArray[np.floating] | None = None,
+        lump: bool = False,
+        set_emode1: bool = True,
+        align_emodes: bool = True,
+        sigma: float = -0.01, # EASIEST way is to hard-code this to LaPy default (2026/03)
+        seed: int | Generator | None = 0, 
+        v0: NDArray[np.floating] | None = None
     ) -> EigenSolver:
         """
-        Solves the generalized eigenvalue problem for the Laplace-Beltrami operator and compute
-        eigenvalues and eigenmodes, which are stored as attributes (`emodes` and `evals`).
+        Solves the generalized eigenvalue problem for the Laplace-Beltrami operator, optionally
+        incorporating spatial heterogeneity. Resulting ``emodes`` and ``evals`` are stored as
+        attributes.
 
         Parameters
         ----------
         n_modes : int
-            Number of eigenmodes to compute.
-        standardize : bool, optional
-            If `True`, standardizes the sign of the eigenmodes so the first element is positive.
-            Default is `False`.
-        fix_mode1 : bool, optional
-            If `True`, sets the first eigenmode to a constant value and the first eigenvalue to
-            zero, as is expected analytically. Default is `True`. See the `is_orthonormal_basis`
-            function for details.
-        atol : float, optional
-            Absolute tolerance for mass-orthonormality validation. Default is `1e-3`.
-        rtol : float, optional
-            Relative tolerance for mass-orthonormality validation. Default is `1e-5`.
+            Number of eigenmodes and eigenvalues to compute. Must be a positive integer less than
+            the number of vertices.
+        hetero : array-like, optional
+            A spatial heterogeneity map of shape ``(n_verts,)`` to modify the stiffness matrix via
+            an isotropic diffusion tensor. If ``None`` or all ones, the standard homogeneous LBO is
+            computed. In line with prior work [1]_, it is recommended that ``hetero`` is in the
+            range [0, 2] (see rescaling functions :func:`~neuromodes.stats.zscorew` and
+            :func:`~neuromodes.stats.sigmoid_rescale`). Default is ``None``.
+        lump: bool, optional
+            Whether to use the lumped (i.e., diagonal) mass matrix. Note that the lumped mass can be
+            obtained from the consistent mass by simply summing either rows or columns onto the
+            diagonal. Default is ``False``.
+        set_emode1 : bool, optional
+            Whether to set the first eigenmode to a constant ``1/sqrt(sum(mass))`` and the first
+            eigenvalue to ``0``, as is expected analytically for a single connected component.
+            Default is ``True``.
+        align_emodes : bool, optional
+            Whether to ensure that each eigenmode has a positive first element by flipping its sign
+            if necessary. Note that since these signs are arbitrary, this can be useful for
+            visualization. Default is ``True``.
         sigma : float, optional
             Shift-invert parameter to speed up the computation of eigenvalues close to this value.
-            Default is `-0.01`.
-        seed : int or array-like, optional
-            Random seed for reproducibile generation of eigenvectors (which otherwise use an
-            iterative algorithm that starts with a random vector, meaning that repeated generation
-            of eigenmodes on the same surface can have different orientations). Specify as an `int`
-            (to set the seed) or a vector with n_verts elements (to directly set the initialisation
-            vector). Default is `None` (not reproducible).
-        lump: bool = False
-            Whether to use lumped mass matrix for the Laplace-Beltrami operator. Default is `False`.
+            Note that this changes the identity and ordering of returned eigenmodes and eigenvalues.
+            Default is ``-0.01``.
+        seed : int or numpy.random.Generator, optional
+            Random seed for the generation of the initialization vector (see below). If ``None``,
+            computed eigenmodes and eigenvalues will not be exactly identical across runs. Most
+            notably, the (arbitrary) signs of modes may flip. Default is ``None``.
+        v0 : array-like, optional
+            Initialization vector of shape ``(n_verts,)`` for the iterative solver. If ``None``, a
+            vector sampled uniformly over [-1, 1] will be generated using the specified ``seed``.
+            This parameter takes priority over ``seed``. Default is ``None``.
 
         Returns
         -------
         EigenSolver
-            The EigenSolver instance.
+            The ``EigenSolver`` instance.
 
         Raises
         ------
         ValueError
-            If `n_modes` is not a positive integer.
+            If ``n_modes`` is not a positive integer less than ``n_verts``.
         ValueError
-            If `seed` is an array but does not have shape (n_verts,).
-        AssertionError
-            If computed eigenvalues or eigenmodes contain NaNs.
-        """
-        # Validate inputs
-        if not isinstance(n_modes, int) or n_modes <= 0:
-            raise ValueError("`n_modes` must be a positive integer.")
+            If ``v0`` is provided but does not have shape ``(n_verts,)``.
 
-        # Compute the Laplace-Beltrami operator / set stiffness and mass matrices
-        self.compute_lbo(lump)
-        
-        # Set intitialization vector (if desired) for reproducibile eigenvectors 
-        if seed is None or isinstance(seed, int):
-            rng = np.random.default_rng(seed)
-            v0 = rng.random(self.n_verts)
-        else:
-            v0 = np.asarray_chkfinite(seed)
+        References
+        ----------
+        ..  [1] Barnes, V., et al. (2026). Regional heterogeneity shapes macroscopic wave dynamics
+            of the human and non-human primate cortex, bioRxiv.
+            https://doi.org/10.64898/2026.01.22.701178
+        """
+        # Validate arguments
+        if n_modes != int(n_modes) or n_modes <= 0 or n_modes >= self.n_verts:
+            raise ValueError("n_modes must be a positive integer less than the number of vertices"
+                             f" ({self.n_verts}).")
+        if v0 is not None:
+            v0 = np.asarray_chkfinite(v0)
             if v0.shape != (self.n_verts,):
-                raise ValueError("`seed` must be either an integer or an array of shape (n_verts,) "
-                                 f"= {(self.n_verts,)}.")
+                raise ValueError(f"v0 must have shape (n_verts,) = {(self.n_verts,)}.")
+            
+        # Ensure LBO is consistent with lump/hetero config
+        self.compute_lbo(lump, hetero)
 
         # Solve the eigenvalue problem
-        lu = splu(self.stiffness - sigma * self.mass)
-        op_inv = LinearOperator( 
-            matvec=lu.solve, # type: ignore
-            shape=self.stiffness.shape,
-            dtype=self.stiffness.dtype,
-        )
+        evals, emodes = self.eigs(k=n_modes, sigma=sigma, v0=v0, rng=seed)
 
-        self.n_modes = n_modes
-        self.evals, self.emodes = eigsh(
-            self.stiffness,
-            k=self.n_modes,
-            M=self.mass,
-            sigma=sigma,
-            OPinv=op_inv,
-            v0=v0
-        )
+        ## Post-process
+        if set_emode1:
+            if sigma >= 0:
+                warn("emodes[:, 0] will not be set to its analytical constant value when sigma >= "
+                     "0, as it may not correspond to the constant eigenmode.")
+            else:
+                # Value given by mass-orthonormality condition
+                emodes[:, 0] = self.mass.sum()**(-0.5)
+                evals[0] = 0.0
 
-        # Validate results
-        assert not (np.isnan(self.evals).any() or np.isnan(self.emodes).any()), (
-            "Computed eigenvalues or eigenmodes contain NaNs. This may indicate numerical "
-            "instability; consider adjusting `sigma` or checking mesh quality.")
+        if align_emodes:
+            emodes = align_basis(emodes, checks=False)
 
-        if not is_orthonormal_basis(self.emodes, self.mass, atol=atol, rtol=rtol):
-            warn(f"Computed eigenmodes are not mass-orthonormal (atol={atol}, rtol={rtol}).")
-
-        # Post-process
-        if fix_mode1:
-            # Value given by mass-orthonormality condition
-            self.emodes[:, 0] = np.full(self.n_verts, 1 / np.sqrt(self.mass.sum()))
-            self.evals[0] = 0.0
-
-        if standardize:
-            self.emodes = standardize_modes(self.emodes)
-
+        # Store results
+        self._n_modes = n_modes  # Nicety
+        self._evals = evals
+        self._emodes = emodes
         return self
-    
-    def _check_for_emodes(self) -> None:
-        if not hasattr(self, 'emodes'):
-            raise ValueError("Eigenmodes not found. Please run the solve() method first.")
-    
+        
+    # 1. mode_counts is None or int -> Single Array 
+    @overload
     def decompose(
         self,
-        data: ArrayLike,
-        **kwargs
-    ) -> NDArray:
-        """
-        This is a wrapper for `neuromodes.basis.decompose`, see its documentation for details: 
-        https://neuromodes.readthedocs.io/en/latest/generated/nsbtools.basis.decompose.html
+        data: NDArray[np.floating],
+        *,
+        mode_counts: int | None = ...,
+        mode_ids: None = ...
+    ) -> NDArray[np.floating]: ...
 
-        Note that `emodes`, `mass`, and `check_ortho` are passed automatically by the `EigenSolver`
-        instance.
+    # 2. mode_counts is Sequence -> List of Arrays
+    @overload
+    def decompose(
+        self,
+        data: NDArray[np.floating],
+        *,
+        mode_counts: _IntSequenceKind,
+        mode_ids: None = ...
+    ) -> list[NDArray[np.floating]]: ...
+
+    # 3. mode_ids is Sequence -> List of Arrays
+    @overload
+    def decompose(
+        self,
+        data: NDArray[np.floating],
+        *,
+        mode_counts: None = ...,
+        mode_ids: _SeqSequenceKind
+    ) -> list[NDArray[np.floating]]: ...
+
+    def decompose(
+        self,
+        data: NDArray[np.floating],
+        **kwargs
+    ) -> NDArray[np.floating] | list[NDArray[np.floating]]:
+        """
+        This is a wrapper for :func:`~neuromodes.basis.decompose`. Note that ``emodes``, ``mass``,
+        and ``checks`` are passed automatically by the ``EigenSolver`` instance.
         """
         from neuromodes.basis import decompose
-
-        self._check_for_emodes()
     
         return decompose(
-            data,
-            self.emodes,
+            data=data,
+            emodes=self.emodes,
             mass=self.mass,
-            check_ortho=False,
+            checks='maps',
             **kwargs
         )
     
     def reconstruct(
         self,
-        data: ArrayLike,
+        data: NDArray[np.floating],
         **kwargs
-    ) -> Tuple[NDArray, NDArray, list[NDArray]]:
+    ) -> NDArray[np.floating]:
         """
-        This is a wrapper for `neuromodes.basis.reconstruct`, see its documentation for details:
-        https://neuromodes.readthedocs.io/en/latest/generated/nsbtools.basis.reconstruct.html
-
-        Note that `emodes`, `mass`, and `check_ortho` are passed automatically by the `EigenSolver`
-        instance.
+        This is a wrapper for :func:`~neuromodes.basis.reconstruct`. Note that ``emodes``, ``mass``,
+        and ``checks`` are passed automatically by the ``EigenSolver`` instance.
         """
         from neuromodes.basis import reconstruct
-        
-        self._check_for_emodes()
             
         return reconstruct(
-            data,
-            self.emodes,
+            data=data,
+            emodes=self.emodes,
             mass=self.mass,
-            check_ortho=False,
+            checks='maps',
             **kwargs
         )
     
-    def reconstruct_timeseries(
+    def recon_error(
         self,
-        data: ArrayLike,
+        data: NDArray[np.floating],
+        recon: NDArray[np.floating],
         **kwargs
-    ) -> Tuple[NDArray, NDArray, NDArray, NDArray, list[NDArray]]:
+    ) -> NDArray[np.floating]:
         """
-        This is a wrapper for `neuromodes.basis.reconstruct_timeseries`, see its documentation for
-        details:
-        https://neuromodes.readthedocs.io/en/latest/generated/nsbtools.basis.reconstruct_timeseries.html
-
-        Note that `emodes`, `mass`, and `check_ortho` are passed automatically by the `EigenSolver`
-        instance.
+        This is a wrapper for :func:`~neuromodes.basis.recon_error`. Note that ``mass`` and
+        ``checks`` are passed automatically by the ``EigenSolver`` instance.
         """
-        from neuromodes.basis import reconstruct_timeseries
-
-        self._check_for_emodes()
+        from neuromodes.basis import recon_error
             
-        return reconstruct_timeseries(
-            data,
-            self.emodes,
+        return recon_error(
+            data=data,
+            recon=recon,
             mass=self.mass,
-            check_ortho=False,
+            checks='maps',
             **kwargs
         )
     
-    def model_connectome(
+    def compute_gem(
         self,
         **kwargs
-    ) -> NDArray:
+    ) -> NDArray[np.floating]:
         """
-        This is a wrapper for `neuromodes.connectome.model_connectome`, see its documentation for
-        details:
-        https://neuromodes.readthedocs.io/en/latest/generated/nsbtools.connectome.model_connectome.html
-
-        Note that `emodes` and `evals` are passed automatically by the `EigenSolver` instance.
+        This is a wrapper for :func:`~neuromodes.network.compute_gem`. Note that ``emodes``,
+        ``evals``, and ``checks`` are passed automatically by the ``EigenSolver`` instance.
         """
-        from neuromodes.connectome import model_connectome
+        from neuromodes.network import compute_gem
 
-        self._check_for_emodes()
-
-        return model_connectome(
+        return compute_gem(
             emodes=self.emodes,
             evals=self.evals,
+            checks=False,
             **kwargs
         )
     
-    def simulate_waves(
+    def sim_nft_waves(
         self,
         **kwargs
-    ) -> NDArray:
+    ) -> NDArray[np.floating]:
         """
-        This is a wrapper for `neuromodes.waves.simulate_waves`, see its documentation for details:
-        https://neuromodes.readthedocs.io/en/latest/generated/nsbtools.waves.simulate_waves.html
-
-        Note that `emodes`, `evals`, `mass`, `scaled_hetero`, and `check_ortho` are passed
-        automatically by the `EigenSolver` instance.
+        This is a wrapper for :func:`~neuromodes.waves.sim_nft_waves`. Note that ``emodes``,
+        ``evals``, ``mass``, ``hetero``, and ``checks`` are passed automatically by the
+        ``EigenSolver`` instance.
         """
-        from neuromodes.waves import simulate_waves
+        from neuromodes.waves import sim_nft_waves
 
-        self._check_for_emodes()
-
-        return simulate_waves(
+        return sim_nft_waves(
             emodes=self.emodes,
             evals=self.evals,
             mass=self.mass,
-            scaled_hetero=(self.hetero if self._raw_hetero is not None else None),
-            check_ortho=False,
+            hetero=self.hetero,
+            stiffness=self.stiffness,
+            checks='maps',
+            **kwargs
+        )
+    
+    def balloon_model(
+        self,
+        activity: NDArray[np.floating],
+        dt: float,
+        **kwargs
+    ) -> NDArray[np.floating]:
+        """
+        This is a wrapper for :func:`~neuromodes.waves.balloon_model`. Note that ``emodes``,
+        ``mass``, and ``checks`` are passed automatically by the ``EigenSolver`` instance.
+        """
+        from neuromodes.waves import balloon_model
+
+        return balloon_model(
+            activity=activity,
+            dt=dt,
+            emodes=self.emodes,
+            mass=self.mass,
+            checks='maps',
+            **kwargs
+        )
+    
+    def eigenstrap(
+        self,
+        data: NDArray[np.floating],
+        **kwargs
+    ) -> NDArray[np.floating]:
+        """
+        This is a wrapper for :func:`~neuromodes.nulls.eigenstrap`. Note that `emodes`, `evals`,
+        `mass`, and `checks` are passed automatically by the `EigenSolver` instance.
+        """
+        from neuromodes.nulls import eigenstrap
+
+        return eigenstrap(
+            data=data,
+            emodes=self.emodes,
+            evals=self.evals,
+            mass=self.mass,
+            checks='maps',
             **kwargs
         )
 
-def scale_hetero(
-    hetero: ArrayLike,
-    alpha: float = 1.0,
-    scaling: str = "sigmoid"
-) -> NDArray:
-    """
-    Scales a heterogeneity map using specified normalization and scaling functions.
-    
-    Parameters
-    ----------
-    hetero : array-like
-        The heterogeneity map to be scaled.
-    alpha : float, optional
-        Scaling parameter controlling the strength of the transformation. Default is `1.0`.
-    scaling : str, optional
-        The scaling function to apply to the heterogeneity map, either `'sigmoid'` or
-        `'exponential'`. Default is `'sigmoid'`.
-    
-    Returns
-    -------
-    ndarray
-        The scaled heterogeneity map.
+    def unmask_data(
+        self,
+        data: NDArray[np.floating],
+        **kwargs
+    ) -> NDArray[np.floating]:
+        """
+        This is a wrapper for :func:`~neuromodes.mesh.unmask_data`. Note that ``mask`` is passed
+        automatically by the ``EigenSolver`` instance.
+        """
+        from neuromodes.mesh import unmask_data
 
-    Raises
-    ------
-    ValueError
-        If `hetero` is not a 1D array.
-    ValueError
-        If `scaling` is not 'exponential' or 'sigmoid'.
-    ValueError
-        If `hetero` is constant.
-    """
-    # Format / validate arguments
-    hetero = np.asarray_chkfinite(hetero)
-    if hetero.ndim != 1:
-        raise ValueError("`hetero` must be a 1D array.")
-    if scaling not in ["exponential", "sigmoid"]:
-        raise ValueError(f"Invalid scaling '{scaling}'. Must be 'exponential' or 'sigmoid'.")
-    if alpha == 0:
-        warn("`alpha` is set to 0, meaning heterogeneity map will have no effect.")
-    std = np.std(hetero)
-    if std == 0:
-        warn("Provided `hetero` is constant; scaling `hetero` to a vector of ones.")
-        hetero_scaled = np.ones_like(hetero)
-    else:
-        # Scale the heterogeneity map
-        hetero_z = (hetero - np.mean(hetero)) / std
-        hetero_scaled = (2 / (1 + np.exp(-alpha * hetero_z))
-                         if scaling == 'sigmoid' else np.exp(alpha * hetero_z))
-    
-    return hetero_scaled
+        if self.mask is None:
+            raise ValueError("No mask found. This method is only applicable for masked meshes.")
 
-def standardize_modes(
-    emodes: ArrayLike
-) -> NDArray:
+        return unmask_data(
+            data=data,
+            mask=self.mask,
+            **kwargs
+        )
+
+def align_basis(
+    emodes: NDArray[np.floating],
+    checks: bool = True
+) -> NDArray[np.floating]:
     """
-    Flips the modes' signs such that the first element of each eigenmode has positive amplitude. 
-    Note that the sign of each mode is arbitrary--standardisation is only helpful to compare sets of
-    eigenmodes.
+    Ensures that the first element of each basis vector is positive by flipping its sign if
+    necessary. For basis sets with arbitrary signs (e.g., geometric eigenmodes, principal
+    components), this can be useful for visualization.
 
     Parameters
     ----------
     emodes : array-like
-        The eigenmodes array of shape (n_verts, n_modes), where n_modes is the number of eigenmodes.
+        The basis vectors array of shape ``(n_verts, n_modes)``, where n_modes is the number of
+        vectors.
+    checks : bool, optional
+        Whether to validate the shape and type of ``emodes``. Default is ``True``.
 
     Returns
     -------
     numpy.ndarray
-        The standardized eigenmodes array of shape (n_verts, n_modes), with the first element of
-        each mode set to be positive.
+        The aligned basis vectors array of shape ``(n_verts, n_modes)``.
     """
-    emodes = np.asarray_chkfinite(emodes)
-
-    # Find the sign of each mode's amplitude at the first vertex
-    signs = np.sign(emodes[0, :])
-    signs[signs == 0] = 1  # Treat zero as positive (unlikely case)
-    
+    emodes = EigenData(emodes=emodes, checks=checks).emodes
+   
     # Flip modes where the first element is negative
-    return emodes * signs
+    return emodes * np.copysign(1, np.sign(np.asarray(emodes)[0, :]))
 
 def is_orthonormal_basis(
-    emodes: ArrayLike,
-    mass: Union[spmatrix, ArrayLike, None] = None,
+    emodes: NDArray[np.floating],
+    mass: csc_matrix | None = None,
     atol: float = 1e-03,
-    rtol: float = 1e-05
+    rtol: float = 1e-05,
+    checks: _CheckKind = 'shape'
 ) -> bool:
     """
-    Check if a set of vectors is orthonormal in Euclidean space (i.e., `emodes.T @ emodes == I`) or
-    with respect to a mass matrix (i.e., `emodes.T @ mass @ emodes == I`), where `I` is the identity
-    matrix. Mass-orthonormality is expected for the geometric eigenmodes (see notes).
+    Check if a basis set is orthonormal with respect to a mass matrix (i.e., ``emodes.T @ mass
+    @ emodes == I``, where ``I`` is an identity matrix). ``mass = I`` corresponds to Euclidean
+    orthonormality, and an assumption that all vertices in a mesh have equal Voronoi areas/volumes.
+    Mass-orthonormality is expected for the geometric eigenmodes (see notes).
 
     Parameters
     ----------
     emodes : array-like
-        The vectors array of shape (n_verts, n_modes), where n_modes is the number of vectors.
+        The vectors array of shape ``(n_verts, n_modes)``, where n_modes is the number of vectors.
     mass : array-like, optional
-        The mass matrix of shape (n_verts, n_verts). If `None`, Euclidean orthonormality is checked.
-        Default is `None`.
+        The mass matrix of shape ``(n_verts, n_verts)``. If ``None``, an identity matrix is used
+        (Eucliean orthonormality). Default is ``None``.
     atol : float, optional
-        Absolute tolerance for the orthonormality check. Default is `1e-3`.
+        Absolute tolerance for the orthonormality check. Default is ``1e-3``.
     rtol : float, optional
-        Relative tolerance for the orthonormality check. Default is `1e-5`.
+        Relative tolerance for the orthonormality check. Default is ``1e-5``.
+    checks : bool | str, optional
+        Whether to validate the shape and type of ``emodes`` and ``mass``. Default is ``True``.
 
     Returns
     -------
     bool
-        `True` if the set of vectors is orthonormal (Euclidean or mass-orthonormal), `False`
-        otherwise.
-
-    Raises
-    ------
-    ValueError
-        If `emodes` does not have shape (n_verts, n_modes), where n_verts ≥ n_modes.
-    ValueError
-        If `mass` is provided but does not have shape (n_verts, n_verts).
+        ``True`` if basis vectors are orthonormal, ``False`` otherwise.
 
     Notes
     -----
-    Under discretization, the set of solutions for the generalized eigenvalue problem is expected to
-    be mass-orthogonal (mode_i^T * mass matrix * mode_j = 0 for i ≠ j), rather than orthogonal with
-    respect to the standard Euclidean inner (dot) product (mode_i^T * mode_j = 0 for i ≠ j).
-    Eigenmodes are also expected to be mass-normal (mode_i^T * mass matrix * mode_i = 1). It follows
-    that the first mode is expected to be a specific constant, but precision error during
-    computation can introduce spurious spatial heterogeneity. Since many eigenmode analyses rely on
-    mass-orthonormality (e.g., decomposition, wave simulation), this function serves to ensure the
-    validity of any calculated or provided eigenmodes.
+    Under discretization, the set of eigenmodes ``x`` for any generalized eigenvalue problem ``A @
+    emodes = - evals * mass @ emodes`` is expected to be mass-orthonormal, rather than Euclidean
+    orthonormal. It follows that the first eigenmode is a constant ``1/sqrt(sum(mass))``, but
+    precision error during computation can introduce spurious spatial deviations. Since
+    mode-based analyses rely on mass-orthonormality, this function serves to ensure the validity of
+    any calculated or provided eigenmodes.
     """
     # Format / validate arguments
-    emodes = np.asarray_chkfinite(emodes)
-    if not isinstance(mass, (spmatrix, type(None))):
-        mass = np.asarray_chkfinite(mass)
-
-    if emodes.ndim != 2 or emodes.shape[0] < emodes.shape[1]:
-        raise ValueError("`emodes` must have shape (n_verts, n_modes), where n_verts ≥ n_modes.")
-    n_verts, n_modes = emodes.shape
-    if mass is not None and (mass.shape != (n_verts, n_verts)):
-        raise ValueError(f"`mass` must have shape (n_verts, n_verts) = {(n_verts, n_verts)}.")
+    ved = EigenData(emodes=emodes, mass=mass, checks=checks)
+    emodes, mass = ved.emodes, ved.mass
 
     # Check Euclidean or mass-orthonormality
-    prod = emodes.T @ emodes if mass is None else emodes.T @ mass @ emodes
-    return np.allclose(prod, np.eye(n_modes), rtol=rtol, atol=atol, equal_nan=False)
+    prod = emodes.T @ emodes if mass is None else emodes.T @ (mass @ emodes)
+    identity = np.eye(emodes.shape[1])
+    return np.allclose(prod, identity, rtol=rtol, atol=atol, equal_nan=False)
+
+def get_eigengroup_inds(
+    n_modes: int,
+    ) -> list[NDArray]:
+    """
+    Identify eigengroups based on ordering of spherical harmonics. Each eigengroup 
+    contains the next 2k+1 modes, where k is the eigengroup number (starting from 0). If
+    ``n_modes`` does not include a complete eigengroup, the final group will contain the 
+    remaining modes.
+    
+    Parameters
+    ----------
+    n_modes : int
+        The number of eigenmodes, which determines the grouping.
+    
+    Returns
+    -------
+    list of list of int
+        A list where each element is a list of indices corresponding to the modes in that 
+        eigengroup.
+    """
+    i = np.arange(n_modes)
+    g = np.floor(np.sqrt(i)).astype(int)
+    idx = [i[g == k] for k in np.unique(g)]
+
+    return idx
+
+_MISSING = object()  
+@dataclass(frozen=True, init=False)
+class EigenData:
+    emodes: NDArray[np.floating]
+    evals: NDArray[np.floating] 
+    mass: csc_matrix
+    stiffness: csc_matrix
+    hetero: NDArray[np.floating]
+    data: NDArray[np.floating]
+
+    def __init__(
+        self,
+        emodes: NDArray[np.floating] | None = _MISSING, # type: ignore[assignment]
+        evals: NDArray[np.floating] | None = _MISSING, # type: ignore[assignment] 
+        mass: csc_matrix | None = _MISSING, # type: ignore[assignment]
+        stiffness: csc_matrix | None = _MISSING, # type: ignore[assignment]
+        hetero: NDArray[np.floating] | None = _MISSING, # type: ignore[assignment]
+        data: NDArray[np.floating] | tuple[NDArray[np.floating]] | list[NDArray[np.floating]] | None = _MISSING, # type: ignore[assignment]
+        checks: _CheckKind = True
+    ):  # TODO: add mask?
+        # TODO: refactor to use helper functions
+
+        # Local helper to bypass 'frozen' restriction during initialization
+        def _set(name, val):
+            object.__setattr__(self, name, val)
+
+        check_shape = checks is True or checks == 'shape' or checks == 'maps' # need to get first dim when checking maps
+        check_maps = checks is True or checks == 'maps'
+        check_ortho = checks is True or checks == 'ortho'
+        check_evals = checks is True or checks == 'evals'
+
+        all_inputs = []
+
+        # Cast types and check shapes
+        if emodes is not _MISSING:
+            all_inputs.append('emodes')
+            if emodes is not None:
+                emodes = np.asarray_chkfinite(emodes)
+                if check_shape:
+                    if emodes.ndim != 2: 
+                        raise ValueError("emodes must be a 2D array.")
+                    if emodes.shape[0] <= emodes.shape[1]:
+                        raise ValueError("emodes must have shape (n_verts, n_modes), where n_verts "
+                                         "> n_modes.")
+            _set('emodes', emodes)
+
+        if evals is not _MISSING:
+            if evals is not None:
+                evals = np.asarray_chkfinite(evals)
+                if check_shape: 
+                    if emodes is not None and evals.shape != (emodes.shape[1],):
+                        raise ValueError(f"evals must have shape (n_modes,) = ({emodes.shape[1]},).")
+                if check_evals:
+                    if (evals[1:] <= 0).any():
+                        warn("Non-positive eigenvalues detected (beyond first eigenvalue). This "
+                             "may indicate an issue with the computation.")
+                    # Allow first eval to be slightly negative due to precision error
+                    if np.abs(evals[0]) > 1e-6:
+                        warn("The first eigenvalue is expected to be close to zero, received "
+                             f"{evals[0]}.")
+            _set('evals', evals)
+
+        # TODO : add lump input and parameter (confirm that mass is diagonal if lump=True)
+        if mass is not _MISSING:
+            all_inputs.append('mass')
+            if mass is not None and check_shape:
+                if mass.ndim != 2 or mass.shape[0] != mass.shape[1]: # type: ignore[union-attr]
+                    raise ValueError("mass must be a square matrix.")
+            _set('mass', mass)
+
+        if stiffness is not _MISSING:
+            all_inputs.append('stiffness')
+            if stiffness is not None and check_shape:
+                if stiffness.ndim != 2 or stiffness.shape[0] != stiffness.shape[1]: # type: ignore[union-attr]
+                    raise ValueError("stiffness must be a square matrix.")
+            _set('stiffness', stiffness)
+
+        # TODO: consider removing, data can just accept a list of arrays instead
+        if hetero is not _MISSING:
+            all_inputs.append('hetero')
+            if hetero is not None:
+                hetero = np.asarray_chkfinite(hetero)
+                if check_shape:
+                    if hetero.ndim != 1:
+                        raise ValueError("hetero must have shape (n_verts,).")
+            _set('hetero', hetero)
+
+        n_verts = None
+        # Check first dimension of each map at the same time (after self.name is set)
+        if check_shape:
+            for name in all_inputs:
+                val = getattr(self, name)
+                if val is None or val is _MISSING:
+                    continue
+                
+                first_dim = val.shape[0] # Sparse matrices and NDArrays both have .shape
+
+                if n_verts is None:
+                    # Establish the ground truth from the first available data source
+                    n_verts = first_dim
+                elif first_dim != n_verts:
+                    raise ValueError(
+                        f"Dimension mismatch in '{name}': "
+                        f"expected first dimension {n_verts}, but got {first_dim}."
+                    )
+            
+        if data is not _MISSING:
+            if check_maps: # if check_maps is True, always check the shape
+                # Convert single data array to iterable for consistent processing
+                if not isinstance(data, (tuple, list)):
+                    data = [data]
+                
+                # check shape and for NaN/Inf values in each data array
+                data_proc = []
+                for d in data:
+                    if d is not None:
+                        d = np.asarray(d)
+                        if np.isnan(d).any(): 
+                            warn("NaN values detected in data, which may cause issues with computations.")
+                        if np.isinf(d).any():
+                            warn("Inf values detected in data, which may cause issues with computations.")
+                        if n_verts is None:
+                            n_verts = d.shape[0]  # Establish the ground truth if not set
+                        elif n_verts != d.shape[0]:
+                            raise ValueError(f"data must have first dimension n_verts = {n_verts} to "
+                                            "match the other arguments.")
+                    data_proc.append(d)
+                
+                # Convert to tuple if needed
+                data = tuple(data_proc) if len(data_proc) > 1 else data_proc[0]
+                    
+            _set('data', data)
+
+        # Check mass-orthonormality
+        if check_ortho and emodes is not _MISSING and emodes is not None:
+            m = mass if mass is not _MISSING else None
+            if not is_orthonormal_basis(emodes, m, checks=False):
+                err_str = "in Euclidean space" if m is None else "with the provided mass matrix"
+                raise ValueError(
+                    f"The columns of emodes do not form an orthonormal basis set {err_str}. Either "
+                    "provide a suitable mass matrix such that emodes.T @ mass @ emodes = I, use "
+                    "the 'regress' method for decomposition, or set checks=False."
+                )
+
+    def __getattribute__(self, name: str) -> Any:
+        val = super().__getattribute__(name)
+        if val is _MISSING:
+            raise AttributeError(f"'{name}' was not provided to this EigenData instance.")
+        return val

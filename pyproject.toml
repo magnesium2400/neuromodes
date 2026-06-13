@@ -3,20 +3,18 @@ name = "neuromodes"
 version = "0.1.0"
 description = "Eigenmode-based brain mapping and modelling toolbox developed by the Neural Systems and Behaviour Lab"
 readme = "README.rst"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 keywords = ["python", "modelling", "neuroimaging", "eigenmodes", "brain-mapping"]
 
 dependencies = [
-    "lapy @ git+https://github.com/Deep-MI/LaPy.git@main",
+    "lapy>=1.6.0",
     "nibabel>=5.2.1",
     "numpy>=1.24.4",
     "scipy>=1.10.1",
-    "trimesh>=4.8.1",
 ]
 
 [project.optional-dependencies]
 testing = [
-    "joblib>=1.5.3",
     "pytest>=8.4.2",
 ]
 tutorials = [

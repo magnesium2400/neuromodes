@@ -23,6 +23,7 @@ MANIFEST
 
 # Documentation
 docs/_build/
+docs/generated/
 
 # PyBuilder
 .pybuilder/
