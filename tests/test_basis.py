@@ -148,8 +148,7 @@ def test_reconstruct_mode_superposition(solver, gen_eigenmap):
     coeffs = decompose(eigenmaps, solver.emodes, mass=solver.mass, mode_counts=np.arange(solver.n_modes)+1)
     recon = reconstruct(solver.emodes, coeffs=coeffs, mass=solver.mass, mode_counts=np.arange(solver.n_modes)+1)
 
-    with pytest.warns(RuntimeWarning, match="invalid value encountered in divide"):
-        correlation_error = recon_error(eigenmaps, recon, metric='correlation', mass=solver.mass)
+    correlation_error = recon_error(eigenmaps, recon, metric='correlation', mass=solver.mass)
     euclidean_error = recon_error(eigenmaps, recon, metric='euclidean', mass=solver.mass)
 
     # Correlation error should decrease from 1 to 0 when using mode 1 only versus all relevant modes
