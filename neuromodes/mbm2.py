@@ -3,7 +3,7 @@ import numpy as np
 import scipy.stats as sps
 
 # import neuromodes.stats as nms
-import mbm.palm
+import neuromodes.palm
 from neuromodes.basis import decompose
 
 # ofc this willl be removed at some point
@@ -96,7 +96,7 @@ def mbm_estimate_p_val_tail(
     # Only skip Pareto if the observation is very common (p > pThr)
     # If count_p is ~0 (beyond the limits), we DEFINITELY need Pareto.
     if count_p < pThr: 
-        count_p = mbm.palm.palm_pareto(observedStat, nullStat, rev, pThr, stop)[0]
+        count_p = neuromodes.palm.palm_pareto(observedStat, nullStat, rev, pThr, stop)[0]
     
     pValueTail = 2 * count_p
 
@@ -115,23 +115,72 @@ def mbm_estimate_p_val_tail(
 
 
 def permutations_flip_sign(
-        n_subjects: int,
-        n_permutations: int,
-        seed = None
-): # output shape (n_subjects, n_permutations)
-    rng = np.random.default_rng(seed)
-    # so that adding more perms for the same seed doesn't change the previous perms
-    return rng.choice(np.array([1, -1], dtype=np.int8), size=(n_permutations, n_subjects)).T
+    n_subjects: int,  
+    n_permutations: int,
+    seed: int | None = None
+) -> np.ndarray:
+    """
+    Generates independent random sign flips (1 or -1) for subjects.
+    
+    Uses spawned SeedSequences to guarantee that generating additional
+    permutations for a given seed will not alter the streams of previously
+    generated permutations.
+
+    Args:
+        n_subjects: The number of subjects (rows).
+        n_permutations: The number of permutations (columns).
+        seed: An integer or np.random.SeedSequence for reproducibility.
+
+    Returns:
+        np.ndarray: An array of shape (n_subjects, n_permutations) of type int8.
+    """
+    # 1. Initialize the seeds
+    child_seeds = np.random.SeedSequence(seed).spawn(n_permutations)
+    
+    # 2. Pre-allocate the output array (F-contiguous for column-wise writing)
+    out = np.empty((n_subjects, n_permutations), dtype=np.int8, order='F')
+    
+    # 3. Hoist the constant array out of the loop
+    choices = np.array([1, -1], dtype=np.int8)
+    
+    # 4. Fill the array column-by-column directly
+    for i, s in enumerate(child_seeds):
+        out[:, i] = np.random.default_rng(s).choice(choices, size=n_subjects)
+        
+    return out
+
 
 def permutations_shuffle_rows(
-        n_subjects,  
-        n_permutations,
-        seed = None
-): # output shape (n_subjects, n_permutations)
-    rng = np.random.default_rng(seed)
-    # so that adding more perms for the same seed doesn't change the previous perms
-    data = rng.uniform(size=(n_permutations, n_subjects))
-    out = np.argsort(data, axis=1).T
+    n_subjects: int,  
+    n_permutations: int,
+    seed: int | None = None
+) -> np.ndarray:
+    """
+    Generates independent random permutations of subject indices.
+    
+    Uses spawned SeedSequences to guarantee that generating additional
+    permutations for a given seed will not alter the streams of previously
+    generated permutations.
+
+    Args:
+        n_subjects: The number of subjects (rows).
+        n_permutations: The number of permutations (columns).
+        seed: An integer or np.random.SeedSequence for reproducibility.
+
+    Returns:
+        np.ndarray: An array of shape (n_subjects, n_permutations) of type int32.
+    """
+    # 1. Initialize the seeds
+    child_seeds = np.random.SeedSequence(seed).spawn(n_permutations)
+    
+    # 2. Pre-allocate the output array (F-contiguous for column-wise writing)
+    # int32 to save memory (int64 is overkill unless > 2 billion subjects)
+    out = np.empty((n_subjects, n_permutations), dtype=np.int32, order='F')
+    
+    # 3. Fill the array column-by-column directly
+    for i, s in enumerate(child_seeds):
+        out[:, i] = np.random.default_rng(s).permutation(n_subjects)
+        
     return out
 
 
@@ -179,6 +228,8 @@ def mbm_generate_stat_maps(
 # so maybe the fitting can be done across all vertices simultaneously
 # then the p value estimation can be done across all vertices simultaneously
 # or consider method of moments?
+# TODO at the very least, consider finding naive p val for all vertices first, 
+# then only doing the GPD fit for those that are below the threshold.
 def mbm_calc_p_vals(
         observedStatMap, # (n_vertices, 1)
         statMapNull, # (n_vertices, n_permutations)
@@ -228,8 +279,9 @@ def mbm_example_workflow(
 
     # Eigenmode decomposition of observed and null stat maps
     # would decompose_kwargs be needed?
-    eigBeta = decompose(observedStatMap, emodes=emodes, mass=mass, mode_counts=n_modes) # (n_modes, 1)
-    betaNull = decompose(statMapNull, emodes=emodes, mass=mass, mode_counts=n_modes) # (n_modes, n_permutations)
+    # TODO update to new decompose
+    eigBeta = decompose(observedStatMap, emodes=emodes, mass=mass) # (n_modes, 1)
+    betaNull = decompose(statMapNull, emodes=emodes, mass=mass) # (n_modes, n_permutations)
 
     # 2
     eigPBeta, eigPRevBeta = mbm_calc_p_vals(eigBeta, betaNull, statPThr)    
@@ -237,4 +289,10 @@ def mbm_example_workflow(
         eigPBeta = fdr_bh(eigPBeta)
 
     # Take those above results, extract significant modes, and reconstruct the stat map
-    reconMap = emodes @ (eigBeta * (eigPBeta < statPThr))
+    sig_mode_mask = eigPBeta < statPThr
+    sig_mode_indices = np.where(sig_mode_mask)[0]
+    reconMap = emodes @ (eigBeta * sig_mode_mask)
+
+
+    return reconMap, sig_mode_indices
+
