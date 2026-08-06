@@ -10,7 +10,7 @@ from IPython import embed
 from typing import Union, Tuple, TYPE_CHECKING
 
 import neuromodes.basis
-import palm
+import neuromodes.palm as palm
 import os
 import nibabel
 import numpy

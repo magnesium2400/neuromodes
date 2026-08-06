@@ -4,116 +4,40 @@ import scipy.stats as sps
 
 # import neuromodes.stats as nms
 import neuromodes.palm
+import neuromodes.glmw as glmw
 from neuromodes.basis import decompose
+
+# TODO rename all variables to be more descriptive
 
 # ofc this willl be removed at some point
 # jsut here to compare with the original fdr_bh
 def fdr_bh(ps): 
     return sps.false_discovery_control(ps, method='bh')
 
-# TODO CHECK RETURN_STAT FOR EVERYTHING. for one way and two way it is t. for anova it it p. etc. 
-# TODO given how things are done in MBM (the permutations) consider removing two_sample. 
-#   make it a subset of anova. can sqrt the f stat and then get the sign of the t stat.
-def mbm_stat_map(
-        inputMap, # (n_subjects, n_vertices)
-        designMatrix, # (n_subjects, n_predictors)
-        statTest, 
-        # contrast=None, # (n_predictors,) 
-        # return_stat='t'
-):
-
-    if inputMap.ndim != 2:
-        raise ValueError('inputMap must be a 2D array of shape (n_subjects, n_vertices).')
-    n_subjects, n_vertices = inputMap.shape
-    if designMatrix.ndim != 2:
-        raise ValueError('designMatrix must be a 2D array of shape (n_subjects, n_predictors).')
-    if designMatrix.shape[0] != n_subjects:
-        raise ValueError('Number of rows in designMatrix must match number of subjects in inputMap.')
-    n_predictors = designMatrix.shape[1]
-    # if contrast is not None:
-    #     if contrast.ndim != 1:
-    #         raise ValueError('contrast must be a 1D array of shape (n_predictors,).')
-    #     if contrast.shape[0] != n_predictors:
-    #         raise ValueError('Length of contrast must match number of predictors in designMatrix.')
-
-    # TODO do we need to have the design matrices here? what if the user just inputs their groups
-    # and then we do the testing automagically? 1/2/3 groups ==> ttest_1samp/ttest_ind/f_oneway.
-    # TODO consider change ttest and anova to use glmw, same as ancova. 
-    # more consistent. but better to use inbuilt where available?
+def _stat_test_to_contrast(statTest, n_predictors):
     if statTest == 'one sample':
         if n_predictors != 1:
             raise ValueError('Design matrix must have exactly one predictor for one sample t-test.')
-        statMap = sps.ttest_1samp(inputMap[designMatrix,:], 0, axis=0)[0]
+        return np.array([[1.0]])
+        
     elif statTest == 'two sample':
         if n_predictors != 2:
             raise ValueError('Design matrix must have exactly two predictors for two sample t-test.')
-        statMap = sps.ttest_ind(inputMap[designMatrix[:,0],:], inputMap[designMatrix[:,1],:], axis=0)[0]
+        return np.array([[1.0, -1.0]])
+        
     elif statTest == 'one way anova':
-        # TODO : this is an f stat. need to clarify this across all options (return_stat not relevant)
-        groups = [inputMap[designMatrix[:,i],:] for i in range(n_predictors)]
-        statMap = sps.f_oneway(*groups, axis=0)[0]
-    # elif statTest == 'ancova': # home made function, needs to be tested 2026/05/01
-    #     statMap = nms.glmw(inputMap, designMatrix, 
-    #                        w=np.ones(n_subjects), contrast=contrast, return_stat=return_stat)
+        if n_predictors < 2:
+            raise ValueError('Design matrix must have 2 or more group predictors for an ANOVA.')
+        # creates a matrix like [[1, -1, 0], [1, 0, -1]] for 3 groups
+        return np.hstack([np.ones((n_predictors - 1, 1)), -np.eye(n_predictors - 1)])
+    
+    elif statTest == 'ancova':
+        raise ValueError("Contrast must be explicitly provided for ANCOVA tests.")
+        
     else:
         raise ValueError(f"Unsupported statTest: {statTest}")
 
-    return statMap
-
-# this function auto computes which tail we are in (auto two-tail?)
-# should there be an option to specify the tail/make one tailed? (in this fn or another)?
-# TODO : consider replacing palm_pareto with 
-# https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.genpareto.html
-# https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.rv_continuous.fit.html
-def mbm_estimate_p_val_tail(
-        nullStat: np.ndarray,
-        observedStat: float,
-        pThr: float,
-        stop=False
-):
-    # 1. Handle degenerate/empty data
-    if np.isnan(observedStat) or np.all(np.isnan(nullStat)):
-        return (1.0, False)
-    
-    if np.ptp(nullStat) == 0:
-        # Distribution has no width; if observed is same as null, p=1, else p=0
-        return (observedStat == nullStat[0], observedStat < nullStat[0])
-
-    # 2. Determine which tail we are in
-    # rev = True (Left tail/Negative), rev = False (Right tail/Positive)
-    rev = observedStat < np.median(nullStat)
-
-    # 3. Decision: To Pareto or not to Pareto?
-    # We call palm_pareto if the observedStat is "Extreme" 
-    # (even if it's beyond the current nullStat limits!)
-    
-    # Simple count-based p-value for reference
-    if rev:
-        count_p = np.mean(nullStat <= observedStat)
-    else:
-        count_p = np.mean(nullStat >= observedStat)
-
-    # Only skip Pareto if the observation is very common (p > pThr)
-    # If count_p is ~0 (beyond the limits), we DEFINITELY need Pareto.
-    if count_p < pThr: 
-        count_p = neuromodes.palm.palm_pareto(observedStat, nullStat, rev, pThr, stop)[0]
-    
-    pValueTail = 2 * count_p
-
-    # if count_p > pThr:
-    #     pValueTail = 2 * count_p
-    # else:
-    #     # This function handles the GPD fit for values beyond the limits
-    #     pareto_res = mbm.palm.palm_pareto(observedStat, nullStat, rev, pThr, False)
-    #     pValueTail = 2 * pareto_res[0]
-
-    # Clean up output
-    if isinstance(pValueTail, np.ndarray):
-        pValueTail = pValueTail[0]
-        
-    return (float(np.clip(pValueTail, 0, 1)), rev)
-
-
+# TODO replace with yield
 def permutations_flip_sign(
     n_subjects: int,  
     n_permutations: int,
@@ -140,15 +64,12 @@ def permutations_flip_sign(
     # 2. Pre-allocate the output array (F-contiguous for column-wise writing)
     out = np.empty((n_subjects, n_permutations), dtype=np.int8, order='F')
     
-    # 3. Hoist the constant array out of the loop
+    # 3. Fill the array column-by-column directly
     choices = np.array([1, -1], dtype=np.int8)
-    
-    # 4. Fill the array column-by-column directly
     for i, s in enumerate(child_seeds):
         out[:, i] = np.random.default_rng(s).choice(choices, size=n_subjects)
         
     return out
-
 
 def permutations_shuffle_rows(
     n_subjects: int,  
@@ -197,29 +118,30 @@ def permutations_shuffle_rows(
 # TODO investigate user inputting a perms matrix (n_subjects, n_permutations) 
 # TODO have a way to turn off the permutations (only do observed)
 # TODO consider outputting perms
-def mbm_generate_stat_maps(
+# TODO create ?helper functions that use yield ?instead of generating whole perm mat
+def mbm_generate_stat_map_nulls(
         maps, # (n_vertices, n_subjects)
         statDesignMatrix,   # (n_subjects,) or (n_subjects, n_predictors) depending on statTest
-        statTest,           # cant do ancova as there is no contrast
+        contrastMatrix, # (n_contrasts, n_predictors)
+        massMatrix, 
         n_permutations = 1000,
         seed = None
 ):
     n_vertices, n_subjects = maps.shape
-    observedStatMap = mbm_stat_map(maps.T, statDesignMatrix, statTest).T # (n_vertices, 1)
-
+    
     statMapNull = np.empty((n_vertices, n_permutations)) 
-    if statTest == 'one sample': 
+    if contrastMatrix.size == 1: # one sample t test
         perms = permutations_flip_sign(n_subjects, n_permutations, seed)
         for ii in range(n_permutations):
             permutedMaps = maps.T * perms[:, [ii]] # (n_subjects, n_vertices)
-            statMapNull[:, ii] = mbm_stat_map(permutedMaps, statDesignMatrix, statTest).T # (n_vertices, 1)
+            statMapNull[:, ii] = glmw.glmw_test(permutedMaps, statDesignMatrix, massMatrix, contrastMatrix)[0].T # (n_vertices, 1)
     else: 
         perms = permutations_shuffle_rows(n_subjects, n_permutations, seed)
         for ii in range(n_permutations):
             permutedMaps = maps[:, perms[:, ii]].T # (n_subjects, n_vertices)
-            statMapNull[:, ii] = mbm_stat_map(permutedMaps, statDesignMatrix, statTest).T # (n_vertices, 1)
+            statMapNull[:, ii] = glmw.glmw_test(permutedMaps, statDesignMatrix, massMatrix, contrastMatrix)[0].T # (n_vertices, 1)
 
-    return observedStatMap, statMapNull
+    return statMapNull
 
 
 # TODO make into a separate function (reuse for verts and modes)
@@ -231,17 +153,43 @@ def mbm_generate_stat_maps(
 # TODO at the very least, consider finding naive p val for all vertices first, 
 # then only doing the GPD fit for those that are below the threshold.
 def mbm_calc_p_vals(
-        observedStatMap, # (n_vertices, 1)
+        observedStatMap, # (n_vertices,)
         statMapNull, # (n_vertices, n_permutations)
         statPThr = 0.05, # threshold for tail extrapolation with pareto
+        alternative = 'two-sided', # 'two-sided', 'greater', 'less' # TODO validate here
+        stop = False
 ): 
-    permPMap = np.zeros(observedStatMap.shape[0], dtype=np.float32)
-    permRevMap = np.zeros(observedStatMap.shape[0], dtype=np.bool_)
+
+    if observedStatMap.ndim != 1:
+        raise ValueError(f"observedStatMap must be 1D, got shape {observedStatMap.shape}")
+
+    # non parametric p values from permutations
+    # rev = True (Left tail/Negative), rev = False (Right tail/Positive)    
+    permPMap = np.mean(statMapNull >= observedStatMap[:, None], axis=1)
+    if alternative == 'greater':
+        permRevMap = np.zeros_like(observedStatMap, dtype=bool)
+    elif alternative == 'two-sided':
+        permPMap = 2 * np.minimum(permPMap, 1 - permPMap)
+        permRevMap = observedStatMap < np.median(statMapNull, axis=1)
+    elif alternative == 'less':
+        permPMap = 1 - permPMap
+        permRevMap = np.ones_like(observedStatMap, dtype=bool)
+    else:
+        raise ValueError(f"Unsupported alternative hypothesis: {alternative}")
+    
     for ii in range(observedStatMap.shape[0]):
-        permPMap[ii], permRevMap[ii] = mbm_estimate_p_val_tail(
-            statMapNull[ii, :], observedStatMap[ii], statPThr, stop=False)
-      
+        if permPMap[ii] < statPThr: # only do the pareto fit if we are in the tail
+            p, _, _, _ = neuromodes.palm.palm_pareto(
+                observedStatMap[ii], 
+                statMapNull[ii, :], 
+                permRevMap[ii], 
+                statPThr, 
+                stop)
+            permPMap[ii] = 2 * p[0]
+
+    permPMap = np.clip(permPMap, 0, 1)
     return permPMap, permRevMap
+
 
 
 # TODO : generate smaller single responsibility functions 
@@ -268,22 +216,33 @@ def mbm_example_workflow(
     
     # 0 & 1
     # generate permutations
-    observedStatMap, statMapNull = mbm_generate_stat_maps(
-        maps, statDesignMatrix, statTest, n_permutations, seed)
+    ident = np.eye(maps.shape[1])
+    contrastMatrix = _stat_test_to_contrast(statTest, statDesignMatrix.shape[1])
+
+    observedStatMap, _ = glmw.glmw_test(
+        maps.T, statDesignMatrix, ident, contrastMatrix
+    ) # (n_vertices, 1)
+    nullStatMaps = mbm_generate_stat_map_nulls(
+        maps, statDesignMatrix, contrastMatrix, ident, n_permutations, seed
+    )
 
     # 2
-    # convert observed stat to p values using permutations
-    permPMap, permRevMap = mbm_calc_p_vals(observedStatMap, statMapNull, statPThr)
+    # convert observed stat to p values using tail estimation
+    permPMap, permRevMap = mbm_calc_p_vals(observedStatMap, nullStatMaps, statPThr)
     if statFDR:
         permPMap = fdr_bh(permPMap)
+    sig_stat_mask = permPMap < statPThr
+    recon_stat_map = observedStatMap * sig_stat_mask
+
 
     # Eigenmode decomposition of observed and null stat maps
     # would decompose_kwargs be needed?
     # TODO update to new decompose
     eigBeta = decompose(observedStatMap, emodes=emodes, mass=mass) # (n_modes, 1)
-    betaNull = decompose(statMapNull, emodes=emodes, mass=mass) # (n_modes, n_permutations)
+    betaNull = decompose(nullStatMaps, emodes=emodes, mass=mass) # (n_modes, n_permutations)
 
     # 2
+    eigBeta = eigBeta.flatten() # TODO remove this
     eigPBeta, eigPRevBeta = mbm_calc_p_vals(eigBeta, betaNull, statPThr)    
     if statFDR:
         eigPBeta = fdr_bh(eigPBeta)
@@ -291,8 +250,8 @@ def mbm_example_workflow(
     # Take those above results, extract significant modes, and reconstruct the stat map
     sig_mode_mask = eigPBeta < statPThr
     sig_mode_indices = np.where(sig_mode_mask)[0]
-    reconMap = emodes @ (eigBeta * sig_mode_mask)
+    recon_mode_map = emodes @ (eigBeta * sig_mode_mask)
 
 
-    return reconMap, sig_mode_indices
+    return recon_mode_map, sig_mode_indices
 

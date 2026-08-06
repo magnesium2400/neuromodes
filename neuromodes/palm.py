@@ -1,5 +1,7 @@
+from warnings import warn
 import numpy as np
-from scipy.interpolate import interp1d
+from scipy.interpolate import make_interp_spline
+from scipy.stats import genpareto
 
 #from IPython import embed
 
@@ -45,104 +47,82 @@ def palm_pareto(G, Gdist, rev, Pthr, G1out):
     if Gdist.ndim <= 1:
         Gdist = Gdist.reshape(-1)
 
-    # Compute the usual permutation p-values.
     if G1out:
         Gdist = Gdist[1:, :]
     
+    # Compute the usual permutation p-values.
     P = palm_datapval(G, Gdist, rev)
+
+    # if none of the p-values are below the threshold, return early
     Pidx = P < Pthr  # don't replace this "<" for "<=".
-
-    apar = np.nan
-    kpar = np.nan
-    upar = np.nan
-
-    # If some of these are small (as specified by the user), these
-    # will be approximated via the GPD tail.
-    if np.any(Pidx):
+    if not np.any(Pidx):
+        return P, np.nan, np.nan, np.nan
         
-        # Number of permutations & distribution CDF
-        nP = Gdist.shape[0]
-        if rev:
-            _, Gdist_sorted, Gcdf = palm_competitive(Gdist, 'descend', True)
+    # Number of permutations & distribution CDF
+    nP = Gdist.shape[0] # TODO replace with Gdist.size ?
+    if rev:
+        _, Gdist_sorted, Gcdf = palm_competitive(Gdist, 'descend', True)
+    else:
+        _, Gdist_sorted, Gcdf = palm_competitive(Gdist, 'ascend', True)
+    
+    # Flatten for indexing
+    Gdist_sorted = Gdist_sorted.flatten()
+    Gcdf = Gcdf.flatten() / nP  
+    
+    # Keep adjusting until the fit is good. Change the step to 10 to get
+    # the same result as Knijnenburg et al.
+    factor = -1 if rev else 1
+    for q, Q in enumerate(np.arange(751, 1000, 10) / 1000.0):
+        
+        # Find where the tail starts and thus upar
+        qidx = Gcdf >= Q
+        qi_idx = np.where(qidx)[0][0]
+        if qi_idx == 0:
+            upar = (Gdist_sorted[qi_idx] - Gdist_sorted[qi_idx + 1]) / 2
         else:
-            _, Gdist_sorted, Gcdf = palm_competitive(Gdist, 'ascend', True)
-        
-        # Flatten for indexing
-        Gdist_sorted = Gdist_sorted.flatten()
-        Gcdf = Gcdf.flatten() / nP
-        
-        # Keep adjusting until the fit is good. Change the step to 10 to get
-        # the same result as Knijnenburg et al.
-        Q = np.arange(751, 1000, 10) / 1000.0
-        nQ = Q.size
-        q = 0 # 0-indexed
-        Ptail = np.nan
-        
-        while np.any(np.isnan(Ptail)) and q < nQ - 1 and np.unique(Gdist_sorted[Gcdf >= Q[q]]).size > 1:
+            upar = (Gdist_sorted[qi_idx] + Gdist_sorted[qi_idx - 1]) / 2
 
-            # Get the tail
-            qidx = Gcdf >= Q[q]
-            Gtail = Gdist_sorted[qidx]
-         
-            qi_idx = np.where(qidx)[0][0]
-            if qi_idx == 0:
-                upar = Gdist_sorted[qi_idx] - np.mean(Gdist_sorted[qi_idx : qi_idx + 2])
-            else:
-                upar = np.mean(Gdist_sorted[qi_idx - 1 : qi_idx + 1])
+
+        # Estimate the distribution parameters. See Section 3.2 of Hosking &
+        # Wallis (1987). Compared to the usual GPD parameterisation, 
+        # here k = shape (xi), and a = scale.
+        Gtail = Gdist_sorted[qidx] # finish qidx
+        ytail = factor * (Gtail - upar)
+        x = np.mean(ytail)
+        s2 = np.var(ytail, ddof=1)
+
+        # Check for zero/degenerate variance in the tail (e.g., discrete ties)
+        if s2 <= 1e-12:
+            warn(
+                f"Zero or near-zero variance encountered in tail at quantile Q={Q:.3f}. "
+                "Skipping to next threshold.",
+                UserWarning
+            )
+            continue
+
+        # Check if the fitness is good
+        apar = x * (x**2 / s2 + 1) / 2
+        kpar = (x**2 / s2 - 1) / 2 # finish x, s2
+        # TODO fix the sort here
+        A2pval = andersondarling(np.sort(gpdpvals(ytail, apar, kpar)), kpar)
             
-            if rev:
-                mask_y = (G < upar) & Pidx
-                ytail = upar - Gtail
-                y = upar - G[mask_y]
-            else:
-                mask_y = (G > upar) & Pidx
-                ytail = Gtail - upar
-                y = G[mask_y] - upar
-            
-            # Estimate the distribution parameters. See Section 3.2 of Hosking &
-            # Wallis (1987). Compared to the usual GPD parameterisation, 
-            # here k = shape (xi), and a = scale.
-            x = np.mean(ytail)
-            s2 = np.var(ytail, ddof=1)
-            apar = x * (x**2 / s2 + 1) / 2
-            kpar = (x**2 / s2 - 1) / 2
-            
-            # Check if the fitness is good
-            A2pval = andersondarling(gpdpvals(ytail, apar, kpar), kpar)
-                
-            # If yes, keep. If not, try again with the next quantile.
-            if A2pval > 0.05:
-                cte = Gtail.size / nP
-                Ptail = cte * gpdpvals(y, apar, kpar)
-            else:
-                q = q + 1
-        
-        # Replace the permutation p-value for the approximated p-value
-        if not np.any(np.isnan(Ptail)):
-            if rev:
-                P[(G < upar) & Pidx] = Ptail
-            else:
-                P[(G > upar) & Pidx] = Ptail
-    return P, apar, kpar, upar
+        # If yes, return. If not, try again with the next quantile.
+        if A2pval > 0.05:
+            mask_y = (factor * (G - upar) > 0) & Pidx
+            y = factor * (G[mask_y] - upar)
+            P[mask_y] = gpdpvals(y, apar, kpar) * Gtail.size / nP
+            return P, apar, kpar, upar
+    
+    # If above loop doesn't return, GPD tail approximation failed to converge
+    warn(
+        "GPD tail approximation failed to converge. "
+        "Returning permutation p-values for all statistics.",
+        UserWarning
+    )
+    return P, np.nan, np.nan, np.nan
 
 def gpdpvals(x, a, k):
-    """
-    Compute the p-values for a GPD with parameters a (scale)
-    and k (shape).
-    """
-    x = np.asarray(x)
-    eps = np.finfo(float).eps
-    if np.abs(k) < eps:
-        p = np.exp(-x / a)
-    else:
-        # Use complex power or handle potential negative base if necessary, 
-        # though x should be restricted by the distribution support.
-        p = np.maximum(0, (1 - k * x / a))**(1 / k)
-    
-    if k > 0:
-        p[x > a / k] = 0
-        
-    return p
+    return genpareto.sf(x, c=-k, scale=a)  
 
 def andersondarling(z, k):
     """
@@ -151,11 +131,16 @@ def andersondarling(z, k):
     * Choulakian V, Stephens M A. Goodness-of-Fit Tests
       for the Generalized Pareto Distribution. Technometrics.
       2001;43(4):478-484.
+    
+    Copies the MATLAB implementation. 
+    TODO : check which case should be used -- appears that k is known?
+    TODO : consider replacing k with -k -- as in the paper
     """
+    # Prelims/constants
     # Table 2 of the paper (Case 3: a and k unknown, bold values)
-    ktable = np.array([0.9, 0.5, 0.2, 0.1, 0, -0.1, -0.2, -0.3, -0.4, -0.5])
-    ptable = np.array([0.5, 0.25, 0.1, 0.05, 0.025, 0.01, 0.005, 0.001])
-    A2table = np.array([
+    K_TABLE = np.array([0.9, 0.5, 0.2, 0.1, 0, -0.1, -0.2, -0.3, -0.4, -0.5])
+    P_TABLE = np.array([0.5, 0.25, 0.1, 0.05, 0.025, 0.01, 0.005, 0.001])
+    A2_TABLE = np.array([
         [0.3390, 0.4710, 0.6410, 0.7710, 0.9050, 1.0860, 1.2260, 1.5590],
         [0.3560, 0.4990, 0.6850, 0.8300, 0.9780, 1.1800, 1.3360, 1.7070],
         [0.3760, 0.5340, 0.7410, 0.9030, 1.0690, 1.2960, 1.4710, 1.8930],
@@ -168,155 +153,112 @@ def andersondarling(z, k):
         [0.4960, 0.7350, 1.0610, 1.3210, 1.5900, 1.9580, 2.2430, 2.9220]
     ])
 
-    k = max(-0.5, min(0.9, k)) # Limit k to table range for robustness
-    z = np.sort(np.asarray(z).flatten()) # AD statistic expects sorted z
+    # Input validation
+    # TODO check sort order here. does it need to be ascending?
+    z = np.asarray(z)
+    if z.ndim != 1: 
+        raise ValueError("Input array 'z' must be one-dimensional.")
+    if not np.all(z[:-1] <= z[1:]):
+        raise ValueError("Input array 'z' must be sorted in ascending order.")
     n = z.size
-    j = np.arange(1, n + 1)
 
-    # Anderson-Darling statistic:
-    # A2 = -n -(1/n)*((2*j-1)*(log(z) + log(1-z(n+1-j)))')
-    # Use small epsilon to avoid log(0)
-    eps = np.finfo(float).eps
-    z = np.clip(z, eps, 1 - eps)
-    A2 = -n - (1.0 / n) * np.sum((2 * j - 1) * (np.log(z) + np.log(1 - z[n - j])))
-
-    # Interpolate critical values for k (ktable is descending, so we flip)
-    f_i1 = interp1d(ktable[::-1], A2table[::-1], axis=0, kind='linear', fill_value='extrapolate')
-    i1 = f_i1(k)
+    k = float(k)
+    if k < np.min(K_TABLE) or k > np.max(K_TABLE):
+        warn(
+            f"Shape parameter k={k} is outside the table bounds [{np.min(K_TABLE)}, {np.max(K_TABLE)}]. "
+            "Critical values will be extrapolated and may be unreliable.",
+            UserWarning
+        )
     
-    # Interpolate p-value for A2 (i1 are critical values, which are ascending)
-    f_i2 = interp1d(i1, ptable, kind='linear', fill_value='extrapolate')
-    A2pval = f_i2(A2)
-    
-    return np.clip(float(A2pval), 0, 1)
+    # Set up interpolation functions for the table
+    # TODO add extrapolate keyword
+    # TODO find best way to fix the sign of k (see above)
+    # Interpolate critical values for k and then p-values for A2
+    k_to_a2 = make_interp_spline(-K_TABLE, A2_TABLE, axis=0, k=1)
+    a2_to_p = make_interp_spline(k_to_a2(-k), P_TABLE, k=1, axis=0)
 
-def palm_datapval(G, Gvals, rev):
-    """
-    Compute the p-values for a set of statistics G, taking
-    as reference a set of observed values for G.
-    """
+    # Main computation
+    A2 = -n - np.mean( np.log( z*(1-z[::-1]) ) * np.arange(1,2*n,2) )
+    p = a2_to_p(A2)
+    
+    return np.clip(p, 0.0, 1.0)
+
+
+def palm_datapval(G, Gvals, rev=False):
+    """Compute p-values for statistics G given observed reference values Gvals."""
+    
+    # Input validation
     G = np.asarray(G)
-    Gvals = np.asarray(Gvals).flatten()
-    
-    if rev: # if small G are significant
-        # Sort the data and compute the empirical distribution
-        _, cdfG_raw, distp_raw = palm_competitive(Gvals.reshape(-1, 1), 'ascend', True)
-        cdfG, idx = np.unique(cdfG_raw, return_index=True)
-        distp = distp_raw.flatten()[idx] / Gvals.size
-        
-        # Convert the data to p-values
-        
-        if G.size == 1:
-            I = np.where(G >= cdfG)[0]
-            if I.size > 0:
-                pvals = np.array([distp[I[-1]]])
-            else:
-                
-                pvals = np.array([1])
-        else:
-            pvals = np.ones(G.size)
-            for z in range(G.size):
-                I = np.where(G[z] >= cdfG)[0]
-                if I.size > 0:
-                    pvals[z] = distp[I[-1]]
-            pvals = np.reshape(G.shape)
-        # for g in range(cdfG.size):
-        #     pvals[G >= cdfG[g]] = distp[g]
-        # pvals[G > cdfG[-1]] = 1.0
-            
+    Gvals = np.asarray(Gvals)
+    rev = bool(rev) # note that rev is more like ord than mod
+    # TODO consider changing rev and ord to 'descending' like np.sort
 
-    else: # if large G are significant (typical case)
-        # Sort the data and compute the empirical distribution
-        _, cdfG, distp = palm_competitive(Gvals.reshape(-1, 1), 'descend', True)
-        # Unique values and corresponding modified ranks
-        #cdfG, idx = np.unique(cdfG_raw, return_index=True)
-        #distp = distp_raw.flatten()[idx] / Gvals.size
-        # Sort back because unique sorts ascending
-        #sort_idx = np.argsort(cdfG)[::-1]
-        #cdfG = cdfG[sort_idx]
-        #distp = distp[sort_idx]
-        cdfG = np.unique(cdfG)
-        distp = np.flipud(np.unique(distp)) / Gvals.size
-
-        # Convert the data to p-values
-        
-        if G.size == 1:
-            I = np.where(G < cdfG)[0]
-            if I.size > 0:
-                pvals = np.array([distp[I[0]]])
-            else:
-                pvals = np.array([0])
-        else:
-            pvals = np.zeros(G.size)
-            for z in range(G.size):
-                I = np.where(G[z] < cdfG)
-                if I.size > 0:
-                    pvals[z] = distp[I[0]]
-            pvals = np.reshape(G.shape)
+    # Compute empirical distribution thresholds and probabilities
+    if rev: 
+        _, cdfG, distp = palm_competitive(Gvals.ravel(), ord='ascend', mod=True)
+    else: 
+        _, cdfG, distp = palm_competitive(Gvals.ravel(), ord='descend', mod=True)
     
-    return pvals
+    # _, cdfG, distp = palm_competitive(Gvals.ravel(), ord='ascend', mod=rev)
+    # if not rev: 
+    #     cdfG = np.flipud(cdfG)
+    #     distp = np.flipud(distp.size - distp + 1)
+
+    cdfG, u_idx = np.unique(cdfG, return_index=True)
+    distp = distp[u_idx] / distp.size
+        
+    # Pad probability values: 0 at start if rev=True, 0 at end if rev=False
+    values = np.concatenate(([1-rev], distp, [rev]))
+    bins = np.digitize(G, cdfG, right=not rev) + (1-rev)
+
+    return np.clip(values[bins], 0.0, 1.0)
+
 
 def palm_competitive(X, ord='ascend', mod=False):
     """
     Sort a set of values and return their competition
     ranks (standard 1224 or modified 1334).
+    Currently copies MATLAB implementation. 
+    Only supports sorting/ranking along axis=0. 
     """
+
+    # Input validation
     X = np.asarray(X)
-    if X.ndim == 1:
-        X = X.reshape(-1, 1)
-    
-    orig_ord = ord
-    if mod:
-        if ord.lower() == 'ascend':
-            ord = 'descend'
-        elif ord.lower() == 'descend':
-            ord = 'ascend'
+    if np.any(np.isnan(X)):
+        raise ValueError("Data cannot be sorted. Check for NaNs in input.")
+    if np.any(np.all(np.isinf(X), axis=0)):
+        raise ValueError("Data cannot be sorted. Maximum statistic is +Inf or -Inf for all permutations.")
+    if ord not in ['ascend', 'descend']:
+        raise ValueError("Invalid 'ord' parameter. Must be 'ascend' or 'descend'.")
+    if not isinstance(mod, bool):
+        raise ValueError("Invalid 'mod' parameter. Must be a boolean (True or False).")
 
-    nR, nC = X.shape
-    unsrtR = np.zeros(X.shape, dtype=np.float32)
-    
-    # Handle sorting direction
-    if ord.lower() == 'ascend':
-        tmp = np.argsort(X, axis=0)
-    else:
-        tmp = np.argsort(-X, axis=0)
-        
-    S = np.take_along_axis(X, tmp, axis=0)
-    rev = np.argsort(tmp, axis=0)
-    
-    srtR = np.tile(np.arange(1, nR + 1).reshape(-1, 1), (1, nC)).astype(np.float32)
-    
-    for c in range(nC):
-        col_S = S[:, c].copy()
-        infpos = np.isinf(col_S) & (col_S > 0)
-        infneg = np.isinf(col_S) & (col_S < 0)
-        
-        if np.all(infpos | infneg):
-            raise ValueError("Data cannot be sorted. Maximum statistic is +Inf or -Inf for all permutations.")
-            
-        if np.any(infpos):
-            col_S[infpos] = np.max(col_S[~infpos]) + 1
-        if np.any(infneg):
-            col_S[infneg] = np.min(col_S[~infneg]) - 1
-            
-        dd = np.diff(col_S)
-        if np.any(np.isnan(dd)):
-            raise ValueError("Data cannot be sorted. Check for NaNs or precision issues.")
-            
-        f = np.where(np.concatenate(([False], dd == 0)))[0]
-        for pos in f:
-            srtR[pos, c] = srtR[pos - 1, c]
-            
-        unsrtR[:, c] = srtR[rev[:, c], c]
-        
-        # Infinities are already handled via copying col_S, 
-        # but we need to put them back in S if S is returned
-        S[infpos, c] = np.inf
-        S[infneg, c] = -np.inf
+    # 1. Sort data in ascending/descending order (if mod: need to reverse direction)
+    Y = -X if ((ord == 'descend') ^ (mod)) else X
+    sortidx = np.argsort(Y, axis=0) # Y finished
 
+    # 2. Detect ties and assign ranks
+    # base_ranks is a vector of the form (1,2,3,...,nR) of size (nR,1,1,...,1) for broadcasting
+    nR = X.shape[0]
+    base_ranks = np.expand_dims(np.arange(nR) + 1, axis=tuple(range(1,X.ndim)))
+
+    # Find ties along axis 0
+    S = np.take_along_axis(X, sortidx, axis=0)
+    is_tie = np.concatenate([
+        np.zeros_like(S[:1], dtype=bool), # a row of all False to start
+        S[1:] == S[:-1]
+        ], axis=0)
+
+    # Take the original rank OR the rank of the first occurrence of the tie, as needed
+    srtR = np.maximum.accumulate(np.where(is_tie, 0, base_ranks), axis=0)   # base_ranks, is_tie finished
+
+    # 3. Outputs: map sorted ranks back to original array order
+    unsrtR = np.take_along_axis(srtR, np.argsort(sortidx, axis=0), axis=0)
+
+    # Handle modified competitive ranking (1334 scheme)
     if mod:
         unsrtR = nR - unsrtR + 1
         S = np.flipud(S)
         srtR = np.flipud(nR - srtR + 1)
-        
+
     return unsrtR, S, srtR
