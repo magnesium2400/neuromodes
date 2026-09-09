@@ -468,6 +468,7 @@ class EigenSolver(Solver):
         return compute_gem(
             emodes=self.emodes,
             evals=self.evals,
+            mass=self.mass,
             checks=False,
             **kwargs
         )

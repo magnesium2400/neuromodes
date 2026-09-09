@@ -10,12 +10,15 @@ from neuromodes.eigen import EigenData
 if TYPE_CHECKING:
     from numpy.typing import NDArray
     from neuromodes.eigen import _CheckKind
+    from scipy.sparse import spmatrix
 
 def compute_gem(
     emodes: NDArray[np.floating],
     evals: NDArray[np.floating],
+    mass: spmatrix | NDArray[np.floating] | None = None,
     r: float = 9.53,
     k: int = 108,
+    euclidean_pinv: bool = False,
     checks: _CheckKind = 'shape'
 ) -> NDArray[np.floating]:
     """
@@ -32,9 +35,17 @@ def compute_gem(
         Spatial scale parameter for the Green's function, in millimeters. Default is ``9.53``.
     k : int, optional
         Number of eigenmodes to use. Default is ``108``.
+    mass : spmatrix | NDArray[np.floating] | None, optional
+        The mass matrix of shape ``(n_verts, n_verts)``. If ``euclidean_pinv`` is ``True``, this
+        parameter is ignored. If ``None``, the identity matrix is used. Default is ``None``.
+    euclidean_pinv : bool, optional
+        Whether to use the Euclidean pseudo-inverse of the eigenmodes (equivalent to ``(emodes[:,
+        :k].T @ emodes[:, :k])**(-1) @ emodes[:, :k].T``). This matches the original implementation
+        [1]_ but does not account for mesh irregularities. If ``False``, uses the mass-weighted
+        pseudo-inverse (``emodes[:, :k].T @ mass``). Default is ``False``.
     checks : bool, optional
-        Whether to validate types and shapes of ``emodes`` and ``evals`` before computation. Default
-        is ``True``.
+        Whether to validate types and shapes of ``emodes``, ``evals``, and ``mass`` before
+        computation. Default is ``True``.
 
     Returns
     -------
@@ -68,8 +79,8 @@ def compute_gem(
     """
     # Format / validate arguments
     if checks is not False:
-        ved = EigenData(emodes=emodes, evals=evals, checks=checks)
-        emodes, evals = ved.emodes, ved.evals
+        ved = EigenData(emodes=emodes, evals=evals, mass=mass, checks=checks)
+        emodes, evals, mass = ved.emodes, ved.evals, ved.mass
 
     r = float(r)
     n_modes = emodes.shape[1]
@@ -78,15 +89,23 @@ def compute_gem(
     if k != int(k) or k <= 0 or k > n_modes:
         raise ValueError(f"Parameter k must be an integer in the range [1, n_modes = {n_modes}].")
 
-    # Compute the Geometric Eigenmode Model
+    # Compute pseudoinverse of eigenmodes
+    if euclidean_pinv:
+        pinv = np.linalg.pinv(emodes[:, :k])
+    elif mass is None:
+        pinv = emodes[:, :k].T
+    else:
+        pinv = emodes[:, :k].T @ mass
+
+    # Construct model
     denom = 1/(1 + evals[:k] * r**2)
-    gem = emodes[:, :k] @ (denom[:, np.newaxis] * np.linalg.pinv(emodes[:, :k]))
+    gem = emodes[:, :k] @ (denom[:, None] * pinv)
 
     # Replace diagonal and negative values with zero
     np.fill_diagonal(gem, 0)
     gem = np.maximum(gem, 0)
 
-    # Symmetrise
+    # Symmetrise (only removes floating point error if euclidean_pinv is False)
     gem = (gem + gem.T) / 2
 
     # Normalise
