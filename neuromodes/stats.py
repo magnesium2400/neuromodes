@@ -852,7 +852,7 @@ def _process_vertex_areas(
         raise ValueError("Either mass or n_verts must be provided.")
     
     elif mass is None and n_verts is not None: # appease: pyright
-        warn("Mass matrix not provided; assuming that area at each vertex is 1")
+        warn("Mass matrix not provided; setting to identity (i.e., every vertex has area 1).")
         output = diags(np.ones(n_verts), format='csc')
 
     elif isinstance(mass, (np.ndarray, list)):        

@@ -99,9 +99,12 @@ def test_finite(nulls):
     """Output should not contain NaNs or Infs"""    
     assert np.isfinite(nulls).all(), "Nulls contain NaNs or Infs"
 
-def test_internull_corrs(nulls):
-    """Internull correlations should be centered around zero"""
-    inter_null_corrs = np.corrcoef(nulls.T)
+def test_internull_corrs(nulls, test_data, solver):
+    """Internull correlations should be centered around zero for residual=None"""
+    resid = test_data - solver.reconstruct(test_data)
+    nulls_no_resid = nulls - resid[:, np.newaxis]
+
+    inter_null_corrs = np.corrcoef(nulls_no_resid.T)
     triu_inds = np.triu_indices_from(inter_null_corrs, k=1)
     mean_corr = inter_null_corrs[triu_inds].mean()
     assert np.abs(mean_corr) < 0.01, \

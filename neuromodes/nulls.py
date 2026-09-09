@@ -22,7 +22,7 @@ def eigenstrap(
     emodes: NDArray[np.floating],
     evals: NDArray[np.floating], 
     n_nulls: int = 1000,
-    residual: Literal['add', 'permute'] | None = None,
+    residual: Literal['add', 'permute'] | None = 'add',
     randomize: bool = False,
     n_groups: int | None = None,
     rotation_method: str = 'qr',
@@ -57,7 +57,7 @@ def eigenstrap(
     residual : str, optional
         How to handle reconstruction residuals after generating null maps. Either ``None`` to
         exclude residuals, ``'add'`` to add original residuals, or ``'permute'`` to add shuffled
-        residuals. Default is ``None``. See Notes for details on which option to choose.
+        residuals. Default is ``'add'``. See Notes for details on which option to choose.
     randomize : bool, optional
         Whether to shuffle decomposition coefficients within eigengroups. This increases
         randomization but reduces spatial autocorrelation similarity to empirical data. Default is
@@ -140,10 +140,10 @@ def eigenstrap(
        implementation of eigenstrapping in ref [1]_, which is available `here
        <https://github.com/SNG-Newy/eigenstrapping/tree/c2d8e5a5e7af47649f6358334644a6b49d22cf8e>`__.
        In this function, we have made a few changes to the implementation. These changes simplify
-       installation, increase speed, process multiple maps concurrently, implement mass-weighted
-       statistics, and facilitate reproducibility. Nonetheless, under a specific configuration, the
-       function can exactly match the default usage of the implementation (i.e. generating the same
-       nulls when the corresponding seed is set). See `this notebook
+       installation, increase speed, process multiple maps concurrently, adjust for mesh
+       irregularity, and facilitate reproducibility. Nonetheless, under a specific configuration,
+       the function can exactly match the default usage of the implementation (i.e. generating the
+       same nulls when the corresponding seed is set). See `this notebook
        <https://neuromodes.readthedocs.io/en/latest/validation/nulls_eigenstrap_orig.html>`__
        for an example.
 
@@ -204,31 +204,37 @@ def eigenstrap(
           expected to input ``emodes`` and ``evals`` with the constant mode/eigenvalue removed
           (something of the form ``emodes[:, 1:]`` and ``evals[1:]``), here users are expected to
           input ``emodes`` and ``evals`` with the constant mode/eigenvalue included. This has
-          the advantage of preserving the original (mass-weighted) mean of the data without need for
-          resampling.
+          the advantage of preserving the original mean of the data without need for resampling.
 
        h. Concurrent processing of multiple maps. This function can process multiple maps at the
           same time. This was possible in the original implementation, but required users to save
           rotation matrices and reapply them to all maps.
 
-       i. Adding residuals AND resampling: The original implementation supports resampling before
+       i. Adding residuals: The original implementation does not add residuals of reconstruction to
+          the nulls by default. However, this modal truncation of nulls increases their spatial
+          autocorrelation, meaning that statistical inference may become overly conservative. In
+          contrast, our default is ``residual='add'``, which better preserves the spatial
+          autocorrelation of the nulls. The original default is equivalent to ``residual=None``.
+
+       j. Adding residuals AND resampling: The original implementation supports resampling before
           adding residuals. Here, we offer a separate function for resampling, meaning that the
           order of operations is swapped (i.e., add residuals and then resample). This ensures that
-          the resampling remains intact (e.g., that the surrogates and original actually have the
-          same values).
+          the resampling correctly matches the final surrogates to the input map(s).
 
-       j. Mass-weighted decomposition and statistics. To account for mesh irregularity, the mass
-          matrix is used when decomposing input maps into modal coefficients. In contrast, the
-          original implementation performs ordinary least-squares regression.
+       k. Mass-weighted decomposition. To account for mesh irregularity, the mass matrix is used
+          when decomposing input maps into modal coefficients. In contrast, the original
+          implementation performs ordinary least-squares regression.
 
-       k. Syntax for exact replication. To exactly match the default version of the original
+       l. Syntax for exact replication. To exactly match the default version of the original
           implementation of eigenstrapping in ref [1]_, users must:
 
-          - Set ``mass`` to the identity matrix.
+          - Set ``mass`` to ``None``.
           - Ensure ``data`` has a mean of zero.
-          - Set ``seed=seed``
-          - Set ``decomp_method="regress"``
-          - Set ``rotation_method="scipy"``
+          - Set ``seed=seed``.
+          - Set ``decomp_method="regress"``.
+          - Set ``rotation_method="scipy"``.
+          - Set ``residual=None``.
+          - Set ``checks='maps'``.
           - Resample the nulls using ``stats.resample(nulls, data, 'range')``.
 
           All other parameters should be left as their defaults. Note that the original
