@@ -581,6 +581,7 @@ def parcellate(
     -------
     np.ndarray
         The parcellated spatial maps, of shape ``(n_parcels, n_maps)``.
+    TODO consider also returning the parcellation matrix
 
     Raises
     ------
@@ -604,7 +605,7 @@ def parcellate(
     if parcellation.ndim != 1:
         raise ValueError("Parcellation map must be 1D.")
 
-    # Construct sparse parcellation matrix as (n_parcels, n_verts)
+    # Construct parcellation matrix as sparse matrix with shape (n_parcels, n_verts)
     n_verts = data.shape[0]
     parc_mat = csr_matrix(
         (_mass_to_areas(ved.mass, n_verts),
@@ -615,7 +616,7 @@ def parcellate(
         parc_mat /= parc_mat @ np.ones((n_verts,1)) # TODO consider replacing with sum?
 
     # Apply parcellation matrix to data (data_parc is the output)
-    if method in ['mean', 'sum']:
+    if method in ['mean', 'sum']: # TODO benchmark against weighted average / sum (np.bincount/nnp.average)
         data_parc = parc_mat @ data_2d
     elif method in ['var', 'std']:
         data_parc = parc_mat @ (data_2d ** 2) - (parc_mat @ data_2d) ** 2 # var = E[X^2] - (E[X])^2
@@ -655,23 +656,16 @@ def calc_homogeneity(
     ved = EigenData(data=(data, parcellation), mass=mass)
     data, parcellation = ved.data
 
-    areas = _mass_to_areas(ved.mass, data.shape[0])
-    n_verts = data.shape[0]
-    n_parcels = len(np.unique(parcellation))
-
     # Get variance of each parcel
     var_parc = parcellate(data, parcellation, mass=ved.mass, method='var', checks=False)
 
-    # Get parcel areas for weighting
-    parc_mat = csr_matrix(  # a bit inefficient, could create a helper func
-        (np.ones(n_verts),
-         (parcellation, np.arange(n_verts))),
-        shape=(n_parcels, n_verts)
-    )
-    parcel_areas = parc_mat @ areas
+    # Get area of each parcel (sum of vertex areas)
+    parcel_areas = np.bincount(parcellation, weights=_mass_to_areas(ved.mass, parcellation.shape[0]))
 
     # Calculate weighted average of parcel variances
-    homogeneity = np.average(var_parc, axis=0, weights=parcel_areas)
+    homogeneity = parcellate(var_parc, np.arange(len(parcel_areas)), mass=diags(parcel_areas), method='mean', checks=False)
+    # homogeneity = np.average(var_parc, axis=0, weights=parcel_areas)
+
     return homogeneity.squeeze(axis=0) if data.ndim == 1 else homogeneity
 
 def resample(
