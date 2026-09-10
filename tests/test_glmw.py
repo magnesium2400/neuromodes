@@ -33,7 +33,7 @@ class TestTestw:
         act = ttestw(
             X,
             Y, 
-            contrast=np.array([[1]]), 
+            contrast=1, 
             mass=np.eye(N),
             alternative=alternative
         )

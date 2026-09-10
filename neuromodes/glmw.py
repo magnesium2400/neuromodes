@@ -15,7 +15,13 @@ def _glmw(
     ved = EigenData(data=(X, Y), mass=mass)
     X, Y = ved.data
     mass = ved.mass
-    C = np.atleast_2d(contrast)
+
+    if np.isscalar(contrast):
+        contrast = np.array([[contrast]])
+    elif contrast.ndim != 2: 
+        raise ValueError("Contrast must be a 2D array or a scalar.")
+
+    # C = np.atleast_2d(contrast)
 
     # 1. Fit GLM
     beta = solvew(X, Y, mass) # Shape: (n_predictors, n_data)
@@ -27,10 +33,10 @@ def _glmw(
     sigma_sq = ssr / df # finish ssr
     
     # 3. Contrast Analysis
-    D = C.dot(beta)  # Shape: (n_contrasts, n_data)
+    D = contrast.dot(beta)  # Shape: (n_contrasts, n_data)
 
     A = (mass.dot(X)).T.dot(X)
-    G = C.dot(np.linalg.solve(A, C.T))  # Shape: (n_contrasts, n_contrasts)
+    G = contrast.dot(np.linalg.solve(A, contrast.T))  # Shape: (n_contrasts, n_contrasts)
     V = np.linalg.solve(G, D)
 
     Q = np.maximum(np.sum(D * V, axis=0), 0) / sigma_sq
@@ -42,7 +48,7 @@ def _glmw(
 def ttestw(X, Y, contrast, mass, alternative='two-sided'):
     """Weighted t-test for one or two samples."""
 
-    if contrast.shape[0] != 1:
+    if not np.isscalar(contrast) and contrast.shape[0] != 1:
         raise ValueError(
             f"ttestw requires exactly 1 contrast (1 degree of freedom). "
             f"Received {contrast.shape[0]}. Use ftestw for multi-row contrasts."
