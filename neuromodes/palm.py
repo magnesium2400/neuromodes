@@ -36,7 +36,7 @@ def palm_pareto(G,
     goodthresh, apar, kpar, upar = np.nan, np.nan, np.nan, np.nan
     for thr in np.atleast_1d(thresholds):
         A2pval, apar, kpar, upar = _fit_tail(Gdist_sorted, np.argmax(Gcdf >= thr))
-        if A2pval > 0.05:
+        if A2pval > Paccept:
             goodthresh = thr
             break
 
@@ -54,7 +54,6 @@ def palm_pareto(G,
         )
 
     return P, apar, kpar, upar
-
 
 def _fit_tail(Gdist_sorted, tailstartidx):
     if tailstartidx != 0: # if tail does not start at the first element, use the mean
@@ -85,8 +84,6 @@ def _fit_tail(Gdist_sorted, tailstartidx):
 
 def _gpdpvals(y, a, k):
     return genpareto.sf(y, scale=a, c=k)
-
-
 
 def palm_datapval(G, Gvals, descending=False): #TODO rename to Gdist
     """Compute p-values for statistics G given observed reference values Gvals."""
@@ -155,8 +152,8 @@ def palm_competitive(X, descending=False, ranking='standard'):
     # Handle modified competitive ranking (1334 scheme)
     if mod:
         unsrtR = nR - unsrtR + 1
-        S = np.flipud(S)
-        srtR = np.flipud(nR - srtR + 1)
+        S = np.flip(S, axis=0)
+        srtR = np.flip(nR - srtR + 1, axis=0)
 
     return unsrtR, S, srtR
 
