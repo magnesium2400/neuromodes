@@ -4,17 +4,19 @@ import pytest
 
 from neuromodes.glmw import ttestw, ftestw
 
+# TODO add tests for ztestw
+# TODO add tests for multiple columns of data
+
 class TestTestw:
     @staticmethod
     def _compare_ttest_results(act, exp, rtol=1e-9, atol=1e-9):
         np.testing.assert_allclose(act.statistic, exp.statistic, rtol=rtol, atol=atol)
         np.testing.assert_allclose(act.pvalue, exp.pvalue, rtol=rtol, atol=atol)
 
-    @pytest.mark.parametrize("N", [10, 50, 100])
+    @pytest.mark.parametrize("N", [10, 20, 50])
+    @pytest.mark.parametrize("M", [10, 50, 100])
     @pytest.mark.parametrize("alternative", ['two-sided', 'greater', 'less'])
-    def test_ttest_1samp_mass_identity(self, N, alternative):
-        M = 10
-
+    def test_ttest_1samp_mass_identity(self, N, M, alternative):
         # Design
         X = np.ones((N, 1))
 
@@ -40,25 +42,24 @@ class TestTestw:
 
         self._compare_ttest_results(act, exp)
 
-    @pytest.mark.parametrize("N", [[10,10], [20, 30], [50, 100]])
+    @pytest.mark.parametrize("N1", [10, 20, 50])
+    @pytest.mark.parametrize("N2", [10, 30, 100])
+    @pytest.mark.parametrize("M", [10, 50, 100])
     @pytest.mark.parametrize("alternative", ['two-sided', 'greater', 'less'])
-    def test_ttest_ind_mass_identity(self, N, alternative):
+    def test_ttest_ind_mass_identity(self, N1, N2, M, alternative):
         """Compares glmw_test against scipy.stats.ttest_ind (equal variance)."""
-        n1, n2 = N
-        M = 10
-        
         # Design
-        X = np.zeros((n1 + n2, 2))
-        X[:n1, 0] = 1
-        X[n1:, 1] = 1
+        X = np.zeros((N1 + N2, 2))
+        X[:N1, 0] = 1
+        X[N1:, 1] = 1
 
         # Data
-        Y = X @ (np.random.randn(2, M) + np.arange(M)) + np.random.randn(n1 + n2, M)
+        Y = X @ (np.random.randn(2, M) + np.arange(M)) + np.random.randn(N1 + N2, M)
 
         # Scipy built-in independent 2-sample t-test (Group 2 vs Group 1)
         exp = sps.ttest_ind(
-            Y[n1:], 
-            Y[:n1], 
+            Y[N1:], 
+            Y[:N1], 
             axis=0, 
             equal_var=True, 
             alternative=alternative
@@ -69,39 +70,26 @@ class TestTestw:
             X, 
             Y, 
             contrast=np.array([[-1, 1]]),   # Contrast for Group 2 > Group 1
-            mass=np.eye(n1 + n2),           # mass
+            mass=np.eye(N1 + N2),           # mass
             alternative=alternative
         )
 
         self._compare_ttest_results(act, exp)
 
     @pytest.mark.parametrize("N", [10, 20, 50])
+    @pytest.mark.parametrize("M", [10, 50, 100])
     @pytest.mark.parametrize("alternative", ['two-sided', 'greater', 'less'])
-    def test_ttest_rel_mass_identity(self, N, alternative):
+    def test_ttest_rel_mass_identity(self, N, M, alternative):
         """Compares ttestw against scipy.stats.ttest_rel."""
-        M = 10
-
         # Design
-        # subject intercepts + condition effect
-        subject = np.vstack([
-            np.eye(N),
-            np.eye(N),
+        X = np.vstack([ # subject intercepts + condition effect
+            np.hstack([np.eye(N), np.zeros((N, 1))]),
+            np.hstack([np.eye(N),  np.ones((N, 1))])
         ])
-
-        condition = np.vstack([
-            np.zeros((N, 1)),
-            np.ones((N, 1)),
-        ])
-
-        X = np.hstack([
-            subject,
-            condition,
-        ]) 
 
         # Data
         Y1 = np.random.randn(N, M)
         Y2 = Y1 + np.arange(M) + np.random.randn(N, M)
-        Y = np.vstack([Y1, Y2])
 
         # Scipy paired t-test
         # Tests condition 1 - condition 2
@@ -118,7 +106,7 @@ class TestTestw:
 
         act = ttestw(
             X,
-            Y,
+            np.vstack([Y1, Y2]),
             contrast=contrast,
             mass=np.eye(2 * N),
             alternative=alternative,
@@ -126,11 +114,11 @@ class TestTestw:
 
         self._compare_ttest_results(act, exp)
 
+    @pytest.mark.parametrize("N", [10, 20, 50])
+    @pytest.mark.parametrize("M", [10, 50, 100])
     @pytest.mark.parametrize("alternative", ['two-sided', 'greater', 'less'])
-    def test_ttest_1samp_mass_uniform(self, alternative):
+    def test_ttest_1samp_mass_uniform(self, N, M, alternative):
         '''Results should be the same as long as mass is uniform (doesn't have to be 1)'''
-        N = 100
-        M = 5
         X = np.ones((N,1))
         Y = np.random.normal(size=(N, M)) + np.arange(M)
         exp = sps.ttest_1samp(Y, popmean=0, axis=0, alternative=alternative)
@@ -140,9 +128,9 @@ class TestTestw:
         self._compare_ttest_results(act, exp)
 
     @pytest.mark.parametrize("N", [10, 20, 50])
+    @pytest.mark.parametrize("M", [10, 50, 100])
     @pytest.mark.parametrize("alternative", ['two-sided', 'greater', 'less'])
-    def test_ttest_1samp_mass_diagonal(self, N, alternative):
-        M = 10
+    def test_ttest_1samp_mass_diagonal(self, N, M, alternative):
         X = np.ones((N, 1))
         Y = np.random.normal(size=(N, M)) + np.arange(M)
         mass = np.diag(np.random.uniform(0.1, 10, size=N))
@@ -162,9 +150,9 @@ class TestTestw:
         self._compare_ttest_results(t1, t2)
 
     @pytest.mark.parametrize("N", [10, 20, 50])
+    @pytest.mark.parametrize("M", [10, 50, 100])
     @pytest.mark.parametrize("alternative", ['two-sided', 'greater', 'less'])
-    def test_ttest_1samp_mass_consistent(self, N, alternative):
-        M = 10
+    def test_ttest_1samp_mass_consistent(self, N, M, alternative):
         X = np.ones((N, 1))
         Y = np.random.normal(size=(N, M)) + np.arange(M)
         # ensure positive semi-definite mass with known square root
@@ -185,11 +173,11 @@ class TestTestw:
 
         self._compare_ttest_results(t1, t2)
 
+    @pytest.mark.parametrize("N", [10, 20, 50])
+    @pytest.mark.parametrize("M", [10, 50, 100])
     @pytest.mark.parametrize("C", [1, 2, 50])
     @pytest.mark.parametrize("alternative", ['two-sided', 'greater', 'less'])
-    def test_ttest_1samp_contrast_scale(self, C, alternative):
-        N = 100
-        M = 10
+    def test_ttest_1samp_contrast_scale(self, N, M, C, alternative):
         X = np.ones((N, 1))
         Y = np.random.normal(size=(N, M)) + np.arange(M)
 

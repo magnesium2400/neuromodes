@@ -5,6 +5,8 @@ from types import SimpleNamespace
 from neuromodes.eigen import EigenData
 from neuromodes.stats import ssqw, solvew
 
+# TODO check performace on unequal variance data (Welch's t-test/ANOVA)
+
 def _glmw(
         X, # (n_vertices, n_predictors)
         Y, # (n_vertices, n_data)
@@ -16,6 +18,11 @@ def _glmw(
     X, Y = ved.data
     mass = ved.mass
 
+    if X.ndim != 2:
+        raise ValueError(f"Design matrix X must be 2D. Received shape: {X.shape}.")
+    if Y.ndim != 2:
+        raise ValueError(f"Data matrix Y must be 2D. Received shape: {Y.shape}.")
+
     if np.isscalar(contrast):
         contrast = np.array([[contrast]])
     elif contrast.ndim != 2: 
@@ -23,11 +30,11 @@ def _glmw(
 
     # C = np.atleast_2d(contrast)
 
-    # 1. Fit GLM
+    # 1. Fit GLM. TODO Should probably return beta 
     beta = solvew(X, Y, mass) # Shape: (n_predictors, n_data)
     
     # 2. Shared Data Metrics
-    df = X.shape[0] - np.linalg.matrix_rank(X)
+    df = X.shape[0] - np.linalg.matrix_rank(X) # TODO check this is correct for different mass matrices
 
     ssr = ssqw(Y - X.dot(beta), mass)
     sigma_sq = ssr / df # finish ssr
@@ -35,6 +42,7 @@ def _glmw(
     # 3. Contrast Analysis
     D = contrast.dot(beta)  # Shape: (n_contrasts, n_data)
 
+    # TODO check use of solve here? what if input is deficient rank? overdetermined contrast matrix?
     A = (mass.dot(X)).T.dot(X)
     G = contrast.dot(np.linalg.solve(A, contrast.T))  # Shape: (n_contrasts, n_contrasts)
     V = np.linalg.solve(G, D)
@@ -45,6 +53,7 @@ def _glmw(
 
 # TODO consider making mass optional and warning (as in stats.py)
 # TODO consider making that part of EigenData (flag to return speye mass if None input)
+# TODO consider writing wrapper for ttest_1samp, f_oneway etc. 
 def ttestw(X, Y, contrast, mass, alternative='two-sided'):
     """Weighted t-test for one or two samples."""
 
@@ -75,6 +84,25 @@ def ttestw(X, Y, contrast, mass, alternative='two-sided'):
         statistic=statistic, 
         pvalue=pvalue,
         df=df
+    )
+
+# TODO add tests for this
+def ztestw(X, Y, contrast, mass, alternative='two-sided'):
+    """Weighted z-test derived from ttestw."""
+    res = ttestw(X, Y, contrast, mass, alternative=alternative)
+    
+    # Convert t-statistic to Z-score using probability integral transform
+    p = sps.t.logsf(np.abs(res.statistic), df=res.df) # log p half
+    # statistic = np.sign(res.statistic) * sps.norm.isf(np.exp(p))
+
+    # TODO confirm that we can restrict to scipy 1.12+
+    from scipy.special import ndtri_exp
+    statistic = np.sign(res.statistic) * -ndtri_exp(p)
+    
+    return SimpleNamespace(
+        statistic=statistic,
+        pvalue=res.pvalue,
+        df=res.df
     )
 
 def ftestw(X, Y, contrast, mass):
