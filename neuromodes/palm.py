@@ -26,10 +26,11 @@ def palm_pareto(G,
     # If none of the p-values are below the threshold, return early
     P = palm_datapval(G, Gdist, descending=descending)
     Pidx = P < Pthr  # don't replace this "<" for "<=".
-    if not np.any(Pidx):
+    if not np.any(Pidx): # TODO Consider moving this to an outer function. make this function always do fitting
         return P, np.nan, np.nan, np.nan
 
     # 2. Find the putative tail of the distribution and the corresponding GPD parameters
+    # TODO see if palm_competitive can be removed here. just repalce with sort,unique etc?
     _, Gdist_sorted, Gcdf = palm_competitive(Gdist, descending=descending, ranking='modified')
     Gcdf = Gcdf / Gcdf.size
 
@@ -72,7 +73,7 @@ def _fit_tail(Gdist_sorted, tailstartidx):
 
     # Check if the fitness is good
     x = np.mean(ytail)
-    s2 = np.var(ytail, ddof=1)
+    s2 = np.var(ytail, ddof=1) if ytail.size > 1 else 0.0 # TODO check this is corrrect (matches matlab)
 
     apar = x * (x**2 / s2 + 1) / 2
     kpar = -(x**2 / s2 - 1) / 2 # finish x, s2
@@ -132,6 +133,7 @@ def palm_competitive(X, descending=False, ranking='standard'):
     sortidx = np.argsort(factor * X, axis=0) # factor finished
 
     # 2. Detect ties and assign ranks
+    # TODO see if this can be improved with np.unique or np.searchsorted or similar
     # base_ranks is a vector of the form (1,2,3,...,nR) of size (nR,1,1,...,1) for broadcasting
     nR = X.shape[0]
     base_ranks = np.expand_dims(np.arange(nR) + 1, axis=tuple(range(1,X.ndim)))
@@ -190,17 +192,23 @@ def andersondarling(z_ascending, k):
             UserWarning
         )
 
-    # Main computation
     z = np.asarray(z_ascending)
     if z.ndim != 1: 
         raise ValueError("Input array 'z' must be one-dimensional.")
-    if not np.all(np.diff(z) >= 0):
+    if np.any(np.diff(z) < 0): # non-descending (ties ok)
         raise ValueError("Input array 'z' must be sorted in ascending order.")
+    if any(z<=0) or any(z>=1):
+        warn(
+            "Input array 'z' contains values outside the open interval (0, 1). "
+            "Anderson-Darling statistic may be unreliable.",
+            UserWarning
+        )
     n = z.size
-    a2 = -n - np.mean( np.log( z*(1-z[::-1]) ) * np.arange(1,2*n,2) )
     
+    # Main computation
+    a2 = -n - np.mean( np.log( z*(1-z[::-1]) ) * np.arange(1,2*n,2) )
     # Interpolate critical values for k and then p-values for A2
-    k_to_a2 = make_interp_spline(K_TABLE, A2_TABLE, axis=0, k=1)
+    k_to_a2 = make_interp_spline(K_TABLE, A2_TABLE, k=1, axis=0)
     a2_to_p = make_interp_spline(k_to_a2(k), P_TABLE, k=1, axis=0)
     p = a2_to_p(a2)
     

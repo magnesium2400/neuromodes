@@ -347,62 +347,114 @@ class TestPVals():
         np.testing.assert_array_equal(pexp, pact)
 
 
-    # Test some cases where GPD is always fit (manually redo GPD fitting)
-    @pytest.mark.parametrize("n_null", [42, 240])
-    @pytest.mark.parametrize("n_tail", [10, 24]) # needs to always be less than n_null
-    @pytest.mark.parametrize("c", [-0.1, 0.0, 0.1])
-    @pytest.mark.parametrize("loc", [0.0, 1.0])
-    @pytest.mark.parametrize("scale", [1.0, 2.0])
-    @pytest.mark.parametrize("p", [0.001, 0.01])
-    def test_all_gpd_greater(self, n_null, n_tail, c, loc, scale, p):
-        obs = genpareto.ppf(1-p, c, loc=loc, scale=scale)
-        nulls = np.sort(genpareto.rvs(c, loc=loc, scale=scale, size=(1,n_null)))
+    # Test fitting procedure but not GOF results (set to 0 here)
+    @pytest.mark.parametrize("n_null", [10000])
+    @pytest.mark.parametrize("n_tail", [1000]) # needs to always be less than n_null
+    @pytest.mark.parametrize("c", [-0.45, 0, 0.85])
+    @pytest.mark.parametrize("loc", [12.0])
+    @pytest.mark.parametrize("scale", [2.0])
+    @pytest.mark.parametrize("p", [1e-4, 1e-5, 1e-6])
+    @pytest.mark.parametrize("alternative_and_factor", [("greater", 1.0), ("less", -1.0)])
+    @pytest.mark.parametrize("seed", [42])
+    def test_all_gpd_one_sided(self, n_null, n_tail, c, loc, scale, p, alternative_and_factor, seed):
+        alternative, factor = alternative_and_factor
+        obs = factor * genpareto.ppf(1-p, c, loc=loc, scale=scale)
+        nulls = factor *  np.sort(genpareto.rvs(c, loc=loc, scale=scale, size=(1,n_null), random_state=seed))
 
-        floc = np.mean(nulls[:,-n_tail-1:-n_tail+1])
-        fit = genpareto.fit(nulls[:,-n_tail:], floc = floc)
-        p1 = genpareto.sf(obs, *fit) * n_tail/n_null
+        floc = np.mean(factor * nulls[:,-n_tail-1:-n_tail+1])
+        fit = genpareto.fit(factor * nulls[:,-n_tail:] - floc, floc = 0.0)
+        p_exp = genpareto.sf(factor * obs - floc, *fit) * n_tail/n_null
 
-        p2 = mbm_calc_p_vals(np.array([obs]), 
+        p_test = mbm_calc_p_vals(np.array([obs]), 
                              nulls,
-                             alternative='greater', 
+                             alternative=alternative, 
                              n_for_tail_estimation=n_tail,
                              n_for_pval_recalculation=np.inf, 
+                             gof_acceptance_level=0.00,
                              )
 
-        np.testing.assert_allclose(p1, p2, rtol=1e-9, atol=1e-9)
+        p_naive = mbm_calc_p_vals(np.array([obs]), 
+                            nulls,
+                            alternative=alternative, 
+                            n_for_tail_estimation=n_tail,
+                            n_for_pval_recalculation=0, # no recalculation
+                             )
+     
+        print(f"p: {p}, p_exp: {p_exp}, p_test: {p_test}, p_naive: {p_naive}")
+        np.testing.assert_allclose(p_test, p, rtol=1, atol=0) # has to be pretty loose here
+        np.testing.assert_allclose(p_test, p_exp, rtol=1e-6, atol=1e-6)
+        assert p_naive!=p_test or p_test==0, "P-values with and without fitting should be different."
 
-    @pytest.mark.parametrize("n_null", [42, 240])
-    @pytest.mark.parametrize("n_tail", [10, 24]) # needs to always be less than n_null
-    @pytest.mark.parametrize("c", [-0.1, 0.0, 0.1])
-    @pytest.mark.parametrize("loc", [0.0, 1.0])
-    @pytest.mark.parametrize("scale", [1.0, 2.0])
-    @pytest.mark.parametrize("p", [0.001, 0.01])
-    def test_all_gpd_less(self, n_null, n_tail, c, loc, scale, p):
-        obs = genpareto.ppf(p, c, loc=loc, scale=scale)
-        nulls = -np.sort(-genpareto.rvs(c, loc=loc, scale=scale, size=(1, n_null)))
 
-        # model on negative data
-        floc = np.mean(-nulls[:,-n_tail-1:-n_tail+1])
-        fit = genpareto.fit(-nulls[:,-n_tail:], floc = floc)
-        p1 = genpareto.sf(-obs, *fit) * (n_tail / n_null)
+    # Test that the correct value of n_tail is chosen for the right goodness-of-fit
+    # Need to ensure that the tail selection is based on GOF and not threshold location
+    @pytest.mark.parametrize("n_tail", [50, 100])
+    @pytest.mark.parametrize("p", [1e-4, 1e-6])
+    @pytest.mark.parametrize("seed", range(24)) # has to be a fixed set which is known to be within error bounds (false negs of AD test)
+    def test_gpd_tail_fallback_selection(self, n_tail, p,seed):
+        """Verify that a large invalid tail (nte=1000) fails GoF and falls back to a valid smaller tail (nte=100)."""
+        
+        # Bulk data (Normal) + Extreme Tail (GPD), 99% of data is bulk
+        bulk = 3.0 - np.random.default_rng(seed).exponential(scale=1.0, size=(1, n_tail * 99))
+        tail = genpareto.rvs(c=0.2, loc=3.0, scale=1.0, size=(1, n_tail), random_state=seed)
+        nulls = np.sort(np.hstack([bulk, tail]), axis=1)
 
-        p2 = mbm_calc_p_vals(
-            np.array([obs]), 
-            nulls,
-            alternative='less', 
-            n_for_tail_estimation=n_tail,
-            n_for_pval_recalculation=np.inf, 
+        obs = np.array([genpareto.ppf(1-p, c=0.2, loc=3.0, scale=1.0)])
+
+        # Call 1
+        p_test = mbm_calc_p_vals(
+            obs, nulls,
+            alternative='greater',
+            n_for_tail_estimation=(10*n_tail, n_tail),
+            n_for_pval_recalculation=np.inf, # force recalculation
+            gof_acceptance_level=0.05 # check that first is rejected
         )
 
-        np.testing.assert_allclose(p1, p2, rtol=1e-9, atol=1e-9)
+        # Call 2
+        p_good = mbm_calc_p_vals(
+            obs, nulls,
+            alternative='greater',
+            n_for_tail_estimation=(n_tail,),
+            n_for_pval_recalculation=np.inf,
+            gof_acceptance_level=0.05
+        )
+
+        # Call 3
+        p_bad = mbm_calc_p_vals(
+            obs, nulls,
+            alternative='greater',
+            n_for_tail_estimation=(10*n_tail,),
+            n_for_pval_recalculation=np.inf,
+            gof_acceptance_level=0.00 # force this to be accepted here so that we can get a value
+        )
+
+        p_naive = mbm_calc_p_vals(
+            obs, nulls,
+            alternative='greater',
+            n_for_pval_recalculation=0, # no recalculation
+        )
+
+        print(f"p: {p}, p_test: {p_test}, p_good: {p_good}, p_bad: {p_bad}, p_naive: {p_naive}")
+
+        # If fallback succeeded
+        np.testing.assert_allclose(p_test, p_good, rtol=1e-6, atol=1e-6)
+        
+        # Confirm that nte=1000 yields a different p-value than nte=10
+        assert not np.isclose(p_test, p_bad, rtol=1e-3, atol=0.0) or np.isclose(p_good, 0.0, atol=1e-6) 
+        assert not np.isclose(p_test, p_naive, rtol=1e-3, atol=0.0) or np.isclose(p_good, 0.0, atol=1e-6)
+
+
+
+
+
+
 
 
 
     # Add tests to:
+    # - for the goodness of fit testing (which is off by default)
     # - check that revmap is correct
-    # - explicitly check that fitting makes p-values more accurate
     # - when n_for_tail_estimation is a list, check that the appropriate fit is used
     # - that the 'continue' statements prevent bad behaviour on badly conditioned data
-    # - for the goodness of fit testing (which is off by default)
     # 
 

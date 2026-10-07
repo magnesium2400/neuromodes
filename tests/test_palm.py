@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.optimize import minimize
+import scipy.stats as sps
 import pytest
 
 from neuromodes.palm import andersondarling, palm_competitive, palm_datapval, _fit_tail, palm_pareto
@@ -57,7 +58,7 @@ class Test_andersondarling:
         (2.674, 0.001)
     ])
     def test_table_row(self, target_a2, expected_pval):
-        """Test interpolation along a single row of the table for k=0."""
+        """Test interpolation along a single row of the table for k=0.400."""
         z = self._a2_to_z(target_a2)
         self._check_p(z, 0.400, expected_pval)
 
@@ -92,13 +93,79 @@ class Test_andersondarling:
         z = self._a2_to_z(target_a2_col)
         self._check_p(z, k=0.0, expected_pval=0.175)
 
+    @pytest.mark.parametrize("c", [-0.4, 0, 0.8])
+    @pytest.mark.parametrize("loc", [0, 10])
+    @pytest.mark.parametrize("scale", [1, 10])
+    @pytest.mark.parametrize("size", [100, 1000])
+    @pytest.mark.parametrize("seed", [1, 999])
+    def test_scipy_gof_adstat(self, c, loc, scale, size, seed):
+        """
+        Verify that the calculated Anderson-Darling statistic (A^2) matches
+        SciPy's scipy.stats.goodness_of_fit(statistic='ad') calculation.
+        """
+        # 1. Generate sample data from GenPareto
+        sample_data = sps.genpareto.rvs(c=c, loc=loc, scale=scale, size=size, random_state=seed)
+
+        # 2. Fit model with known threshold (loc)
+        fit_params = sps.genpareto.fit(sample_data, floc=loc)
+        c_hat, loc_hat, scale_hat = fit_params[0], fit_params[1], fit_params[2]
+        print(f"Fitted parameters: c_hat={c_hat}, loc_hat={loc_hat}, scale_hat={scale_hat}")
+
+        # 3. Compute baseline AD statistic via SciPy
+        scipy_gof = sps.goodness_of_fit(
+            dist=sps.genpareto,
+            data=sample_data,
+            statistic='ad',
+            known_params={'loc': loc_hat},
+            fit_params={'c': c_hat, 'scale': scale_hat},
+            n_mc_samples=1, # 1 MC sample is sufficient since statistic calculation is deterministic
+        )
+
+        # 4. Transform data to CDF values (z) and run custom implementation
+        z_sorted = np.sort(sps.genpareto.cdf(sample_data, c=c_hat, loc=loc_hat, scale=scale_hat))
+        # Note: Choulakian & Stephens parameterize shape parameter k = -c
+        _, actual_adstat = andersondarling(z_sorted, k=-c_hat)
+        print(f"Actual AD statistic: {actual_adstat}, SciPy AD statistic: {scipy_gof.statistic}")
+
+        # 5. Assert match within tight precision
+        np.testing.assert_allclose(actual_adstat, scipy_gof.statistic,  rtol=1e-3, atol=1e-3)
+        # np.testing.assert_allclose(actual_pvalue, scipy_gof.pvalue,     rtol=1e-5, atol=1e-7)
+
+    @pytest.mark.parametrize("a2", [0.01, 0.001])
+    @pytest.mark.parametrize("k", [-0.9, -0.5, -0.2, -0.1, 0.0, 0.1, 0.2, 0.3, 0.4, 0.5])
+    def test_pvalue_one(self, a2, k):
+        # Create z array yielding an extremely small A^2 (near perfect fit)
+        z_perfect = self._a2_to_z(a2)
+        p_high, _ = andersondarling(z_perfect, k=k) # should be same for all k
+        assert 0.98 < p_high <= 1.0  # Should extrapolate past 0.500, capped at 1.0
+        
+
+    @pytest.mark.parametrize("a2", [5.0, 10.0])
+    @pytest.mark.parametrize("k", [-0.9, -0.5, -0.2, -0.1, 0.0, 0.1, 0.2, 0.3, 0.4, 0.5])
+    def test_pvalue_zero(self, a2, k):
+        # Create z array yielding an extremely large A^2 (terrible fit)
+        z_terrible = self._a2_to_z(a2)
+        p_low, _ = andersondarling(z_terrible, k=k) # should be same for all k
+        assert p_low == 0.0  # Should extrapolate below 0.001 and clip strictly to 0.0
+
+
+
+
+
 class Test_competitive(): 
     @staticmethod
     def _test_competitive(X, exp_unsrtR, exp_S, exp_srtR, descending=False, ranking='standard'):
         unsrtR, S, srtR = palm_competitive(X, ranking=ranking, descending=descending)
+
         # Test correctness of results
-        assert np.array_equal(S[unsrtR - 1], X)
-        assert np.array_equal(np.sort(unsrtR), srtR)
+        if descending:                                  # S is sorted correctly
+            assert np.array_equal(S, np.sort(X)[::-1])
+        else: 
+            assert np.array_equal(S, np.sort(X))
+        assert np.array_equal(srtR, np.sort(srtR))      # srtR is sorted correctly (always non-decreasing)
+        assert np.array_equal(np.sort(unsrtR), srtR)    # unsrtR is a permutation of srtR
+        assert np.array_equal(S[unsrtR - 1], X)         # can recover original values
+
         # Test that expected outputs match actual outputs
         assert np.array_equal(unsrtR, exp_unsrtR)
         assert np.array_equal(S, exp_S)

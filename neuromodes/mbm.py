@@ -3,11 +3,13 @@ import numpy as np
 import scipy.stats as sps
 from warnings import warn
 from collections.abc import Iterable
+from typing import Literal
 
 # import neuromodes.stats as nms
 # import neuromodes.palm
 import neuromodes.glmw as glmw
 from neuromodes.basis import decompose
+from neuromodes.palm import andersondarling
 
 # TODO rename all variables to be more descriptive
 # TODO remove mbm_ from function names
@@ -196,19 +198,23 @@ def mbm_generate_stat_maps(
 # then the p value estimation can be done across all vertices simultaneously
 # or consider method of moments?
 # TODO future consider adding support for observations being matrix? would have to consider what happens to permRevMap
-# if alternative is two-sided? have to specify rev map? should revmap be specifiable presently? 
+# if alternative is two-sided? would have to be able to fit both tails for some data 
 # TODO consider returning the threshold t for each vertex as well
+# TODO support observed_stat_map being 2D for alternative != two-sided
+# TODO support observed_stat_map being 2D for alternative == two-sided
 def mbm_calc_p_vals(
         # TODO change names!
         observedStatMap, # (n_data,)
         statMapNull, # (n_data, n_permutations)
-        alternative = 'two-sided', # 'two-sided', 'greater', 'less' 
-        n_for_tail_estimation = tuple(range(250, 1, -10)), # 250 to 10, like PALM
-        n_for_pval_recalculation = 10, # set to 0 to recalculate no p-values, set to Inf to recalculate all
-        gof_acceptance_level = 0.10,
-        n_mc_samples = None, # consider changing to goodness_of_fit_kwargs if willing/able
+        alternative: Literal['two-sided', 'greater', 'less'] = 'two-sided', # 'two-sided', 'greater', 'less' 
+        n_for_tail_estimation: int | Iterable[int] = tuple(range(250, 1, -10)), # 250 to 10, like PALM
+        n_for_pval_recalculation: int = 10, # set to 0 to recalculate no p-values, set to Inf to recalculate all
+        gof_acceptance_level = 0.10, # set to 0 to ignore, 0.05 to match PALM
         return_tail = False # TODO add overloads
 ): 
+
+    # Note that n_for_tail_estimation and n_for_pval_recalculation should be specified as 
+    # integers (like in Knijenberg et al. 2009), NOT as fractions (like in PALM).
 
     # 0. Input validation
     if observedStatMap.ndim != 1:
@@ -227,8 +233,8 @@ def mbm_calc_p_vals(
     for n in n_for_tail_estimation:
         if not isinstance(n, int):
             raise TypeError(f"All values in n_for_tail_estimation must be integers, got {type(n)}")
-        if n >= n_permutations:
-            warn(f"Some values in n_for_tail_estimation are greater than or equal to n_permutations ({n_permutations}). These will be ignored.")
+        if n > n_permutations:
+            warn(f"Some values in n_for_tail_estimation are greater than n_permutations ({n_permutations}). These will be ignored.")
         if n < 2:
             warn(f"Some values in n_for_tail_estimation are less than 2. These will be ignored.")
     nte_copy = [nte for nte in n_for_tail_estimation if 2 <= nte < n_permutations]
@@ -261,7 +267,7 @@ def mbm_calc_p_vals(
     # 2. Find/setup data to be recalculated with GPD fitting
     mask = permPMap < n_for_pval_recalculation
 
-    # Orient observed statistics and null distributions so all tails act as upper-right tails
+    # Orient observed statistics and null distributions so all tails act as upper/right tails
     factor = 1 - 2 * permRevMap[mask].astype(int) # (n_recalc,)
     obs = observedStatMap[mask] * factor  # (n_recalc,)
     nulls_nondesc = np.sort(statMapNull[mask, :] * factor[:, None], axis=1)  # (n_recalc, n_permutations)
@@ -278,37 +284,51 @@ def mbm_calc_p_vals(
                 t = (nulls_row[tidx-1] + nulls_row[tidx]) / 2.0
             else: # tidx = 0: take a half step before the first value
                 t = (3 * nulls_row[0] - nulls_row[1]) / 2.0 # linear extrapolation to get a threshold that is slightly below the smallest value in the tail
-            if ob <= t: 
-                continue
+            if ob <= t:
+                if nte == np.max(nte_copy):
+                    warn(f"Observed statistic {ob} is below the minimumthreshold {t} for vertex {ii}.")
+                    break
+                else: 
+                    continue
 
-            excess_row = nulls_row[tidx:] # same as nulls_row[nulls_row > t] 
+            excess_row = nulls_row[tidx:]-t # same as nulls_row[nulls_row > t] 
             if np.var(excess_row) == 0.0:
-                continue
+                if nte == np.max(nte_copy):
+                    warn(f"All tail values are identical for vertex {ii}.")
+                    break
+                else:
+                    continue
 
             # Fit GPD with location fixed to threshold t
             # Could use try-catch to continue to other nte/vertices if one fit errors out
-            fit = sps.genpareto.fit(excess_row, floc=t)
-            # if fit[0] <= -0.5 or fit[2] <= 0.0: # shape parameter k <= -0.5 or scale parameter a <= 0.0
-            #     continue
+            fit = sps.genpareto.fit(excess_row, floc=0.0) # scipy internally performs better this way
+            if fit[0] <= -0.5 or fit[0] > 1.0 or fit[2] <= 0.0: # shape parameter k <= -0.5 or scale parameter a <= 0.0
+                continue
 
-            if n_mc_samples is not None:
-                gof = sps.goodness_of_fit(
-                    dist=sps.genpareto,
-                    data=excess_row,
-                    known_params={'loc': t},
-                    fit_params={'c': fit[0], 'scale': fit[2]}, # Could consider explicit checks on c, scale
-                    n_mc_samples=n_mc_samples
-                )
-                if gof.pvalue < gof_acceptance_level: # next iter if fit is poor
+            if gof_acceptance_level > 0.0:
+                gof = andersondarling(
+                    np.sort(sps.genpareto.cdf(excess_row, *fit)), 
+                    k=-fit[0]) # Choulakian & Stephens parameterize shape parameter k = -c
+                if gof[0] < gof_acceptance_level: # next iter if fit is poor
                     continue
 
-            permPMap[ii] = excess_row.size * sps.genpareto.sf(ob, *fit)
+            # if n_mc_samples is not None:
+            #     gof = sps.goodness_of_fit(
+            #         dist=sps.genpareto,
+            #         data=excess_row,
+            #         known_params={'loc': t},
+            #         fit_params={'c': fit[0], 'scale': fit[2]}, # Could consider explicit checks on c, scale
+            #         n_mc_samples=n_mc_samples
+            #     )
+            #     if gof.pvalue < gof_acceptance_level: # next iter if fit is poor
+            #         continue
+
+            permPMap[ii] = excess_row.size * sps.genpareto.sf(ob - t, *fit)
             success = True
             break
 
         if not success:
             warn(f"GPD fitting failed for vertex {ii}. Using non-parametric p-value.")
-
 
     # 4. Finalize p-values
     if alternative == 'two-sided':
@@ -319,6 +339,11 @@ def mbm_calc_p_vals(
         return permPMap, permRevMap
     else:
         return permPMap
+
+
+
+
+
 
 
 

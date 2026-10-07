@@ -355,6 +355,7 @@ def _gen_noise(
     np.ndarray
         Gaussian white noise array of shape ``(n_verts, nt)``.
     """
+    # TODO replace with SeedSequence?
     rng = np.random.default_rng(seed)
     # Generate in column-major order to ensure reproducibility across nt, then transpose
     return rng.standard_normal((nt, n_verts)).T
