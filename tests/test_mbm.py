@@ -308,44 +308,77 @@ class TestPVals():
     # Test simple cases without GPD fitting
     @pytest.mark.parametrize("n_data", [10, 50])
     @pytest.mark.parametrize("n_permutations", [100, 1000])
-    def test_no_gpd_greater(self, n_data, n_permutations):
+    def test_no_gpd(self, n_data, n_permutations):
         observed = np.random.randn(n_data)
         nulls = np.random.randn(n_data, n_permutations)
+
+        p_geq = np.mean(nulls >= observed[:, None], axis=1)
+        p_leq = np.mean(nulls <= observed[:, None], axis=1)
+        p_two = 2.0 * np.minimum(p_geq, p_leq)
+
+        # Test the different alternatives
+        tests = {
+            'greater': p_geq,
+            'less': p_leq,
+            'two-sided': p_two
+        }
         
-        pexp = np.mean(nulls >= observed[:, None], axis=1)
-        pact = mbm_calc_p_vals(observed, nulls, 'greater', 
-                               n_for_tail_estimation=(),    # turn off warnings
-                               n_for_pval_recalculation=0)  # turn off fitting
+        for alternative, expected in tests.items():
+            p_act = mbm_calc_p_vals(observed, nulls, alternative,   # type: ignore
+                                   n_for_tail_estimation=(),        # turn off warnings
+                                   n_for_pval_recalculation=0)      # turn off fitting
 
-        np.testing.assert_array_equal(pexp, pact)
-
-    @pytest.mark.parametrize("n_data", [10, 50])
-    @pytest.mark.parametrize("n_permutations", [100, 1000])
-    def test_no_gpd_less(self, n_data, n_permutations):
-        observed = np.random.randn(n_data)
-        nulls = np.random.randn(n_data, n_permutations)
+            np.testing.assert_array_equal(expected, p_act)
+       
+    @pytest.mark.parametrize("c", [0.1, 0.5, 0.85])
+    @pytest.mark.parametrize("scale", [1.0, 2.0])
+    @pytest.mark.parametrize("loc", [0.0, 1.0])
+    @pytest.mark.parametrize("n_permutations", [1000, 10000])
+    @pytest.mark.parametrize("n_for_tail_estimation", [range(1000, 1, -10)])
+    def test_gpd_fit_near_exact(self, c, scale, loc, n_permutations, n_for_tail_estimation):
+        """Use exact GPD distribution to generate tails and verify the extrapolation."""
         
-        pexp = np.mean(nulls <= observed[:, None], axis=1)
-        pact = mbm_calc_p_vals(observed, nulls, 'less', 
-                               n_for_tail_estimation=(), 
-                               n_for_pval_recalculation=0)
-
-        np.testing.assert_array_equal(pexp, pact)
-
-    @pytest.mark.parametrize("n_data", [10, 50])
-    @pytest.mark.parametrize("n_permutations", [100, 1000])
-    def test_no_gpd_two_sided(self, n_data, n_permutations):
-        observed = np.random.randn(n_data)
-        nulls = np.random.randn(n_data, n_permutations)
-        
-        pexp = 2.0 * np.minimum(np.mean(nulls >= observed[:, None], axis=1), 
-                                np.mean(nulls <= observed[:, None], axis=1))
-        pact = mbm_calc_p_vals(observed, nulls, 'two-sided', 
-                               n_for_tail_estimation=(), 
-                               n_for_pval_recalculation=0)
-
-        np.testing.assert_array_equal(pexp, pact)
-
+        # 1. Uniformly spaced quantile midpoints over N=n_permutations
+        # Midpoints ensure no point maps to exact CDF boundary 0.0 or 1.0
+        p_grid = (np.arange(n_permutations)+0.5) / (n_permutations)
+    
+        # 2. Generate exact sample grid
+        null_distribution = genpareto.ppf(p_grid, c, loc=loc, scale=scale)
+    
+        # 3. Target observed statistic at target p = 0.0005
+        p_target = (0.25) / (n_permutations)
+        observed_stat = genpareto.ppf(1 - p_target, c, loc=loc, scale=scale)
+    
+        observedStatMap = np.array([observed_stat])
+        statMapNull = null_distribution.reshape(1, -1)
+    
+        # 4. Check naive empirical p-value
+        p_naive = mbm_calc_p_vals(
+            observedStatMap=observedStatMap,
+            statMapNull=statMapNull,
+            alternative="greater",
+            n_for_pval_recalculation=0
+        )
+        assert p_naive == 0.0
+    
+        # 5. Call function with correct range direction (-10 step)
+        p_fit = mbm_calc_p_vals(
+            observedStatMap=observedStatMap,
+            statMapNull=statMapNull,
+            alternative="greater",
+            n_for_tail_estimation=n_for_tail_estimation,
+            n_for_pval_recalculation=10,
+            gof_acceptance_level=0.9, # could even be 1 as the data are from the exact distribution
+            return_tail=False,
+        )
+    
+        # Verify accuracy against target_p
+        np.testing.assert_allclose(
+            p_fit,
+            p_target,
+            rtol=1e-1,
+            err_msg=f"Expected interpolated p-value to be close to {p_target}, got {p_fit}",
+        )
 
     # Test fitting procedure but not GOF results (set to 0 here)
     @pytest.mark.parametrize("n_null", [10000])
@@ -357,6 +390,7 @@ class TestPVals():
     @pytest.mark.parametrize("alternative_and_factor", [("greater", 1.0), ("less", -1.0)])
     @pytest.mark.parametrize("seed", [42])
     def test_all_gpd_one_sided(self, n_null, n_tail, c, loc, scale, p, alternative_and_factor, seed):
+        """Test that the fitting finds a more accurate p-value. Note that the GOF thresholding is not tested here."""
         alternative, factor = alternative_and_factor
         obs = factor * genpareto.ppf(1-p, c, loc=loc, scale=scale)
         nulls = factor *  np.sort(genpareto.rvs(c, loc=loc, scale=scale, size=(1,n_null), random_state=seed))
@@ -385,14 +419,11 @@ class TestPVals():
         np.testing.assert_allclose(p_test, p_exp, rtol=1e-6, atol=1e-6)
         assert p_naive!=p_test or p_test==0, "P-values with and without fitting should be different."
 
-
-    # Test that the correct value of n_tail is chosen for the right goodness-of-fit
-    # Need to ensure that the tail selection is based on GOF and not threshold location
     @pytest.mark.parametrize("n_tail", [50, 100])
     @pytest.mark.parametrize("p", [1e-4, 1e-6])
     @pytest.mark.parametrize("seed", range(24)) # has to be a fixed set which is known to be within error bounds (false negs of AD test)
     def test_gpd_tail_fallback_selection(self, n_tail, p,seed):
-        """Verify that a large invalid tail (nte=1000) fails GoF and falls back to a valid smaller tail (nte=100)."""
+        """Verify that a large invalid tail fails GoF and falls back to a valid smaller tail."""
         
         # Bulk data (Normal) + Extreme Tail (GPD), 99% of data is bulk
         bulk = 3.0 - np.random.default_rng(seed).exponential(scale=1.0, size=(1, n_tail * 99))
@@ -443,66 +474,6 @@ class TestPVals():
         assert not np.isclose(p_test, p_bad, rtol=1e-3, atol=0.0) or np.isclose(p_good, 0.0, atol=1e-6) 
         assert not np.isclose(p_test, p_naive, rtol=1e-3, atol=0.0) or np.isclose(p_good, 0.0, atol=1e-6)
 
-
-    @pytest.mark.parametrize("c", [0.1, 0.5, 0.85])
-    @pytest.mark.parametrize("scale", [1.0, 2.0])
-    @pytest.mark.parametrize("loc", [0.0, 1.0])
-    @pytest.mark.parametrize("n_permutations", [1000, 10000])
-    @pytest.mark.parametrize("n_for_tail_estimation", [range(1000, 1, -10)])
-    def test_exact_tail(self, c, scale, loc, n_permutations, n_for_tail_estimation):
-        # c = 0.1  # Shape parameter (k)
-        # scale = 2.0
-        # loc = 0.0
-    
-        # 1. Uniformly spaced quantile midpoints over N=1000
-        # Midpoints ensure no point maps to exact CDF boundary 0.0 or 1.0
-        # n_permutations = 1000
-        # p_grid = (np.arange(0, n_permutations) + 0.5) / n_permutations
-        p_grid = (np.arange(n_permutations)+0.5) / (n_permutations)
-    
-        # 2. Generate exact sample grid
-        null_distribution = genpareto.ppf(p_grid, c, loc=loc, scale=scale)
-    
-        # 3. Target observed statistic at target p = 0.0005
-        # target_p = 0.0005-0.1/n_permutations
-        p_target = (0.25) / (n_permutations)
-        observed_stat = genpareto.ppf(1 - p_target, c, loc=loc, scale=scale)
-    
-        observedStatMap = np.array([observed_stat])
-        statMapNull = null_distribution.reshape(1, -1)
-    
-        # 4. Check naive empirical p-value
-        # permGeq = np.sum(statMapNull >= observedStatMap[:, None], axis=1)
-        # naive_p = permGeq[0] / n_permutations
-
-        p_naive = mbm_calc_p_vals(
-            observedStatMap=observedStatMap,
-            statMapNull=statMapNull,
-            alternative="greater",
-            n_for_pval_recalculation=0
-        )
-        assert p_naive == 0.0
-    
-        # 5. Call function with correct range direction (-10 step)
-        p_vals = mbm_calc_p_vals(
-            observedStatMap=observedStatMap,
-            statMapNull=statMapNull,
-            alternative="greater",
-            n_for_tail_estimation=n_for_tail_estimation,
-            n_for_pval_recalculation=10,
-            gof_acceptance_level=0.9, # could even be 1 as the data are from the exact distribution
-            return_tail=False,
-        )
-    
-        fitted_p = p_vals[0]
-    
-        # Verify accuracy against target_p
-        np.testing.assert_allclose(
-            fitted_p,
-            p_target,
-            rtol=1e-1,
-            err_msg=f"Expected interpolated p-value to be close to {p_target}, got {fitted_p}",
-        )
 
     # Add tests to:
     # - for the goodness of fit testing (which is off by default)

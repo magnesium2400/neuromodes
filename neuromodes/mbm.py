@@ -201,7 +201,7 @@ def mbm_generate_stat_maps(
 # if alternative is two-sided? would have to be able to fit both tails for some data 
 # TODO consider returning the threshold t for each vertex as well
 # TODO support observed_stat_map being 2D for alternative != two-sided
-# TODO support observed_stat_map being 2D for alternative == two-sided
+# TODO support observed_stat_map being 2D for alternative == two-sided ?recursion
 def mbm_calc_p_vals(
         # TODO change names!
         observedStatMap, # (n_data,)
