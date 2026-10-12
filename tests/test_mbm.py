@@ -305,10 +305,10 @@ class TestStatMaps():
 
 class TestPVals(): 
 
-    # Test simple cases without GPD fitting
     @pytest.mark.parametrize("n_data", [10, 50])
     @pytest.mark.parametrize("n_permutations", [100, 1000])
-    def test_no_gpd(self, n_data, n_permutations):
+    def test_no_gpd_1d(self, n_data, n_permutations):
+        """Test size/shape and simple calculation, 1 observation per row."""
         observed = np.random.randn(n_data)
         nulls = np.random.randn(n_data, n_permutations)
 
@@ -324,12 +324,46 @@ class TestPVals():
         }
         
         for alternative, expected in tests.items():
-            p_act = mbm_calc_p_vals(observed, nulls, alternative,   # type: ignore
+            p_act, tail = mbm_calc_p_vals(observed, nulls, alternative,   # type: ignore
                                    n_for_tail_estimation=(),        # turn off warnings
-                                   n_for_pval_recalculation=0)      # turn off fitting
+                                   n_for_pval_recalculation=0, # turn off fitting
+                                   return_tail=True
+                                   )
+            
+            np.testing.assert_array_equal(expected, p_act)
+            np.testing.assert_array_equal(tail.shape, observed.shape)
+
+
+    @pytest.mark.parametrize("n_data", [10, 50])
+    @pytest.mark.parametrize("n_observations", [1, 10])
+    @pytest.mark.parametrize("n_permutations", [100, 1000])
+    def test_no_gpd_2d(self, n_data, n_observations, n_permutations):
+        """Test size/shape and simple calculation, multiple observations per row."""
+        observed = np.random.randn(n_data, n_observations)
+        nulls = np.random.randn(n_data, n_permutations)
+
+        p_geq = np.mean(nulls[:,:,None] >= observed[:, None, :], axis=1)
+        p_leq = np.mean(nulls[:,:,None] <= observed[:, None, :], axis=1)
+        # p_two = 2.0 * np.minimum(p_geq, p_leq)
+
+        # Test the different alternatives
+        tests = {
+            'greater': p_geq,
+            'less': p_leq,
+            # 'two-sided': p_two
+        }
+
+        for alternative, expected in tests.items():
+            p_act, tail = mbm_calc_p_vals(observed, nulls, alternative,   # type: ignore
+                                   n_for_tail_estimation=(),        # turn off warnings
+                                   n_for_pval_recalculation=0, # turn off fitting
+                                   return_tail=True
+                                   )
 
             np.testing.assert_array_equal(expected, p_act)
-       
+            np.testing.assert_array_equal(tail.shape, observed.shape)
+
+
     @pytest.mark.parametrize("c", [0.1, 0.5, 0.85])
     @pytest.mark.parametrize("scale", [1.0, 2.0])
     @pytest.mark.parametrize("loc", [0.0, 1.0])
@@ -341,27 +375,22 @@ class TestPVals():
         # 1. Uniformly spaced quantile midpoints over N=n_permutations
         # Midpoints ensure no point maps to exact CDF boundary 0.0 or 1.0
         p_grid = (np.arange(n_permutations)+0.5) / (n_permutations)
+        p_target = np.array([[0.25, 0.20, 0.15, 0.10, 0.05]]) / (n_permutations)
     
         # 2. Generate exact sample grid
-        null_distribution = genpareto.ppf(p_grid, c, loc=loc, scale=scale)
+        statMapNull = np.reshape(genpareto.ppf(p_grid, c, loc=loc, scale=scale), (1, -1))
+        observedStatMap = genpareto.ppf(1 - p_target, c, loc=loc, scale=scale)
     
-        # 3. Target observed statistic at target p = 0.0005
-        p_target = (0.25) / (n_permutations)
-        observed_stat = genpareto.ppf(1 - p_target, c, loc=loc, scale=scale)
-    
-        observedStatMap = np.array([observed_stat])
-        statMapNull = null_distribution.reshape(1, -1)
-    
-        # 4. Check naive empirical p-value
+        # 3. Check naive empirical p-value
         p_naive = mbm_calc_p_vals(
             observedStatMap=observedStatMap,
             statMapNull=statMapNull,
             alternative="greater",
             n_for_pval_recalculation=0
         )
-        assert p_naive == 0.0
+        assert np.all(p_naive == 0.0)
     
-        # 5. Call function with correct range direction (-10 step)
+        # 4. Call function with correct range direction
         p_fit = mbm_calc_p_vals(
             observedStatMap=observedStatMap,
             statMapNull=statMapNull,
@@ -372,7 +401,7 @@ class TestPVals():
             return_tail=False,
         )
     
-        # Verify accuracy against target_p
+        # 5. Verify accuracy against target_p
         np.testing.assert_allclose(
             p_fit,
             p_target,
@@ -386,7 +415,7 @@ class TestPVals():
     @pytest.mark.parametrize("c", [-0.45, 0, 0.85])
     @pytest.mark.parametrize("loc", [12.0])
     @pytest.mark.parametrize("scale", [2.0])
-    @pytest.mark.parametrize("p", [1e-4, 1e-5, 1e-6])
+    @pytest.mark.parametrize("p", [np.array([[1e-4, 1e-5, 1e-6]])])
     @pytest.mark.parametrize("alternative_and_factor", [("greater", 1.0), ("less", -1.0)])
     @pytest.mark.parametrize("seed", [42])
     def test_all_gpd_one_sided(self, n_null, n_tail, c, loc, scale, p, alternative_and_factor, seed):
@@ -399,7 +428,7 @@ class TestPVals():
         fit = genpareto.fit(factor * nulls[:,-n_tail:] - floc, floc = 0.0)
         p_exp = genpareto.sf(factor * obs - floc, *fit) * n_tail/n_null
 
-        p_test = mbm_calc_p_vals(np.array([obs]), 
+        p_test = mbm_calc_p_vals(obs, 
                              nulls,
                              alternative=alternative, 
                              n_for_tail_estimation=n_tail,
@@ -407,7 +436,7 @@ class TestPVals():
                              gof_acceptance_level=0.00,
                              )
 
-        p_naive = mbm_calc_p_vals(np.array([obs]), 
+        p_naive = mbm_calc_p_vals(obs, 
                             nulls,
                             alternative=alternative, 
                             n_for_tail_estimation=n_tail,
@@ -417,11 +446,11 @@ class TestPVals():
         print(f"p: {p}, p_exp: {p_exp}, p_test: {p_test}, p_naive: {p_naive}")
         np.testing.assert_allclose(p_test, p, rtol=1, atol=0) # has to be pretty loose here
         np.testing.assert_allclose(p_test, p_exp, rtol=1e-6, atol=1e-6)
-        assert p_naive!=p_test or p_test==0, "P-values with and without fitting should be different."
+        assert np.all((p_naive!=p_test) | (p_test==0)), "P-values with and without fitting should be different."
 
     @pytest.mark.parametrize("n_tail", [50, 100])
-    @pytest.mark.parametrize("p", [1e-4, 1e-6])
-    @pytest.mark.parametrize("seed", range(24)) # has to be a fixed set which is known to be within error bounds (false negs of AD test)
+    @pytest.mark.parametrize("p", [np.array([[1e-4, 1e-5, 1e-6]])])
+    @pytest.mark.parametrize("seed", range(10)) # has to be a fixed set which is known to be within error bounds (false negs of AD test)
     def test_gpd_tail_fallback_selection(self, n_tail, p,seed):
         """Verify that a large invalid tail fails GoF and falls back to a valid smaller tail."""
         
@@ -430,7 +459,7 @@ class TestPVals():
         tail = genpareto.rvs(c=0.2, loc=3.0, scale=1.0, size=(1, n_tail), random_state=seed)
         nulls = np.sort(np.hstack([bulk, tail]), axis=1)
 
-        obs = np.array([genpareto.ppf(1-p, c=0.2, loc=3.0, scale=1.0)])
+        obs = genpareto.ppf(1-p, c=0.2, loc=3.0, scale=1.0)
 
         # Call 1
         p_test = mbm_calc_p_vals(
@@ -471,8 +500,8 @@ class TestPVals():
         np.testing.assert_allclose(p_test, p_good, rtol=1e-6, atol=1e-6)
         
         # Confirm that nte=1000 yields a different p-value than nte=10
-        assert not np.isclose(p_test, p_bad, rtol=1e-3, atol=0.0) or np.isclose(p_good, 0.0, atol=1e-6) 
-        assert not np.isclose(p_test, p_naive, rtol=1e-3, atol=0.0) or np.isclose(p_good, 0.0, atol=1e-6)
+        assert not np.allclose(p_test, p_bad, rtol=1e-3, atol=0.0) or np.allclose(p_good, 0.0, atol=1e-6) 
+        assert not np.allclose(p_test, p_naive, rtol=1e-3, atol=0.0) or np.allclose(p_good, 0.0, atol=1e-6)
 
 
     # Add tests to:

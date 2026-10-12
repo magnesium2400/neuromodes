@@ -192,23 +192,16 @@ def mbm_generate_stat_maps(
     return statMapNull # shape (n_data, n_permutations)
 
 
-# TODO see if this can be vectorized across vertices
-# hmmm GPD is a single parameter fit (kinda - need to check piecewise-ness as param varies) 
-# so maybe the fitting can be done across all vertices simultaneously
-# then the p value estimation can be done across all vertices simultaneously
-# or consider method of moments?
-# TODO future consider adding support for observations being matrix? would have to consider what happens to permRevMap
-# if alternative is two-sided? would have to be able to fit both tails for some data 
-# TODO consider returning the threshold t for each vertex as well
-# TODO support observed_stat_map being 2D for alternative != two-sided
-# TODO support observed_stat_map being 2D for alternative == two-sided ?recursion
+# TODO FUTURE look at ways of vectorising this across vertices ?Newton method for MLE ?method of moments
+# TODO consider returning the fit vals/threshold/ad test for each vertex as well
+# TODO FUTURE support observed_stat_map being 2D for alternative == two-sided ?recursion
 def mbm_calc_p_vals(
         # TODO change names!
-        observedStatMap, # (n_data,)
+        observedStatMap, # (n_data,) or (n_data, n_obs) if alternative != 'two-sided'
         statMapNull, # (n_data, n_permutations)
-        alternative: Literal['two-sided', 'greater', 'less'] = 'two-sided', # 'two-sided', 'greater', 'less' 
-        n_for_tail_estimation: int | Iterable[int] = tuple(range(250, 1, -10)), # 250 to 10, like PALM
+        alternative: Literal['two-sided', 'greater', 'less'] = 'two-sided', 
         n_for_pval_recalculation: int = 10, # set to 0 to recalculate no p-values, set to Inf to recalculate all
+        n_for_tail_estimation: int | Iterable[int] = tuple(range(250, 1, -10)), # 250 to 10, like PALM
         gof_acceptance_level = 0.10, # set to 0 to ignore, 0.05 to match PALM
         return_tail = False # TODO add overloads
 ): 
@@ -217,8 +210,14 @@ def mbm_calc_p_vals(
     # integers (like in Knijenberg et al. 2009), NOT as fractions (like in PALM).
 
     # 0. Input validation
-    if observedStatMap.ndim != 1:
-        raise ValueError(f"observedStatMap must be 1D, got shape {observedStatMap.shape}")
+    if is_vector_obs := observedStatMap.ndim == 1:
+        observedStatMap = observedStatMap[:, None] # reshape to (n_data, 1) for consistent processing
+    elif observedStatMap.ndim == 2:
+        if alternative == 'two-sided':
+            # If you would like this to be implemented, please leave a GitHub issue and we can have a look
+            raise NotImplementedError("observedStatMap cannot be 2D for two-sided alternative. Please provide a 1D array of observed statistics.")
+    else:
+        raise ValueError(f"observedStatMap must be 1D or 2D, got shape {observedStatMap.shape}")
 
     if statMapNull.ndim != 2:
         raise ValueError(f"statMapNull must be 2D, got shape {statMapNull.shape}")
@@ -250,43 +249,47 @@ def mbm_calc_p_vals(
         warn(f"n_for_pval_recalculation ({n_for_pval_recalculation}) is greater than n_permutations ({n_permutations}). All p-values will be recalculated.")
     
     # 1. Naive p values (P'_ecdf) and tail direction
-    permGeq = np.sum(statMapNull >= observedStatMap[:, None], axis=1).astype(float)
-    permLeq = np.sum(statMapNull <= observedStatMap[:, None], axis=1).astype(float)
+    obs_3d = observedStatMap[:, np.newaxis, :]
+    null_3d = statMapNull[:, :, np.newaxis]
+    permGeq = np.sum(null_3d >= obs_3d, axis=1).astype(float)
+    permLeq = np.sum(null_3d <= obs_3d, axis=1).astype(float)
     if alternative == 'greater':
         permPMap = permGeq.copy()
-        permRevMap = np.zeros_like(observedStatMap, dtype=bool)
+        permRevMap = np.zeros_like(permGeq, dtype=bool)
     elif alternative == 'less':
         permPMap = permLeq.copy()
-        permRevMap = np.ones_like(observedStatMap, dtype=bool)
+        permRevMap = np.ones_like(permLeq, dtype=bool)
     elif alternative == 'two-sided':
         permPMap = np.minimum(permGeq, permLeq).copy() # will be doubled at the end
-        permRevMap = permLeq < permGeq
+        permRevMap = np.reshape(permLeq < permGeq, observedStatMap.shape)
     else:
         raise ValueError(f"Unsupported alternative hypothesis: {alternative}")
 
     # 2. Find/setup data to be recalculated with GPD fitting
-    mask = permPMap < n_for_pval_recalculation
+    mask_2d = permPMap < n_for_pval_recalculation
+    mask_1d = np.any(mask_2d, axis=1)
 
     # Orient observed statistics and null distributions so all tails act as upper/right tails
-    factor = 1 - 2 * permRevMap[mask].astype(int) # (n_recalc,)
-    obs = observedStatMap[mask] * factor  # (n_recalc,)
-    nulls_nondesc = np.sort(statMapNull[mask, :] * factor[:, None], axis=1)  # (n_recalc, n_permutations)
+    factor = 1 - 2 * permRevMap[mask_1d].astype(int) # (n_recalc, n_obs)
+    obs = observedStatMap[mask_1d] * factor  # (n_recalc, n_obs)
+    nulls_nondesc = np.sort(statMapNull[mask_1d, :] * factor[:,:1], axis=1)  # (n_recalc, n_permutations)
 
     # 3. Main loop: iterate over each row that needs recalculation
-    for ob, nulls_row, ii in zip(obs, nulls_nondesc, np.where(mask)[0]):
-        success = False
+    for ob, nulls_row, mask_row, ii in zip(obs, nulls_nondesc, mask_2d[mask_1d], np.where(mask_1d)[0]):
+        # success = False
         # Try different numbers of tail elements for GPD fitting, until AD test passes
         for nte in nte_copy: 
             # TODO FUTURE get unique values of nulls_row[-nte_copy] in stable order
             # as we only need to test each unique threshold
-            # TODO FUTURE investigate whether PALM midpoint treshold or Knijnenburg exact threshold is better
-            # Note that if using the exact threshold, the zero elements can be removed from AD test
+            # TODO FUTURE investigate whether PALM midpoint threshold or Knijnenburg exact threshold is better
+            # Note that if using the exact threshold, the zero elements can (?should) be removed from AD test
             tidx = np.searchsorted(nulls_row, nulls_row[-nte], side='left')
             if tidx != 0: 
                 t = (nulls_row[tidx-1] + nulls_row[tidx]) / 2.0
             else: # tidx = 0: take a half step before the first value
                 t = (3 * nulls_row[0] - nulls_row[1]) / 2.0 # linear extrapolation to get a threshold that is slightly below the smallest value in the tail
-            if ob <= t:
+            ob_mask = mask_row & (ob > t) 
+            if not np.any(ob_mask):
                 if nte == np.max(nte_copy):
                     warn(f"Observed statistic {ob} is below the minimum threshold {t} for vertex {ii}.")
                     break
@@ -313,37 +316,31 @@ def mbm_calc_p_vals(
                     k=-fit[0]) # Choulakian & Stephens parameterize shape parameter k = -c
                 if gof[0] < gof_acceptance_level: # next iter if fit is poor
                     continue
+                # TODO FUTURE: consider how to return fit stats and AD result to user
 
-            # if n_mc_samples is not None:
-            #     gof = sps.goodness_of_fit(
-            #         dist=sps.genpareto,
-            #         data=excess_row,
-            #         known_params={'loc': t},
-            #         fit_params={'c': fit[0], 'scale': fit[2]}, # Could consider explicit checks on c, scale
-            #         n_mc_samples=n_mc_samples
-            #     )
-            #     if gof.pvalue < gof_acceptance_level: # next iter if fit is poor
-            #         continue
+            permPMap[ii, ob_mask] = excess_row.size * sps.genpareto.sf(ob[ob_mask] - t, *fit)
+            mask_row[ob_mask] = False # mark as successfully recalculated
+            if not np.any(mask_row): # if all recalculated, break out of nte loop
+                break
 
-            permPMap[ii] = excess_row.size * sps.genpareto.sf(ob - t, *fit)
-            success = True
-            break
-
-        if not success:
+        if np.any(mask_row):
             warn(f"GPD fitting failed for vertex {ii}. Using non-parametric p-value.")
 
-    # 4. Finalize p-values
+    # 4. Output
     if alternative == 'two-sided':
         permPMap = 2 * permPMap
     permPMap = np.clip(permPMap / n_permutations, 0.0, 1.0)
 
+    output = [permPMap]
     if return_tail:
-        return permPMap, permRevMap
-    else:
-        return permPMap
+        output.append(permRevMap)
+    # if return_fit: output.append(...)
+    # if return_ad: output.append(...)
 
+    if is_vector_obs:
+        output = [np.squeeze(arr, axis=1) for arr in output]
 
-
+    return tuple(output) if len(output) > 1 else output[0]
 
 
 
