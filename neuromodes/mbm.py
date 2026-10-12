@@ -237,7 +237,7 @@ def mbm_calc_p_vals(
             warn(f"Some values in n_for_tail_estimation are greater than n_permutations ({n_permutations}). These will be ignored.")
         if n < 2:
             warn(f"Some values in n_for_tail_estimation are less than 2. These will be ignored.")
-    nte_copy = [nte for nte in n_for_tail_estimation if 2 <= nte < n_permutations]
+    nte_copy = [nte for nte in n_for_tail_estimation if 2 <= nte <= n_permutations]
     if n_for_tail_estimation and not nte_copy:
         warn(f"All values in n_for_tail_estimation ({n_for_tail_estimation}) are invalid. No p-values will be recalculated.")
 
@@ -277,8 +277,10 @@ def mbm_calc_p_vals(
         success = False
         # Try different numbers of tail elements for GPD fitting, until AD test passes
         for nte in nte_copy: 
-            # TODO future get unique values of nulls_row[-nte_copy] in stable order
+            # TODO FUTURE get unique values of nulls_row[-nte_copy] in stable order
             # as we only need to test each unique threshold
+            # TODO FUTURE investigate whether PALM midpoint treshold or Knijnenburg exact threshold is better
+            # Note that if using the exact threshold, the zero elements can be removed from AD test
             tidx = np.searchsorted(nulls_row, nulls_row[-nte], side='left')
             if tidx != 0: 
                 t = (nulls_row[tidx-1] + nulls_row[tidx]) / 2.0
@@ -286,7 +288,7 @@ def mbm_calc_p_vals(
                 t = (3 * nulls_row[0] - nulls_row[1]) / 2.0 # linear extrapolation to get a threshold that is slightly below the smallest value in the tail
             if ob <= t:
                 if nte == np.max(nte_copy):
-                    warn(f"Observed statistic {ob} is below the minimumthreshold {t} for vertex {ii}.")
+                    warn(f"Observed statistic {ob} is below the minimum threshold {t} for vertex {ii}.")
                     break
                 else: 
                     continue
