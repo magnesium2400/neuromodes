@@ -326,7 +326,7 @@ class TestPVals():
         for alternative, expected in tests.items():
             p_act, tail = mbm_calc_p_vals(observed, nulls, alternative,   # type: ignore
                                    n_for_tail_estimation=(),        # turn off warnings
-                                   n_for_pval_recalculation=0, # turn off fitting
+                                   n_for_pval_recalculation=None, # turn off fitting
                                    return_tail=True
                                    )
             
@@ -356,7 +356,7 @@ class TestPVals():
         for alternative, expected in tests.items():
             p_act, tail = mbm_calc_p_vals(observed, nulls, alternative,   # type: ignore
                                    n_for_tail_estimation=(),        # turn off warnings
-                                   n_for_pval_recalculation=0, # turn off fitting
+                                   n_for_pval_recalculation=None, # turn off fitting
                                    return_tail=True
                                    )
 
@@ -386,7 +386,7 @@ class TestPVals():
             observedStatMap=observedStatMap,
             statMapNull=statMapNull,
             alternative="greater",
-            n_for_pval_recalculation=0
+            n_for_pval_recalculation=None
         )
         assert np.all(p_naive == 0.0)
     
@@ -432,15 +432,15 @@ class TestPVals():
                              nulls,
                              alternative=alternative, 
                              n_for_tail_estimation=n_tail,
-                             n_for_pval_recalculation=np.inf, 
-                             gof_acceptance_level=0.00,
+                             n_for_pval_recalculation=nulls.size, 
+                             gof_acceptance_level=None,
                              )
 
         p_naive = mbm_calc_p_vals(obs, 
                             nulls,
                             alternative=alternative, 
                             n_for_tail_estimation=n_tail,
-                            n_for_pval_recalculation=0, # no recalculation
+                            n_for_pval_recalculation=None, # no recalculation
                              )
      
         print(f"p: {p}, p_exp: {p_exp}, p_test: {p_test}, p_naive: {p_naive}")
@@ -466,7 +466,7 @@ class TestPVals():
             obs, nulls,
             alternative='greater',
             n_for_tail_estimation=(10*n_tail, n_tail),
-            n_for_pval_recalculation=np.inf, # force recalculation
+            n_for_pval_recalculation=nulls.size, # force recalculation
             gof_acceptance_level=0.05 # check that first is rejected
         )
 
@@ -475,7 +475,7 @@ class TestPVals():
             obs, nulls,
             alternative='greater',
             n_for_tail_estimation=(n_tail,),
-            n_for_pval_recalculation=np.inf,
+            n_for_pval_recalculation=nulls.size,
             gof_acceptance_level=0.05
         )
 
@@ -484,14 +484,14 @@ class TestPVals():
             obs, nulls,
             alternative='greater',
             n_for_tail_estimation=(10*n_tail,),
-            n_for_pval_recalculation=np.inf,
-            gof_acceptance_level=0.00 # force this to be accepted here so that we can get a value
+            n_for_pval_recalculation=nulls.size,
+            gof_acceptance_level=None # force this to be accepted here so that we can get a value
         )
 
         p_naive = mbm_calc_p_vals(
             obs, nulls,
             alternative='greater',
-            n_for_pval_recalculation=0, # no recalculation
+            n_for_pval_recalculation=None, # no recalculation
         )
 
         print(f"p: {p}, p_test: {p_test}, p_good: {p_good}, p_bad: {p_bad}, p_naive: {p_naive}")

@@ -200,9 +200,9 @@ def mbm_calc_p_vals(
         observedStatMap, # (n_data,) or (n_data, n_obs) if alternative != 'two-sided'
         statMapNull, # (n_data, n_permutations)
         alternative: Literal['two-sided', 'greater', 'less'] = 'two-sided', 
-        n_for_pval_recalculation: int = 10, # set to 0 to recalculate no p-values, set to Inf to recalculate all
-        n_for_tail_estimation: int | Iterable[int] = tuple(range(250, 1, -10)), # 250 to 10, like PALM
-        gof_acceptance_level = 0.10, # set to 0 to ignore, 0.05 to match PALM
+        n_for_pval_recalculation: int | None = 9, # None to disable recalculation, 0 to only do something past all the nulls, 9 to match Knijenberg, n_permutations to do all
+        n_for_tail_estimation: int | Iterable[int] = tuple(range(250, 2, -10)), # match Knijenburg
+        gof_acceptance_level: float | None = 0.05, # match Knijenburg but perhaps 0.10 is better?
         return_tail = False # TODO add overloads
 ): 
 
@@ -240,54 +240,43 @@ def mbm_calc_p_vals(
     if n_for_tail_estimation and not nte_copy:
         warn(f"All values in n_for_tail_estimation ({n_for_tail_estimation}) are invalid. No p-values will be recalculated.")
 
-    # Consider removing inf carve-out? 
-    if not np.isposinf(n_for_pval_recalculation) and not isinstance(n_for_pval_recalculation, int):
-        raise TypeError(f"n_for_pval_recalculation must be an integer, got {type(n_for_pval_recalculation)}")
-    if n_for_pval_recalculation < 0: # Don't warn for 0 (allow user to turn off recalculation)
-        warn(f"n_for_pval_recalculation ({n_for_pval_recalculation}) is less than 0. No p-values will be recalculated.")
-    if n_for_pval_recalculation > n_permutations and not np.isposinf(n_for_pval_recalculation): # Don't warn for Inf (allow user to force recalculation))
-        warn(f"n_for_pval_recalculation ({n_for_pval_recalculation}) is greater than n_permutations ({n_permutations}). All p-values will be recalculated.")
+    if n_for_pval_recalculation is not None:
+        if n_for_pval_recalculation < 0:
+            warn(f"n_for_pval_recalculation ({n_for_pval_recalculation}) is less than 0. No p-values will be recalculated.")
+        if n_for_pval_recalculation > n_permutations: # Don't warn for n_permutations (allow user to force recalculation))
+            warn(f"n_for_pval_recalculation ({n_for_pval_recalculation}) is greater than n_permutations ({n_permutations}). All p-values will be recalculated.")
     
-    # 1. Naive p values (P'_ecdf) and tail direction
-    obs_3d = observedStatMap[:, np.newaxis, :]
-    null_3d = statMapNull[:, :, np.newaxis]
-    permGeq = np.sum(null_3d >= obs_3d, axis=1).astype(float)
-    permLeq = np.sum(null_3d <= obs_3d, axis=1).astype(float)
-    if alternative == 'greater':
-        permPMap = permGeq.copy()
-        permRevMap = np.zeros_like(permGeq, dtype=bool)
-    elif alternative == 'less':
-        permPMap = permLeq.copy()
-        permRevMap = np.ones_like(permLeq, dtype=bool)
-    elif alternative == 'two-sided':
-        permPMap = np.minimum(permGeq, permLeq).copy() # will be doubled at the end
-        permRevMap = np.reshape(permLeq < permGeq, observedStatMap.shape)
-    else:
-        raise ValueError(f"Unsupported alternative hypothesis: {alternative}")
-
-    # 2. Find/setup data to be recalculated with GPD fitting
-    mask_2d = permPMap < n_for_pval_recalculation
+    # 1. Get naive p values (P'_ecdf) and setup for calculation of P_gpd
+    tail_counts, tail_dir = _count_tails(observedStatMap, statMapNull, alternative)
+    mask_2d = (tail_counts <= n_for_pval_recalculation
+            if n_for_pval_recalculation is not None
+            else np.zeros_like(tail_counts, dtype=bool))
     mask_1d = np.any(mask_2d, axis=1)
 
     # Orient observed statistics and null distributions so all tails act as upper/right tails
-    factor = 1 - 2 * permRevMap[mask_1d].astype(int) # (n_recalc, n_obs)
+    factor = 1 - 2 * tail_dir[mask_1d].astype(int) # (n_recalc, n_obs)
     obs = observedStatMap[mask_1d] * factor  # (n_recalc, n_obs)
     nulls_nondesc = np.sort(statMapNull[mask_1d, :] * factor[:,:1], axis=1)  # (n_recalc, n_permutations)
 
-    # 3. Main loop: iterate over each row that needs recalculation
+    # 2. Main loop: iterate over each row that needs recalculation
+    # Try different numbers of tail elements for GPD fitting, until AD test passes
     for ob, nulls_row, mask_row, ii in zip(obs, nulls_nondesc, mask_2d[mask_1d], np.where(mask_1d)[0]):
-        # success = False
-        # Try different numbers of tail elements for GPD fitting, until AD test passes
+        # TODO FUTURE get unique values of nulls_row[-nte_copy] in stable order
+        # as we only need to test each unique threshold
         for nte in nte_copy: 
-            # TODO FUTURE get unique values of nulls_row[-nte_copy] in stable order
-            # as we only need to test each unique threshold
-            # TODO FUTURE investigate whether PALM midpoint threshold or Knijnenburg exact threshold is better
+            # TODO FUTURE investigate whether Knijnenburg midpoint threshold or exact threshold is better
             # Note that if using the exact threshold, the zero elements can (?should) be removed from AD test
-            tidx = np.searchsorted(nulls_row, nulls_row[-nte], side='left')
-            if tidx != 0: 
-                t = (nulls_row[tidx-1] + nulls_row[tidx]) / 2.0
-            else: # tidx = 0: take a half step before the first value
-                t = (3 * nulls_row[0] - nulls_row[1]) / 2.0 # linear extrapolation to get a threshold that is slightly below the smallest value in the tail
+
+            # Find the threshold and the exceedances for the current tail size estimation
+            t, excess_row = _get_threshold_and_exceedances(nulls_row, nte)
+            if np.var(excess_row) == 0.0:
+                if nte == np.max(nte_copy):
+                    warn(f"All tail values are identical for vertex {ii}.")
+                    break
+                else:
+                    continue
+
+            # this will only be used after the fitting, but we cimpute it early in case we need to early exit
             ob_mask = mask_row & (ob > t) 
             if not np.any(ob_mask):
                 if nte == np.max(nte_copy):
@@ -296,29 +285,16 @@ def mbm_calc_p_vals(
                 else: 
                     continue
 
-            excess_row = nulls_row[tidx:]-t # same as nulls_row[nulls_row > t] 
-            if np.var(excess_row) == 0.0:
-                if nte == np.max(nte_copy):
-                    warn(f"All tail values are identical for vertex {ii}.")
-                    break
-                else:
-                    continue
-
             # Fit GPD with location fixed to threshold t
             # Could use try-catch to continue to other nte/vertices if one fit errors out
-            fit = sps.genpareto.fit(excess_row, floc=0.0) # scipy internally performs better this way
+            # TODO FUTURE: consider how to return these fit values and AD stats/result to user
+            fit, gofp = _fit_and_test_exceedances(excess_row, gof_acceptance_level)
             if fit[0] <= -0.5 or fit[0] > 1.0 or fit[2] <= 0.0: # shape parameter k <= -0.5 or scale parameter a <= 0.0
                 continue
+            if gof_acceptance_level is not None and gofp <= gof_acceptance_level: # next iter if fit is poor
+                continue
 
-            if gof_acceptance_level > 0.0:
-                gof = andersondarling(
-                    np.sort(sps.genpareto.cdf(excess_row, *fit)), 
-                    k=-fit[0]) # Choulakian & Stephens parameterize shape parameter k = -c
-                if gof[0] < gof_acceptance_level: # next iter if fit is poor
-                    continue
-                # TODO FUTURE: consider how to return fit stats and AD result to user
-
-            permPMap[ii, ob_mask] = excess_row.size * sps.genpareto.sf(ob[ob_mask] - t, *fit)
+            tail_counts[ii, ob_mask] = excess_row.size * sps.genpareto.sf(ob[ob_mask] - t, *fit)
             mask_row[ob_mask] = False # mark as successfully recalculated
             if not np.any(mask_row): # if all recalculated, break out of nte loop
                 break
@@ -326,21 +302,65 @@ def mbm_calc_p_vals(
         if np.any(mask_row):
             warn(f"GPD fitting failed for vertex {ii}. Using non-parametric p-value.")
 
-    # 4. Output
-    if alternative == 'two-sided':
-        permPMap = 2 * permPMap
-    permPMap = np.clip(permPMap / n_permutations, 0.0, 1.0)
-
-    output = [permPMap]
+    # 3. Output
+    output = [_counts_to_pvals(tail_counts, n_permutations, alternative)]
     if return_tail:
-        output.append(permRevMap)
-    # if return_fit: output.append(...)
-    # if return_ad: output.append(...)
+        output.append(tail_dir)
+    # TODO FUTURE if return_fit: output.append(...)
+    # TODO FUTURE if return_ad: output.append(...)
 
     if is_vector_obs:
         output = [np.squeeze(arr, axis=1) for arr in output]
 
     return tuple(output) if len(output) > 1 else output[0]
+
+
+def _count_tails(obs_2d, nulls_2d, alternative): 
+    obs_3d = obs_2d[:, np.newaxis, :]
+    null_3d = nulls_2d[:, :, np.newaxis]
+    geq = np.sum(null_3d >= obs_3d, axis=1).astype(float)
+    leq = np.sum(null_3d <= obs_3d, axis=1).astype(float)
+    if alternative == 'greater':
+        tail_counts = geq.copy()
+        tail_dir = np.zeros_like(geq, dtype=bool)
+    elif alternative == 'less':
+        tail_counts = leq.copy()
+        tail_dir = np.ones_like(leq, dtype=bool)
+    elif alternative == 'two-sided':
+        tail_counts = np.minimum(geq, leq).copy() # will be doubled at the end
+        tail_dir = leq < geq
+    else:
+        raise ValueError(f"Unsupported alternative hypothesis: {alternative}")
+    return tail_counts, tail_dir
+
+def _counts_to_pvals(pvals, n_permutations, alternative):
+    if alternative == 'two-sided':
+        pvals = 2 * pvals
+    return np.clip(pvals / n_permutations, 0.0, 1.0)
+
+def _naive_pvals(obs_2d, nulls_2d, alternative):
+    tail_counts, tail_dir = _count_tails(obs_2d, nulls_2d, alternative)
+    return _counts_to_pvals(tail_counts, nulls_2d.shape[1], alternative), tail_dir
+
+def _get_threshold_and_exceedances(nulls_nondesc, n_tail): 
+    tidx = np.searchsorted(nulls_nondesc, nulls_nondesc[-n_tail], side='left')
+    if tidx != 0: 
+        t = (nulls_nondesc[tidx-1] + nulls_nondesc[tidx]) / 2.0
+    else: # tidx = 0: take a half step before the first value
+        t = (3 * nulls_nondesc[0] - nulls_nondesc[1]) / 2.0
+    excess_row = nulls_nondesc[tidx:] - t # same as nulls_nondesc[nulls_nondesc > t] 
+    return t, excess_row
+
+# This is here mostly to facilitate testing
+def _fit_and_test_exceedances(excess_row, gof_acceptance_level):
+    fit = sps.genpareto.fit(excess_row, floc=0.0)
+    if gof_acceptance_level is not None: 
+        gofp = andersondarling(
+            np.sort(sps.genpareto.cdf(excess_row, *fit)), 
+            k=-fit[0])[0] # Choulakian & Stephens parameterize shape parameter k = -c
+    else: 
+        gofp = np.nan # gof = (1.0, 0.0) # could instead use dummy values with p = 1 and a2 = 0
+    return fit, gofp
 
 
 
