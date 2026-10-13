@@ -1,21 +1,22 @@
 
 import numpy as np
 import scipy.stats as sps
+from scipy.interpolate import make_interp_spline
 from warnings import warn
-from collections.abc import Iterable
+from collections.abc import Sequence
 from typing import Literal
 
 # import neuromodes.stats as nms
 # import neuromodes.palm
 import neuromodes.glmw as glmw
 from neuromodes.basis import decompose
-from neuromodes.palm import andersondarling
+# from neuromodes.palm import andersondarling
 
 # TODO rename all variables to be more descriptive
 # TODO remove mbm_ from function names
 
-# ofc this willl be removed at some point
-# jsut here to compare with the original fdr_bh
+# ofc this will be removed at some point
+# just here to compare with the original fdr_bh
 def fdr_bh(ps): 
     return sps.false_discovery_control(ps, method='bh')
 
@@ -201,8 +202,8 @@ def mbm_calc_p_vals(
         statMapNull, # (n_data, n_permutations)
         alternative: Literal['two-sided', 'greater', 'less'] = 'two-sided', 
         n_for_pval_recalculation: int | None = 9, # None to disable recalculation, 0 to only do something past all the nulls, 9 to match Knijenberg, n_permutations to do all
-        n_for_tail_estimation: int | Iterable[int] = tuple(range(250, 2, -10)), # match Knijenburg
-        gof_acceptance_level: float | None = 0.05, # match Knijenburg but perhaps 0.10 is better?
+        n_for_tail_estimation: int | Sequence[int] = tuple(range(250, 2, -10)), # match Knijenburg
+        gof_acceptance_level: float | None = 0.05, # match Knijenburg, but perhaps 0.10 is better?
         return_tail = False # TODO add overloads
 ): 
 
@@ -225,26 +226,29 @@ def mbm_calc_p_vals(
         raise ValueError(f"statMapNull and observedStatMap must have the same number of rows. Got {statMapNull.shape[0]} and {observedStatMap.shape[0]}.")
     n_permutations = statMapNull.shape[1]
 
-    if isinstance(n_for_tail_estimation, int):
-        n_for_tail_estimation = (n_for_tail_estimation,)
-    if not isinstance(n_for_tail_estimation, Iterable):
-        raise TypeError(f"n_for_tail_estimation must be an integer or iterable, got {type(n_for_tail_estimation)}")
-    for n in n_for_tail_estimation:
-        if not isinstance(n, int):
-            raise TypeError(f"All values in n_for_tail_estimation must be integers, got {type(n)}")
-        if n > n_permutations:
-            warn(f"Some values in n_for_tail_estimation are greater than n_permutations ({n_permutations}). These will be ignored.")
-        if n < 2:
-            warn(f"Some values in n_for_tail_estimation are less than 2. These will be ignored.")
-    nte_copy = [nte for nte in n_for_tail_estimation if 2 <= nte <= n_permutations]
-    if n_for_tail_estimation and not nte_copy:
-        warn(f"All values in n_for_tail_estimation ({n_for_tail_estimation}) are invalid. No p-values will be recalculated.")
-
+    # If we need to do tail estimation
     if n_for_pval_recalculation is not None:
+        # check n_for_pval_recalculation
         if n_for_pval_recalculation < 0:
             warn(f"n_for_pval_recalculation ({n_for_pval_recalculation}) is less than 0. No p-values will be recalculated.")
         if n_for_pval_recalculation > n_permutations: # Don't warn for n_permutations (allow user to force recalculation))
             warn(f"n_for_pval_recalculation ({n_for_pval_recalculation}) is greater than n_permutations ({n_permutations}). All p-values will be recalculated.")
+
+        # and check n_for_tail_estimation
+        if isinstance(n_for_tail_estimation, int):
+            n_for_tail_estimation = (n_for_tail_estimation,)
+        if not isinstance(n_for_tail_estimation, Sequence):
+            raise TypeError(f"n_for_tail_estimation must be an integer or iterable, got {type(n_for_tail_estimation)}")
+        for n in n_for_tail_estimation:
+            if not isinstance(n, int):
+                raise TypeError(f"All values in n_for_tail_estimation must be integers, got {type(n)}")
+            if n > n_permutations:
+                warn(f"Some values in n_for_tail_estimation are greater than n_permutations ({n_permutations}). These will be ignored.")
+            if n < 2:
+                warn(f"Some values in n_for_tail_estimation are less than 2. These will be ignored.")
+        nte_copy = [nte for nte in n_for_tail_estimation if 2 <= nte <= n_permutations]
+        if n_for_tail_estimation and not nte_copy:
+            warn(f"All values in n_for_tail_estimation ({n_for_tail_estimation}) are invalid. No p-values will be recalculated.")
     
     # 1. Get naive p values (P'_ecdf) and setup for calculation of P_gpd
     tail_counts, tail_dir = _count_tails(observedStatMap, statMapNull, alternative)
@@ -268,19 +272,19 @@ def mbm_calc_p_vals(
             # Note that if using the exact threshold, the zero elements can (?should) be removed from AD test
 
             # Find the threshold and the exceedances for the current tail size estimation
-            t, excess_row = _get_threshold_and_exceedances(nulls_row, nte)
-            if np.var(excess_row) == 0.0:
+            thr, exceedances = _get_threshold_and_exceedances(nulls_row, nte)
+            if np.var(exceedances) == 0.0:
                 if nte == np.max(nte_copy):
                     warn(f"All tail values are identical for vertex {ii}.")
                     break
                 else:
                     continue
 
-            # this will only be used after the fitting, but we cimpute it early in case we need to early exit
-            ob_mask = mask_row & (ob > t) 
+            # This will only be used after the fitting, but we compute it early as we may need to early exit
+            ob_mask = mask_row & (ob > thr) 
             if not np.any(ob_mask):
                 if nte == np.max(nte_copy):
-                    warn(f"Observed statistic {ob} is below the minimum threshold {t} for vertex {ii}.")
+                    warn(f"Observed statistic {ob} is below the minimum threshold {thr} for vertex {ii}.")
                     break
                 else: 
                     continue
@@ -288,22 +292,23 @@ def mbm_calc_p_vals(
             # Fit GPD with location fixed to threshold t
             # Could use try-catch to continue to other nte/vertices if one fit errors out
             # TODO FUTURE: consider how to return these fit values and AD stats/result to user
-            fit, gofp = _fit_and_test_exceedances(excess_row, gof_acceptance_level)
+            fit, adp = _fit_and_ad_exceedances(exceedances, gof_acceptance_level)
             if fit[0] <= -0.5 or fit[0] > 1.0 or fit[2] <= 0.0: # shape parameter k <= -0.5 or scale parameter a <= 0.0
                 continue
-            if gof_acceptance_level is not None and gofp <= gof_acceptance_level: # next iter if fit is poor
+            if gof_acceptance_level is not None and adp <= gof_acceptance_level: # next iter if fit is poor
                 continue
 
-            tail_counts[ii, ob_mask] = excess_row.size * sps.genpareto.sf(ob[ob_mask] - t, *fit)
-            mask_row[ob_mask] = False # mark as successfully recalculated
-            if not np.any(mask_row): # if all recalculated, break out of nte loop
+            tail_counts[ii, ob_mask] = exceedances.size * sps.genpareto.sf(ob[ob_mask] - thr, *fit)
+            mask_row[ob_mask] = False
+            if not np.any(mask_row):
                 break
 
         if np.any(mask_row):
             warn(f"GPD fitting failed for vertex {ii}. Using non-parametric p-value.")
 
     # 3. Output
-    output = [_counts_to_pvals(tail_counts, n_permutations, alternative)]
+    permPMap = _counts_to_pvals(tail_counts, n_permutations, alternative)
+    output = [permPMap]
     if return_tail:
         output.append(tail_dir)
     # TODO FUTURE if return_fit: output.append(...)
@@ -345,22 +350,76 @@ def _naive_pvals(obs_2d, nulls_2d, alternative):
 def _get_threshold_and_exceedances(nulls_nondesc, n_tail): 
     tidx = np.searchsorted(nulls_nondesc, nulls_nondesc[-n_tail], side='left')
     if tidx != 0: 
-        t = (nulls_nondesc[tidx-1] + nulls_nondesc[tidx]) / 2.0
-    else: # tidx = 0: take a half step before the first value
-        t = (3 * nulls_nondesc[0] - nulls_nondesc[1]) / 2.0
-    excess_row = nulls_nondesc[tidx:] - t # same as nulls_nondesc[nulls_nondesc > t] 
-    return t, excess_row
+        thr = (nulls_nondesc[tidx-1] + nulls_nondesc[tidx]) / 2.0
+    else: # tidx = 0: take a half step before the first value (from PALM)
+        thr = (3 * nulls_nondesc[0] - nulls_nondesc[1]) / 2.0
+    exceedances = nulls_nondesc[tidx:] - thr # same as nulls_nondesc[nulls_nondesc > thr] 
+    return thr, exceedances
 
-# This is here mostly to facilitate testing
-def _fit_and_test_exceedances(excess_row, gof_acceptance_level):
-    fit = sps.genpareto.fit(excess_row, floc=0.0)
+def _fit_and_ad_exceedances(exceedences, gof_acceptance_level: float | None = 0.05):
+    fit = sps.genpareto.fit(exceedences, floc=0.0) # floc forced to 0
     if gof_acceptance_level is not None: 
-        gofp = andersondarling(
-            np.sort(sps.genpareto.cdf(excess_row, *fit)), 
+        adp = _andersondarling(
+            np.sort(sps.genpareto.cdf(exceedences, *fit)), 
             k=-fit[0])[0] # Choulakian & Stephens parameterize shape parameter k = -c
     else: 
-        gofp = np.nan # gof = (1.0, 0.0) # could instead use dummy values with p = 1 and a2 = 0
-    return fit, gofp
+        adp = np.nan # adp = 1.0 # could instead use dummy p value
+    return fit, adp
+
+def _andersondarling(z_ascending, k):
+    """
+    Compute the Anderson-Darling statistic and return an
+    approximated p-value based on the tables provided in:
+    * Choulakian V, Stephens M A. Goodness-of-Fit Tests
+      for the Generalized Pareto Distribution. Technometrics.
+      2001;43(4):478-484.
+    
+    Note that z should be sorted in asvending order and should be 0 < z < 1.
+    Note that k should be within the range of the table provided in the paper -0.9 < k < 0.5.
+    """
+    # Constants
+    # Table 2 of the paper (Case 3: a and k unknown, bold values)
+    K_TABLE = np.array([-0.90, -0.50, -0.20, -0.10,  0.00,  0.10,  0.20,  0.30,  0.40,  0.50])
+    P_TABLE = np.array([0.500, 0.250, 0.100, 0.050, 0.025, 0.010, 0.005, 0.001])
+    A2_TABLE = np.array([
+        [0.339, 0.471, 0.641, 0.771, 0.905, 1.086, 1.226, 1.559],
+        [0.356, 0.499, 0.685, 0.830, 0.978, 1.180, 1.336, 1.707],
+        [0.376, 0.534, 0.741, 0.903, 1.069, 1.296, 1.471, 1.893],
+        [0.386, 0.550, 0.766, 0.935, 1.110, 1.348, 1.532, 1.966],
+        [0.397, 0.569, 0.796, 0.974, 1.158, 1.409, 1.603, 2.064],
+        [0.410, 0.591, 0.831, 1.020, 1.215, 1.481, 1.687, 2.176],
+        [0.426, 0.617, 0.873, 1.074, 1.283, 1.567, 1.788, 2.314],
+        [0.445, 0.649, 0.924, 1.140, 1.365, 1.672, 1.909, 2.475],
+        [0.468, 0.688, 0.985, 1.221, 1.465, 1.799, 2.058, 2.674],
+        [0.496, 0.735, 1.061, 1.321, 1.590, 1.958, 2.243, 2.922]
+    ])
+
+    # Input validation
+    z = np.asarray(z_ascending)
+    if z.ndim != 1: 
+        raise ValueError("Input array 'z' must be one-dimensional.")
+    if np.any(np.diff(z) < 0): # non-descending (ties ok)
+        raise ValueError("Input array 'z' must be sorted in ascending order.")
+
+    if k < np.min(K_TABLE) or k > np.max(K_TABLE):
+        warn(
+            f"Shape parameter k={k} is outside the table bounds [{np.min(K_TABLE)}, {np.max(K_TABLE)}]. "
+            "Critical values will be extrapolated and may be unreliable.",
+            UserWarning
+        )
+    
+    # Main computation
+    n = z.size
+    a2 = -n - np.mean( np.log( z*(1-z[::-1]) ) * np.arange(1,2*n,2) )
+
+    k_to_a2 = make_interp_spline(K_TABLE, A2_TABLE, k=1, axis=0)   # Interpolate critical values for k
+    a2_to_p = make_interp_spline(k_to_a2(k), P_TABLE, k=1, axis=0) # and then p-values for A2
+    p = a2_to_p(a2)
+    
+    return np.clip(p, 0.0, 1.0), np.clip(a2, 0.0, np.inf)
+
+
+
 
 
 

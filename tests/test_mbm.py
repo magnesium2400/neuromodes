@@ -1,9 +1,10 @@
 import numpy as np
-from scipy.stats import genpareto, kstest
+from scipy.stats import genpareto, kstest, lognorm
 import pytest
 
 from neuromodes.mbm import (permutations_shuffle_rows, permutations_flip_sign, 
-                            mbm_generate_stat_maps, mbm_calc_p_vals)
+                            mbm_generate_stat_maps, mbm_calc_p_vals, 
+                            _fit_and_ad_exceedances)
 
 
 class TestPermutations:
@@ -302,9 +303,109 @@ class TestStatMaps():
         assert np.mean(p_vals_nuisance) > 0.25
         assert np.mean(kstest(p_vals_nuisance, 'uniform').pvalue) > 0.1  # Kolmogorov-Smirnov test for uniformity
 
+class TestFitAndAD:
+    """
+    Test suite for _fit_and_ad_exceedances. 
+    Covers basic input handling, exact quantile recovery, and random sample behavior.
+    """
+
+    @pytest.fixture
+    def basic_exceedances(self):
+        # Scale basic data to keep estimated shape parameter k within [-0.9, 0.5]
+        return genpareto.ppf((np.arange(10)+0.5) / 10, c=0.1)
+
+    def test_output_shape_and_gof_none(self, basic_exceedances):
+        fit, adp = _fit_and_ad_exceedances(basic_exceedances, gof_acceptance_level=None)
+        assert len(fit) == 3
+        assert fit[1] == 0.0  # floc is strictly fixed to 0.0
+        assert np.isnan(adp)
+
+    def test_output_shape_and_gof_active(self, basic_exceedances):
+        fit, adp = _fit_and_ad_exceedances(basic_exceedances, gof_acceptance_level=0.05)
+        assert len(fit) == 3
+        assert isinstance(adp, float)
+        assert 0.0 <= adp <= 1.0
+
+    def test_nan_and_inf_handling(self):
+        # SciPy's fit or the AD calculation should raise on invalid numeric inputs
+        bad_data = np.array([0.1, 0.5, np.nan, np.inf])
+        with pytest.raises(ValueError):
+            _fit_and_ad_exceedances(bad_data, gof_acceptance_level=0.05)
+
+    @pytest.mark.parametrize("c", [-0.45, 0, 0.85])
+    @pytest.mark.parametrize("scale", [1.0])
+    @pytest.mark.parametrize("n_samples", [1000, 10000])
+    def test_exact_distribution_fit(self, c, scale, n_samples):
+        # Generate exact sample grid using ppf to ensure perfect fit
+        p_grid = (np.arange(n_samples)+0.5) / n_samples
+        exact_data = genpareto.ppf(p_grid, c, loc=0.0, scale=scale)
+        
+        fit, adp = _fit_and_ad_exceedances(exact_data, gof_acceptance_level=0.05)
+        fit_c, fit_loc, fit_scale = fit
+        
+        assert fit_loc == 0.0
+        np.testing.assert_allclose(fit_c, c, atol=1e-2)
+        np.testing.assert_allclose(fit_scale, scale, atol=1e-2)
+        
+        # A near-perfect theoretical fit should yield a high Anderson-Darling p-value
+        assert 0.99 <= adp <= 1.0
+
+    @pytest.mark.parametrize("c", [-0.45, 0, 0.8])
+    @pytest.mark.parametrize("scale", [1.0])
+    @pytest.mark.parametrize("n_samples", [10000])
+    @pytest.mark.parametrize("n_simulations", [20])
+    @pytest.mark.parametrize("seed", [42])  
+    def test_random_gpd_fit(self, c, scale, n_samples, n_simulations, seed):
+
+        # If data do indded come from GPD, p-values should be uniformly distributed
+        p_values = np.empty(n_simulations)
+        for ii in range(n_simulations): 
+            random_data = np.sort(
+                genpareto.rvs(c, loc=0.0, scale=scale, size=n_samples, random_state=seed+ii)
+            )
+        
+            fit, p_values[ii] = _fit_and_ad_exceedances(random_data, gof_acceptance_level=0.05)
+            fit_c, fit_loc, fit_scale = fit
+            
+            assert fit_loc == 0.0
+            np.testing.assert_allclose(fit_c, c, atol=0.2)
+            np.testing.assert_allclose(fit_scale, scale, atol=0.2)
+
+        assert np.mean(p_values < 0.05) < 0.20, "GPD model failed to accept true GPD data"
+
+        _, ks_p = kstest(p_values, 'uniform', args=(0, 1))
+        assert ks_p > 0.01, f"P-values fail uniform test (KS p-val = {ks_p})"
+
+
+    @pytest.mark.parametrize("s", [0.1, 0.8])
+    @pytest.mark.parametrize("scale", [1.0])
+    @pytest.mark.parametrize("n_samples", [1000])
+    @pytest.mark.parametrize("n_simulations", [20])
+    @pytest.mark.parametrize("seed", [42])
+    @pytest.mark.filterwarnings("ignore:.*table bounds.*:UserWarning")
+    @pytest.mark.filterwarnings("ignore:divide by zero:RuntimeWarning")
+    def test_random_non_gpd_fit_rejection(self, s, scale, n_samples, n_simulations, seed):
+        """
+        If data come from a non-GPD distribution (e.g., Lognormal), the goodness-of-fit 
+        test should reject H0, yielding p-values clustered near 0.0 rather than uniform.
+        """
+        p_values = np.empty(n_simulations)
+        for ii in range(n_simulations):
+            # Generate lognormal data (heavy-tailed, but not GPD)
+            random_data = np.sort(
+                lognorm.rvs(s=s, loc=0.0, scale=scale, size=n_samples, random_state=seed+ii)
+            )
+            _, p_values[ii] = _fit_and_ad_exceedances(random_data, gof_acceptance_level=0.05)
+
+        # 1. Most individual p-values should directly fail the GOF threshold (< 0.05)
+        assert np.mean(p_values < 0.05) > 0.80, "GPD model failed to reject non-GPD data"
+
+        # 2. The distribution of p-values must fail the Kolmogorov-Smirnov test for uniformity
+        _, ks_p = kstest(p_values[~np.isnan(p_values)], 'uniform', args=(0, 1))
+        print(p_values)
+        assert ks_p < 0.01, f"Expected non-uniform p-values, but KS test passed (KS p-val = {ks_p})"
 
 class TestPVals(): 
-
     @pytest.mark.parametrize("n_data", [10, 50])
     @pytest.mark.parametrize("n_permutations", [100, 1000])
     def test_no_gpd_1d(self, n_data, n_permutations):
@@ -325,14 +426,12 @@ class TestPVals():
         
         for alternative, expected in tests.items():
             p_act, tail = mbm_calc_p_vals(observed, nulls, alternative,   # type: ignore
-                                   n_for_tail_estimation=(),        # turn off warnings
                                    n_for_pval_recalculation=None, # turn off fitting
                                    return_tail=True
                                    )
             
             np.testing.assert_array_equal(expected, p_act)
             np.testing.assert_array_equal(tail.shape, observed.shape)
-
 
     @pytest.mark.parametrize("n_data", [10, 50])
     @pytest.mark.parametrize("n_observations", [1, 10])
@@ -355,14 +454,12 @@ class TestPVals():
 
         for alternative, expected in tests.items():
             p_act, tail = mbm_calc_p_vals(observed, nulls, alternative,   # type: ignore
-                                   n_for_tail_estimation=(),        # turn off warnings
                                    n_for_pval_recalculation=None, # turn off fitting
                                    return_tail=True
                                    )
 
             np.testing.assert_array_equal(expected, p_act)
             np.testing.assert_array_equal(tail.shape, observed.shape)
-
 
     @pytest.mark.parametrize("c", [0.1, 0.5, 0.85])
     @pytest.mark.parametrize("scale", [1.0, 2.0])
@@ -395,8 +492,8 @@ class TestPVals():
             observedStatMap=observedStatMap,
             statMapNull=statMapNull,
             alternative="greater",
-            n_for_tail_estimation=n_for_tail_estimation,
             n_for_pval_recalculation=10,
+            n_for_tail_estimation=n_for_tail_estimation,
             gof_acceptance_level=0.9, # could even be 1 as the data are from the exact distribution
             return_tail=False,
         )
@@ -416,11 +513,10 @@ class TestPVals():
     @pytest.mark.parametrize("loc", [12.0])
     @pytest.mark.parametrize("scale", [2.0])
     @pytest.mark.parametrize("p", [np.array([[1e-4, 1e-5, 1e-6]])])
-    @pytest.mark.parametrize("alternative_and_factor", [("greater", 1.0), ("less", -1.0)])
+    @pytest.mark.parametrize("alternative, factor", [("greater", 1.0), ("less", -1.0)])
     @pytest.mark.parametrize("seed", [42])
-    def test_all_gpd_one_sided(self, n_null, n_tail, c, loc, scale, p, alternative_and_factor, seed):
+    def test_all_gpd_one_sided(self, n_null, n_tail, c, loc, scale, p, alternative, factor, seed):
         """Test that the fitting finds a more accurate p-value. Note that the GOF thresholding is not tested here."""
-        alternative, factor = alternative_and_factor
         obs = factor * genpareto.ppf(1-p, c, loc=loc, scale=scale)
         nulls = factor *  np.sort(genpareto.rvs(c, loc=loc, scale=scale, size=(1,n_null), random_state=seed))
 
@@ -431,16 +527,15 @@ class TestPVals():
         p_test = mbm_calc_p_vals(obs, 
                              nulls,
                              alternative=alternative, 
-                             n_for_tail_estimation=n_tail,
                              n_for_pval_recalculation=nulls.size, 
+                             n_for_tail_estimation=n_tail,
                              gof_acceptance_level=None,
                              )
 
         p_naive = mbm_calc_p_vals(obs, 
-                            nulls,
-                            alternative=alternative, 
-                            n_for_tail_estimation=n_tail,
-                            n_for_pval_recalculation=None, # no recalculation
+                             nulls,
+                             alternative=alternative, 
+                             n_for_pval_recalculation=None, # no recalculation
                              )
      
         print(f"p: {p}, p_exp: {p_exp}, p_test: {p_test}, p_naive: {p_naive}")
@@ -502,12 +597,4 @@ class TestPVals():
         # Confirm that nte=1000 yields a different p-value than nte=10
         assert not np.allclose(p_test, p_bad, rtol=1e-3, atol=0.0) or np.allclose(p_good, 0.0, atol=1e-6) 
         assert not np.allclose(p_test, p_naive, rtol=1e-3, atol=0.0) or np.allclose(p_good, 0.0, atol=1e-6)
-
-
-    # Add tests to:
-    # - for the goodness of fit testing (which is off by default)
-    # - check that revmap is correct
-    # - when n_for_tail_estimation is a list, check that the appropriate fit is used
-    # - that the 'continue' statements prevent bad behaviour on badly conditioned data
-    # 
 
