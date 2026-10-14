@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from scipy.sparse import csc_matrix, eye
 
-from neuromodes.basis import decompose, calc_recon_error, reconstruct
+from neuromodes.basis import decompose, calc_recon_error, reconstruct, spectralfilter
 from neuromodes.eigen import EigenSolver
 from neuromodes.io import fetch_example_map, fetch_example_surf
 from neuromodes.stats import sigmoid_rescale, zscorew
@@ -127,6 +127,47 @@ def gen_eigenmap(solver):
     eigenmaps = solver.emodes @ weights
 
     return eigenmaps, weights
+
+class TestFilter:
+    def test_filter_basic(self, solver, gen_eigenmap):
+        eigenmaps, _ = gen_eigenmap
+
+        filtered = spectralfilter(eigenmaps, solver.emodes, solver.evals, mass=solver.mass)
+
+        np.testing.assert_allclose(filtered, eigenmaps)
+
+    def test_filter_multiple_mode_counts(self, solver, gen_eigenmap):
+        eigenmaps, weights = gen_eigenmap
+
+        mode_counts = np.arange(1, solver.n_modes+1, 1)
+        filtered = spectralfilter(eigenmaps, solver.emodes, solver.evals, mass=solver.mass, mode_counts=mode_counts)
+
+        # Check that the last filtered map matches the original map
+        for i, mc in enumerate(mode_counts):
+            np.testing.assert_allclose(filtered[:, :, i], solver.emodes[:, :mc] @ weights[:mc])
+
+    def test_filter_multiple_mode_ids(self, solver, gen_eigenmap):
+        eigenmaps, weights = gen_eigenmap
+
+        mode_ids = [np.arange(0, solver.n_modes//2), np.arange(solver.n_modes//2, solver.n_modes)]
+        filtered = spectralfilter(eigenmaps, solver.emodes, solver.evals, mass=solver.mass, mode_ids=mode_ids)
+
+        # Check that the filtered maps match the original maps for the specified mode IDs
+        for i, ids in enumerate(mode_ids):
+            np.testing.assert_allclose(filtered[:, :, i], solver.emodes[:, ids] @ weights[ids])
+
+    def test_filter_exponential(self, solver, gen_eigenmap):
+        eigenmaps, weights = gen_eigenmap
+
+        # Apply an exponential filter to the eigenvalues
+        filter_func = lambda evals: np.exp(-evals)
+        filtered = spectralfilter(eigenmaps, solver.emodes, solver.evals, mass=solver.mass, filter=filter_func)
+
+        # Check that the filtered maps are not equal to the original maps
+        assert not np.allclose(filtered, eigenmaps), "Filtered maps should not be equal to the original maps."
+        np.testing.assert_allclose(filtered, solver.emodes @ (filter_func(solver.evals)[:, np.newaxis] * weights))
+        np.testing.assert_allclose(solver.decompose(filtered), filter_func(solver.evals)[:, np.newaxis] * weights)
+
 
 def test_reconstruct_project(solver):
     coeffs = decompose(solver.emodes, solver.emodes, mass=solver.mass)
