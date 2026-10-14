@@ -2,6 +2,7 @@
 import numpy as np
 import scipy.stats as sps
 from scipy.interpolate import make_interp_spline
+from scipy.sparse import eye as speye
 from warnings import warn
 from collections.abc import Sequence
 from typing import Literal
@@ -73,7 +74,7 @@ def permutations_shuffle_rows(
         seed: An integer or np.random.SeedSequence for reproducibility.
 
     Returns:
-        np.ndarray: An array of shape (n_subjects, n_permutations) of type int32.
+        np.ndarray: An array of shape (n_subjects, n_permutations) of type int.
     """
     # 1. Initialize the seeds
     child_seeds = np.random.SeedSequence(seed).spawn(n_permutations)
@@ -124,7 +125,8 @@ def _mbm_generate_stat_map(
         statTest, # TODO consider replace with t, f, z. Enum?
 ):
     
-    ident = np.eye(response.shape[0]) # TODO change to scipy sparse?
+    # ident = np.eye(response.shape[0]) # TODO change to scipy sparse?
+    ident = speye(response.shape[0], format='csc')
 
     # TODO consider replacing glmw with inbuilt functions
     # TODO consider creating non-weighted functions that just called the weighted version with ident
