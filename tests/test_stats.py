@@ -89,7 +89,7 @@ class TestGramwShapesAndTypes:
 
 class TestDotwShapesAndTypes:
 
-    def _manual_dotw(self, x, y, mass):
+    def _manual_dotw(self, x, y, mass, keepdims):
         # Convert inputs to dense arrays for calculating ground truth
         x_dense = x.toarray() if issparse(x) else np.asarray(x)
         y_dense = y.toarray() if issparse(y) else np.asarray(y)
@@ -100,10 +100,14 @@ class TestDotwShapesAndTypes:
         my_2d = mass_dense @ y_2d
         my_dense = my_2d.reshape(y_dense.shape)
 
-        # Elementwise multiply with x and sum over spatial axis 0
-        return np.sum(x_dense * my_dense, axis=0)
+        # Right-pad shapes with 1s to align axis 0 across both arrays
+        target_ndim = max(x_dense.ndim, my_dense.ndim)
+        x_aligned = x_dense.reshape(x_dense.shape + (1,) * (target_ndim - x_dense.ndim))
+        my_aligned = my_dense.reshape(my_dense.shape + (1,) * (target_ndim - my_dense.ndim))
 
-    # , (1, 2), (3, 1), (2, 2), (2, 3, 4)
+        # Elementwise multiply with aligned x and sum over spatial axis 0
+        return np.sum(x_aligned * my_aligned, axis=0, keepdims=keepdims)
+
     @pytest.mark.parametrize("dims_x", [(), (1,), (2,), (1, 2), (3, 1), (3, 2), (3, 2, 4)])
     @pytest.mark.parametrize("dims_y", [(), (1,), (2,), (1, 2), (3, 1), (3, 2), (3, 2, 4)])
     @pytest.mark.parametrize("sparse_x", [True, False])
@@ -155,14 +159,14 @@ class TestDotwShapesAndTypes:
         assert out.ndim == len(expected_shape)
 
         # 2. Assert values against manual ground truth
-        # expected = self._manual_dotw(x, y, mass)
+        expected = self._manual_dotw(x, y, mass, keepdims)
         # if keepdims:
         #     expected = np.expand_dims(expected, axis=0)
 
-        # out_values = out.toarray() if issparse(out) else out
-        # expected_values = expected.toarray() if issparse(expected) else expected
+        out_values = out.toarray() if issparse(out) else out
+        expected_values = expected.toarray() if issparse(expected) else expected
 
-        # np.testing.assert_allclose(out_values, expected_values)
+        np.testing.assert_allclose(out_values, expected_values)
 
 
 
