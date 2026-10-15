@@ -77,6 +77,16 @@ def _dot_nd(
     else:
         raise TypeError(f"Unsupported types for _dot_nd: {type(A)} and {type(B)}")
 
+def _broadcast_shapes_left(shape1, shape2):
+    output_shape = []
+    for i in range(max(len(shape1), len(shape2))):
+        a_dim = shape1[i] if i < len(shape1) else 1
+        b_dim = shape2[i] if i < len(shape2) else 1
+        if a_dim != b_dim and a_dim != 1 and b_dim != 1:
+            raise ValueError(f"Cannot broadcast shapes {shape1} and {shape2}")
+        output_shape.append(max(a_dim, b_dim))
+    return tuple(output_shape)
+
 
 def _elementwise_nd(
     A: csc_matrix | NDArray[np.floating], 
@@ -87,61 +97,53 @@ def _elementwise_nd(
     Preserves sparse representation when possible, falling back to dense NumPy 
     broadcasting for N-D tensors (N >= 3).
     """
-    if A.shape is None or B.shape is None:  # Make pyright happy
+    if getattr(A, 'shape', None) is None or getattr(B, 'shape', None) is None:
         raise ValueError("Input arrays must have defined shapes.")
 
-    # 1. Both Dense -> Standard NumPy broadcasting
-    if isinstance(A, np.ndarray) and isinstance(B, np.ndarray):
-        return A * B
+    output_shape = _broadcast_shapes_left(A.shape, B.shape)
 
-    # 2. Both Sparse -> SciPy sparse elementwise multiplication
-    elif issparse(A) and issparse(B):
-        # Align 1-column broadcasting (e.g., (N, 1) with (N, M))
-        if A.shape[1] != B.shape[1]:
-            if A.shape[1] == 1:
-                A = hstack([A] * B.shape[1], format="csc")
-            elif B.shape[1] == 1:
-                B = hstack([B] * A.shape[1], format="csc")
-            else:
-                raise ValueError(f"Cannot broadcast sparse shapes {A.shape} and {B.shape}")
+    # Helper for custom right-padded broadcasting alignment
+    def _align(arr: NDArray[np.floating] | csc_matrix) -> NDArray[np.floating]:
+        arr_dense = arr.toarray() if issparse(arr) else arr
+        base_shape = arr_dense.shape + (1,) if arr_dense.ndim == 1 else arr_dense.shape
+        pad_dims = len(output_shape) - len(base_shape)
+        return arr_dense.reshape(*base_shape, *(1,) * pad_dims) if pad_dims > 0 else arr_dense.reshape(base_shape)
+
+    # 1. Fallback to Dense N-D broadcasting immediately if output is N >= 3
+    if len(output_shape) > 2:
+        return (_align(A) * _align(B)).reshape(output_shape)
+
+    is_a_sparse, is_b_sparse = issparse(A), issparse(B)
+
+    # 2. Both Dense (<= 2D)
+    if not is_a_sparse and not is_b_sparse:
+        return (_align(A) * _align(B)).reshape(output_shape)
+
+    # 3. Both Sparse (<= 2D)
+    if is_a_sparse and is_b_sparse:
         return A.multiply(B)
 
-    # 3. One Sparse, One Dense
-    elif issparse(A):
-        # A is sparse (2D), B is dense (1D, 2D, or N-D)
-        if B.ndim <= 2:
-            return A.multiply(B)
-        else:
-            # Flatten B to 2D for sparse multiplication, then reshape back
-            B_2d = B.reshape(B.shape[0], -1)
-            res_2d = A.multiply(B_2d)
-            return res_2d.reshape(B.shape)
-
-    elif issparse(B):
-        # A is dense (1D, 2D, or N-D), B is sparse (2D)
-        if A.ndim <= 2:
-            return B.multiply(A)
-        else:
-            # Flatten A to 2D for sparse multiplication, then reshape back
-            A_2d = A.reshape(A.shape[0], -1)
-            res_2d = B.multiply(A_2d)
-            return res_2d.reshape(A.shape)
-
-    else:
-        raise TypeError(f"Unsupported types for _elementwise_nd: {type(A)} and {type(B)}")
+    # 4. One Sparse, One Dense (<= 2D)
+    sparse_mat = A if is_a_sparse else B
+    dense_arr = B if is_a_sparse else A
+    
+    # Align dense array to 2D using the same right-padding logic
+    aligned_dense = _align(dense_arr)
+    
+    return sparse_mat.multiply(aligned_dense)
 
 
 
 
-def _rowsum_nd(
-    A: csc_matrix | NDArray[np.floating], 
-    keepdims: bool = False
-) -> NDArray[np.floating]:
-    """Compute sum(A, axis=0) for N-D arrays, preserving trailing axes."""
-    if issparse(A):
-        return np.asarray(A.sum(axis=0)).ravel()
-    else:
-        return np.sum(A, axis=0, keepdims=keepdims)
+# def _rowsum_nd(
+#     A: csc_matrix | NDArray[np.floating], 
+#     keepdims: bool = False
+# ) -> NDArray[np.floating]:
+#     """Compute sum(A, axis=0) for N-D arrays, preserving trailing axes."""
+#     if issparse(A):
+#         return np.asarray(A.sum(axis=0)).ravel()
+#     else:
+#         return np.sum(A, axis=0, keepdims=keepdims)
 
 
 
@@ -223,7 +225,19 @@ def dotw(
     prod = _elementwise_nd(a, mb)
 
     # 3. Format dimensions
-    return _rowsum_nd(prod) if not keepdims else prod.sum(axis=0)
+
+    if issparse(prod):
+        out = np.asarray(prod.sum(axis=0)) # TODO check that this is sparse
+        if not keepdims:
+            out = out.squeeze(axis=0)
+    else: 
+        out = np.sum(prod, axis=0, keepdims=keepdims)
+
+    # out = prod.sum(axis=0)
+
+    # if keepdims:
+    #     out = np.expand_dims(out, axis=0)
+    return out
 
 def ssqw(
     data: NDArray[np.floating],
