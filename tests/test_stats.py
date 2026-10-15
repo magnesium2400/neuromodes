@@ -52,8 +52,8 @@ class TestGramwShapesAndTypes:
     @pytest.mark.parametrize("dims_y", [(), (1,), (2,), (1,2), (3,1), (2,2), (2,3,4)])
     @pytest.mark.parametrize("sparse_x", [True, False])
     @pytest.mark.parametrize("sparse_y", [True, False])
-    @pytest.mark.parametrize("sparse_mass", [True, False])
-    def test_nd_nd(self, dims_x, dims_y, sparse_x, sparse_y, sparse_mass):
+    @pytest.mark.parametrize("sparse_m", [True, False])
+    def test_nd_nd(self, dims_x, dims_y, sparse_x, sparse_y, sparse_m):
         A = 10
         x = np.random.rand(A, *dims_x)
         y = np.random.rand(A, *dims_y)
@@ -71,7 +71,7 @@ class TestGramwShapesAndTypes:
             else: 
                 return
 
-        if sparse_mass:
+        if sparse_m:
             mass = sparse.csc_matrix(mass)
 
         gram = gramw(x, y, mass=mass)
@@ -112,9 +112,9 @@ class TestDotwShapesAndTypes:
     @pytest.mark.parametrize("dims_y", [(), (1,), (2,), (1, 2), (3, 1), (3, 2), (3, 2, 4)])
     @pytest.mark.parametrize("sparse_x", [True, False])
     @pytest.mark.parametrize("sparse_y", [True, False])
-    @pytest.mark.parametrize("sparse_mass", [True, False])
+    @pytest.mark.parametrize("sparse_m", [True, False])
     @pytest.mark.parametrize("keepdims", [True, False])
-    def test_nd_nd(self, dims_x, dims_y, sparse_x, sparse_y, sparse_mass, keepdims):
+    def test_nd_nd(self, dims_x, dims_y, sparse_x, sparse_y, sparse_m, keepdims):
         A = 3
 
         x = np.random.rand(A, *dims_x)
@@ -133,7 +133,7 @@ class TestDotwShapesAndTypes:
             else:
                 return
 
-        if sparse_mass:
+        if sparse_m:
             mass = sparse.csc_matrix(mass)
 
         # Check if the FULL array shapes are broadcastable

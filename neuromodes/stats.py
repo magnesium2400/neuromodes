@@ -87,8 +87,7 @@ def _broadcast_shapes_left(shape1, shape2):
         output_shape.append(max(a_dim, b_dim))
     return tuple(output_shape)
 
-
-def _elementwise_nd(
+def _hadamard_nd(
     A: csc_matrix | NDArray[np.floating], 
     B: csc_matrix | NDArray[np.floating]
 ) -> csc_matrix | NDArray[np.floating]:
@@ -97,7 +96,7 @@ def _elementwise_nd(
     Preserves sparse representation when possible, falling back to dense NumPy 
     broadcasting for N-D tensors (N >= 3).
     """
-    if getattr(A, 'shape', None) is None or getattr(B, 'shape', None) is None:
+    if A.shape is None or B.shape is None:
         raise ValueError("Input arrays must have defined shapes.")
 
     output_shape = _broadcast_shapes_left(A.shape, B.shape)
@@ -132,27 +131,28 @@ def _elementwise_nd(
     
     return sparse_mat.multiply(aligned_dense)
 
-
-
-
-# def _rowsum_nd(
-#     A: csc_matrix | NDArray[np.floating], 
-#     keepdims: bool = False
-# ) -> NDArray[np.floating]:
-#     """Compute sum(A, axis=0) for N-D arrays, preserving trailing axes."""
-#     if issparse(A):
-#         return np.asarray(A.sum(axis=0)).ravel()
-#     else:
-#         return np.sum(A, axis=0, keepdims=keepdims)
-
-
+def _sum_nd(
+    A: csc_matrix | NDArray[np.floating], 
+    axis: int = 0,
+    keepdims: bool = False
+) -> NDArray[np.floating]:
+    """Compute sum(A) for N-D arrays, preserving trailing axes."""
+    if isinstance(A, np.ndarray):
+        out = np.sum(A, axis=axis, keepdims=keepdims)
+    elif issparse(A):
+        out = np.array(A.sum(axis=axis)) # csc_matrix.sum returns a 2D np MATRIX
+        if not keepdims:
+            out = out.squeeze(axis=axis)    
+    else:
+        raise TypeError(f"Unsupported type for _sum_nd: {type(A)}")
+    return out
 
 def gramw(
     data_a: csc_matrix | NDArray[np.floating],
     data_b: csc_matrix | NDArray[np.floating] | None = None,
     *,
     mass: csc_matrix | NDArray[np.floating] | None
-) -> csc_matrix |NDArray[np.floating]:
+) -> csc_matrix | NDArray[np.floating]:
     """
     Dot product between all brain maps (pairwise), equivalent to ``data.T @ (mass @ data_b)``.
 
@@ -177,9 +177,7 @@ def gramw(
     # mass = _create_mass_matrix(ved.mass, a.shape[0])
 
     a, b = data_a, data_b
-    if b is None:
-        b = a
-    mb = _multiply_nd(mass, b)
+    mb = _multiply_nd(mass, b if b is not None else a)
     amb = _dot_nd(a, mb)
     return amb
 
@@ -189,7 +187,7 @@ def dotw(
     data_b: csc_matrix | NDArray[np.floating],
     mass: csc_matrix | NDArray[np.floating] | None = None,
     keepdims: bool = False
-) -> csc_matrix | NDArray[np.floating]:
+) -> NDArray[np.floating]:
     """Calculate the elementwise weighted dot product between spatial maps across axis 0.
 
     Equivalent to ``np.sum(data_a * (mass @ data_b), axis=0)``. Trailing dimensions
@@ -219,24 +217,8 @@ def dotw(
     # 1. Apply mass operator to b: M @ b  (shape: (n_verts, ...))
     a, b = data_a, data_b
     mb = _multiply_nd(mass, b)
-
-    # 2. Elementwise weighting across spatial vertices & sum over axis 0
-    # Broadcasting handles matching or compatible trailing shapes automatically
-    prod = _elementwise_nd(a, mb)
-
-    # 3. Format dimensions
-
-    if issparse(prod):
-        out = np.asarray(prod.sum(axis=0)) # TODO check that this is sparse
-        if not keepdims:
-            out = out.squeeze(axis=0)
-    else: 
-        out = np.sum(prod, axis=0, keepdims=keepdims)
-
-    # out = prod.sum(axis=0)
-
-    # if keepdims:
-    #     out = np.expand_dims(out, axis=0)
+    prod = _hadamard_nd(a, mb)
+    out = _sum_nd(prod, axis=0, keepdims=keepdims)
     return out
 
 def ssqw(
@@ -269,7 +251,7 @@ def meanw(
     data: NDArray[np.floating],
     mass: spmatrix | NDArray[np.floating] | None,
     keepdims: bool = False
-) -> float:
+) -> NDArray[np.floating]:
     """
     Area-weighted mean of each brain map, equivalent to ``sum(mass @ data) / mass.sum()``.
 
@@ -291,10 +273,8 @@ def meanw(
     """
     ved = EigenData(data=data, mass=mass)
     data, mass = ved.data, ved.mass
-
-    areas = _mass_to_areas(mass, data.shape[0])
-    out = np.average(data, axis=0, weights=areas)
-    return out[None, :] if keepdims else out
+    num = dotw(np.ones((data.shape[0],)), data, mass=mass, keepdims=keepdims)
+    return num / mass.sum() # np.float
 
 def demeanw(
     data: NDArray[np.floating],
@@ -316,13 +296,13 @@ def demeanw(
         The demeaned spatial maps, of shape ``(n_verts, n_maps)``.
     """
     data = np.asarray(data)
-    return data - meanw(data, mass)
+    return data - meanw(data, mass, keepdims=True)
 
 def varw(
     data: NDArray[np.floating],
     mass: spmatrix | NDArray[np.floating] | None,
     keepdims: bool = False
-) -> float:
+) -> NDArray[np.floating]:
     """
     Mass-weighted variance of each brain map, equivalent to ``sum((data - mean) * (mass @ (data -
     mean))) / mass.sum()``. Note that this function does not offer Bessel's correction, as mesh
@@ -348,15 +328,15 @@ def varw(
     mass = _create_mass_matrix(mass, data.shape[0])
 
     B = demeanw(data, mass)
-    out = ssqw(B, mass) / mass.sum()
-    return out[None, :] if keepdims else out
+    out = ssqw(B, mass, keepdims=keepdims) / mass.sum()
+    return out
 
 def momentw(
     data: NDArray[np.floating],
     mass: spmatrix | NDArray[np.floating] | None,
     order: int,
     keepdims: bool = False
-) -> float:
+) -> NDArray[np.floating]:
     """
     Mass-weighted central moment of a given order, of each brain map. Central moments are computed
     about the weighted mean. For order 1, the moment is always 0. For order 2, the moment is the
@@ -383,7 +363,7 @@ def momentw(
     data = np.asarray(data)
 
     if order == 1:
-        out = np.zeros(data.shape[1]) if data.ndim == 2 else 0
+        out = np.zeros(data.shape[1:])
         return out[None, :] if keepdims else out
     elif order == 2:
         return varw(data, mass, keepdims=keepdims)
@@ -398,7 +378,7 @@ def stdw(
     data: NDArray[np.floating],
     mass: spmatrix | NDArray[np.floating] | None,
     keepdims: bool = False
-) -> float:
+) -> NDArray[np.floating]:
     """
     Mass-weighted standard deviation of each brain map.
 
@@ -440,7 +420,7 @@ def zscorew(
         The mass-weighted z-scored spatial maps, of shape ``(n_verts, n_maps)``.
     """
     # TODO: consider inefficiency of demeaning twice, could be expanded
-    return demeanw(data, mass) / stdw(data, mass)
+    return demeanw(data, mass) / stdw(data, mass, keepdims=True)
 
 def covw(
     data: NDArray[np.floating],
@@ -479,13 +459,12 @@ def covw(
     a = np.asarray(data)
 
     mass = _create_mass_matrix(mass, a.shape[0])
-    total_area = mass.sum()
     
     a_dm = demeanw(a, mass)
     b_dm = demeanw(data_b, mass) if data_b is not None else a_dm
     gram = gramw(a_dm, b_dm, mass=mass)
     
-    return gram / total_area
+    return gram / mass.sum()
 
 def vecnormw(
     data: NDArray[np.floating],
@@ -526,13 +505,10 @@ def vecnormw(
         return np.sqrt(ssqw(data, mass, keepdims=keepdims))
     
     elif p == np.inf: # Exact (ignores the mass matrix)
-        out = np.max(np.abs(data), axis=0)
-        return out[None, :] if (keepdims and data.ndim == 2) else out
+        return np.max(np.abs(data), axis=0, keepdims=keepdims)
     
     else: # Approximate by lumping
-        areas = _mass_to_areas(mass, data.shape[0])
-        out = np.sum(areas * (np.abs(data) ** p), axis=0) ** (1 / p)
-        return out[None, :] if (keepdims and data.ndim == 2) else out
+        return dotw(np.ones((data.shape[0],)), (np.abs(data) ** p), mass=mass, keepdims=keepdims) ** (1 / p)
 
 def cdistw(
     data_a: NDArray[np.floating],
@@ -618,8 +594,8 @@ def pdistw(
         The mass-weighted distance vector of shape ``(n_maps * (n_maps - 1) // 2,)``.
     """
     data = np.asarray(data)
-    if data.ndim != 2 or data.shape[1] < 2:
-        raise ValueError(f"data must be a 2D array with at least 2 columns; got shape {data.shape}.")
+    # if data.ndim != 2 or data.shape[1] < 2:
+    #     raise ValueError(f"data must be a 2D array with at least 2 columns; got shape {data.shape}.")
 
     D2 = cdistw(data, data, mass, metric)
     np.fill_diagonal(D2, 0) # Ensures exact 0 on diagonal
