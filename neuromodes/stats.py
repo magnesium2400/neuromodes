@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Literal
 from warnings import warn
 
 import numpy as np
-from scipy.sparse import csc_matrix, diags, spmatrix
+from scipy.sparse import csc_matrix, diags, spmatrix, issparse, hstack
 from scipy.spatial.distance import cdist, squareform
 
 from neuromodes.eigen import EigenData
@@ -19,12 +19,138 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
     from scipy.spatial.distance import _MetricCallback, _MetricKind
 
-def gramw(
-    data_a: NDArray[np.floating],
-    data_b: NDArray[np.floating] | None = None,
-    *,
-    mass: spmatrix | NDArray[np.floating] | None
+def _multiply_nd(
+    A: csc_matrix | NDArray[np.floating], 
+    B: csc_matrix | NDArray[np.floating]
+) -> csc_matrix | NDArray[np.floating]:
+    """Compute A @ B where contraction occurs over axis 1 of A and axis 0 of B.
+    
+    Preserves sparse matrix types when possible and handles N-D dense arrays.
+    """
+    if A.shape is None or B.shape is None: # make pyright happy
+        raise ValueError("Input arrays must have defined shapes.")
+    if isinstance(A, np.ndarray) and isinstance(B, np.ndarray):
+        # dense @ dense -> N-D tensor contraction
+        return np.tensordot(A, B, axes=(1, 0))
+    elif issparse(A) and issparse(B):
+        # sparse @ sparse -> sparse matrix
+        return A @ B
+    elif issparse(A):
+        # sparse @ dense -> dense array (reshaped to maintain B's trailing axes)
+        B_2d = B.reshape(B.shape[0], -1)
+        output_shape = (A.shape[0],) + B.shape[1:]
+        return (A @ B_2d).reshape(output_shape)
+    elif issparse(B):
+        # dense @ sparse -> dense array (reshaped to maintain A's trailing axes)
+        A_2d = A.reshape(A.shape[0], -1)
+        output_shape = (A.shape[0],) + B.shape[1:]
+        return (A_2d @ B).reshape(output_shape)
+    else:
+        raise TypeError(f"Unsupported types for _multiply_nd: {type(A)} and {type(B)}")
+
+def _dot_nd(
+    A: csc_matrix | NDArray[np.floating], 
+    B: csc_matrix | NDArray[np.floating]
+) -> csc_matrix | NDArray[np.floating]:
+    """Compute <A, B> by contracting over axis 0 (the spatial dimension, n_verts).
+    
+    Equivalent to A.T @ B for 2D inputs, but supports any rank N-D arrays.
+    """
+    if A.shape is None or B.shape is None: # make pyright happy
+        raise ValueError("Input arrays must have defined shapes.")
+    if isinstance(A, np.ndarray) and isinstance(B, np.ndarray):
+        # dense.T @ dense -> N-D tensor contraction
+        return np.tensordot(A, B, axes=(0, 0))
+    elif issparse(A) and issparse(B):
+        # sparse.T @ sparse -> works natively in SciPy
+        return A.T @ B
+    elif issparse(A):
+        # sparse.T @ dense -> flatten B's trailing axes, perform sparse matmul, reshape back
+        B_2d = B.reshape(B.shape[0], -1)
+        output_shape = A.shape[1:] + B.shape[1:]
+        return (A.T @ B_2d).reshape(output_shape)
+    elif issparse(B):
+        # dense.T @ sparse -> flatten A's trailing axes, perform sparse matmul, reshape back
+        A_2d = A.reshape(A.shape[0], -1)
+        output_shape = A.shape[1:] + B.shape[1:]
+        return (A_2d.T @ B).reshape(output_shape)
+    else:
+        raise TypeError(f"Unsupported types for _dot_nd: {type(A)} and {type(B)}")
+
+
+def _elementwise_nd(
+    A: csc_matrix | NDArray[np.floating], 
+    B: csc_matrix | NDArray[np.floating]
+) -> csc_matrix | NDArray[np.floating]:
+    """Perform elementwise multiplication with broadcasting support.
+    
+    Preserves sparse representation when possible, falling back to dense NumPy 
+    broadcasting for N-D tensors (N >= 3).
+    """
+    if A.shape is None or B.shape is None:  # Make pyright happy
+        raise ValueError("Input arrays must have defined shapes.")
+
+    # 1. Both Dense -> Standard NumPy broadcasting
+    if isinstance(A, np.ndarray) and isinstance(B, np.ndarray):
+        return A * B
+
+    # 2. Both Sparse -> SciPy sparse elementwise multiplication
+    elif issparse(A) and issparse(B):
+        # Align 1-column broadcasting (e.g., (N, 1) with (N, M))
+        if A.shape[1] != B.shape[1]:
+            if A.shape[1] == 1:
+                A = hstack([A] * B.shape[1], format="csc")
+            elif B.shape[1] == 1:
+                B = hstack([B] * A.shape[1], format="csc")
+            else:
+                raise ValueError(f"Cannot broadcast sparse shapes {A.shape} and {B.shape}")
+        return A.multiply(B)
+
+    # 3. One Sparse, One Dense
+    elif issparse(A):
+        # A is sparse (2D), B is dense (1D, 2D, or N-D)
+        if B.ndim <= 2:
+            return A.multiply(B)
+        else:
+            # Flatten B to 2D for sparse multiplication, then reshape back
+            B_2d = B.reshape(B.shape[0], -1)
+            res_2d = A.multiply(B_2d)
+            return res_2d.reshape(B.shape)
+
+    elif issparse(B):
+        # A is dense (1D, 2D, or N-D), B is sparse (2D)
+        if A.ndim <= 2:
+            return B.multiply(A)
+        else:
+            # Flatten A to 2D for sparse multiplication, then reshape back
+            A_2d = A.reshape(A.shape[0], -1)
+            res_2d = B.multiply(A_2d)
+            return res_2d.reshape(A.shape)
+
+    else:
+        raise TypeError(f"Unsupported types for _elementwise_nd: {type(A)} and {type(B)}")
+
+
+
+
+def _rowsum_nd(
+    A: csc_matrix | NDArray[np.floating], 
+    keepdims: bool = False
 ) -> NDArray[np.floating]:
+    """Compute sum(A, axis=0) for N-D arrays, preserving trailing axes."""
+    if issparse(A):
+        return np.asarray(A.sum(axis=0)).ravel()
+    else:
+        return np.sum(A, axis=0, keepdims=keepdims)
+
+
+
+def gramw(
+    data_a: csc_matrix | NDArray[np.floating],
+    data_b: csc_matrix | NDArray[np.floating] | None = None,
+    *,
+    mass: csc_matrix | NDArray[np.floating] | None
+) -> csc_matrix |NDArray[np.floating]:
     """
     Dot product between all brain maps (pairwise), equivalent to ``data.T @ (mass @ data_b)``.
 
@@ -44,61 +170,60 @@ def gramw(
         The Gram matrix of shape ``(n_maps, n_maps_b)`` if ``data_b`` is provided, or
         ``(n_maps, n_maps)`` if not.
     """
-    ved = EigenData(data=(data_a, data_b), mass=mass)
-    a, b = ved.data
-    mass = _create_mass_matrix(ved.mass, a.shape[0])
+    # ved = EigenData(data=(data_a, data_b), mass=mass)
+    # a, b = ved.data
+    # mass = _create_mass_matrix(ved.mass, a.shape[0])
 
+    a, b = data_a, data_b
     if b is None:
         b = a
-    return a.T @ (mass @ b)
+    mb = _multiply_nd(mass, b)
+    amb = _dot_nd(a, mb)
+    return amb
 
 # TODO: ensure that all functions support nD input, not just 1D/2D
 def dotw(
-    data_a: NDArray[np.floating],
-    data_b: NDArray[np.floating],
-    mass: spmatrix | NDArray[np.floating] | None,
+    data_a: csc_matrix | NDArray[np.floating],
+    data_b: csc_matrix | NDArray[np.floating],
+    mass: csc_matrix | NDArray[np.floating] | None = None,
     keepdims: bool = False
-) -> NDArray[np.floating]:
-    """
-    Dot product between corresponding brain maps (not pairwise), equivalent to ``sum(data_a * (mass
-    @ data_b), axis=0)``.
+) -> csc_matrix | NDArray[np.floating]:
+    """Calculate the elementwise weighted dot product between spatial maps across axis 0.
+
+    Equivalent to ``np.sum(data_a * (mass @ data_b), axis=0)``. Trailing dimensions
+    beyond axis 0 are broadcasted automatically.
 
     Parameters
     ----------
-    data_a : array-like
-        The first set of spatial maps, of shape ``(n_verts, n_maps)``.
-    data_b : array-like
-        The second set of spatial maps, of shape ``(n_verts, n_maps)``.
-    mass : array-like
-        The mass matrix, of shape ``(n_verts, n_verts)``.
+    data_a : NDArray
+        First set of spatial maps of shape ``(n_verts, ...)``.
+    data_b : NDArray
+        Second set of spatial maps of shape ``(n_verts, ...)``.
+    mass : spmatrix or NDArray, optional
+        Mass matrix of shape ``(n_verts, n_verts)``.
     keepdims : bool, optional
-        If True, the output will have the same number of dimensions as the input arrays. Default is
-        False.
+        Whether to retain the contracted spatial dimension (axis 0) with length 1.
+        Default is False.
 
     Returns
     -------
-    np.ndarray
-        The dot product of shape ``(n_maps,)`` if ``keepdims=False``, or ``(1, n_maps)`` if
-        ``keepdims=True``.
-
-    Raises
-    ------
-    ValueError
-        If ``data_a`` and ``data_b`` do not have the same number of maps (columns).
+    NDArray
+        The weighted inner product array broadcasted over trailing dimensions.
     """
-    ved = EigenData(data=(data_a, data_b), mass=mass)
-    a, b = ved.data
+    # ved = EigenData(data=(data_a, data_b), mass=mass)
+    # a, b = ved.data
+    # mass = _create_mass_matrix(ved.mass, a.shape[0])
 
-    if a.shape != b.shape:
-        raise ValueError(f"data_a and data_b must have the same shape; got {a.shape} and "
-                         f"{b.shape}.")
+    # 1. Apply mass operator to b: M @ b  (shape: (n_verts, ...))
+    a, b = data_a, data_b
+    mb = _multiply_nd(mass, b)
 
-    n_verts = a.shape[0]
-    mass = _create_mass_matrix(ved.mass, n_verts)
-    a_2d = a.reshape(n_verts, -1)
-    b_2d = b.reshape(n_verts, -1)
-    out = np.sum(a_2d * (mass @ b_2d), axis=0).reshape(a.shape[1:])
-    return np.expand_dims(out, axis=0) if keepdims else out
+    # 2. Elementwise weighting across spatial vertices & sum over axis 0
+    # Broadcasting handles matching or compatible trailing shapes automatically
+    prod = _elementwise_nd(a, mb)
+
+    # 3. Format dimensions
+    return _rowsum_nd(prod) if not keepdims else prod.sum(axis=0)
 
 def ssqw(
     data: NDArray[np.floating],

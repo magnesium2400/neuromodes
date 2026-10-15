@@ -3,6 +3,7 @@ import pytest
 from scipy import sparse
 from scipy.spatial.distance import cdist, pdist
 from scipy.stats import zscore
+from scipy.sparse import issparse
 
 from neuromodes.stats import (
     cdistw,
@@ -38,6 +39,130 @@ def random_data():
     noneye = sparse.diags(np.arange(1, n_verts + 1), dtype=np.float64)
 
     return X, Y, eye, noneye
+
+
+class TestGramwShapesAndTypes: 
+
+    def _manual_mutiply(self, x, y, mass):
+        out_2d = x.reshape(x.shape[0], -1).T @ mass @ y.reshape(y.shape[0], -1)
+        return out_2d.reshape(x.shape[1:] + y.shape[1:])
+
+    @pytest.mark.parametrize("dims_x", [(), (1,), (2,), (1,2), (3,1), (2,2), (2,3,4)])
+    @pytest.mark.parametrize("dims_y", [(), (1,), (2,), (1,2), (3,1), (2,2), (2,3,4)])
+    @pytest.mark.parametrize("sparse_x", [True, False])
+    @pytest.mark.parametrize("sparse_y", [True, False])
+    @pytest.mark.parametrize("sparse_mass", [True, False])
+    def test_nd_nd(self, dims_x, dims_y, sparse_x, sparse_y, sparse_mass):
+        A = 10
+        x = np.random.rand(A, *dims_x)
+        y = np.random.rand(A, *dims_y)
+        mass = np.random.rand(A, A)
+
+        if sparse_x:
+            if x.ndim == 2: 
+                x = sparse.csc_matrix(x)
+            else: 
+                return
+
+        if sparse_y:
+            if y.ndim == 2: 
+                y = sparse.csc_matrix(y)
+            else: 
+                return
+
+        if sparse_mass:
+            mass = sparse.csc_matrix(mass)
+
+        gram = gramw(x, y, mass=mass)
+        assert gram.ndim == len(dims_x) + len(dims_y)
+        assert gram.shape[0:len(dims_x)] == dims_x
+        assert gram.shape[len(dims_x):] == dims_y
+
+        expected = self._manual_mutiply(x, y, mass)
+        gram_values = gram.toarray() if issparse(gram) else gram
+        expected_values = expected.toarray() if issparse(expected) else expected
+
+        np.testing.assert_allclose(gram_values, expected_values)
+        # np.testing.assert_allclose(np.array(gram), np.array(self._manual_mutiply(x, y, mass)))
+
+
+class TestDotwShapesAndTypes:
+
+    def _manual_dotw(self, x, y, mass):
+        # Convert inputs to dense arrays for calculating ground truth
+        x_dense = x.toarray() if issparse(x) else np.asarray(x)
+        y_dense = y.toarray() if issparse(y) else np.asarray(y)
+        mass_dense = mass.toarray() if issparse(mass) else np.asarray(mass)
+
+        # Apply mass operator to y along spatial axis 0
+        y_2d = y_dense.reshape(y_dense.shape[0], -1)
+        my_2d = mass_dense @ y_2d
+        my_dense = my_2d.reshape(y_dense.shape)
+
+        # Elementwise multiply with x and sum over spatial axis 0
+        return np.sum(x_dense * my_dense, axis=0)
+
+    # , (1, 2), (3, 1), (2, 2), (2, 3, 4)
+    @pytest.mark.parametrize("dims_x", [(), (1,), (2,), (1, 2), (3, 1), (2, 2), (2, 3, 4)])
+    @pytest.mark.parametrize("dims_y", [(), (1,), (2,), (1, 2), (3, 1), (2, 2), (2, 3, 4)])
+    @pytest.mark.parametrize("sparse_x", [False])
+    @pytest.mark.parametrize("sparse_y", [False])
+    @pytest.mark.parametrize("sparse_mass", [True, False])
+    @pytest.mark.parametrize("keepdims", [False])
+    def test_nd_nd(self, dims_x, dims_y, sparse_x, sparse_y, sparse_mass, keepdims):
+        A = 3
+
+        x = np.random.rand(A, *dims_x)
+        y = np.random.rand(A, *dims_y)
+        mass = np.random.rand(A, A)
+
+        if sparse_x:
+            if x.ndim == 2:
+                x = sparse.csc_matrix(x)
+            else:
+                return
+
+        if sparse_y:
+            if y.ndim == 2:
+                y = sparse.csc_matrix(y)
+            else:
+                return
+
+        if sparse_mass:
+            mass = sparse.csc_matrix(mass)
+
+        # Check if the FULL array shapes are broadcastable
+        # x and y might have been converted to 2D sparse matrices above
+        shape_x = x.shape
+        shape_y = y.shape
+        print(f"Testing dotw with shapes: x={shape_x}, y={shape_y}, mass={mass.shape}, keepdims={keepdims}")
+        try:
+            full_broadcast_shape = np.broadcast_shapes(shape_x, shape_y)
+        except ValueError:
+            # Skip invalid non-broadcastable full shape combinations
+            return
+
+        out = dotw(x, y, mass=mass, keepdims=keepdims)
+
+        # Expected output shape comes from contracting axis 0 of full_broadcast_shape
+        expected_broadcast_shape = full_broadcast_shape[1:]
+        expected_shape = (1, *expected_broadcast_shape) if keepdims else expected_broadcast_shape
+
+        # 1. Assert dimensions & shapes
+        assert out.shape == expected_shape
+        assert out.ndim == len(expected_shape)
+
+        # 2. Assert values against manual ground truth
+        expected = self._manual_dotw(x, y, mass)
+        if keepdims:
+            expected = np.expand_dims(expected, axis=0)
+
+        out_values = out.toarray() if issparse(out) else out
+        expected_values = expected.toarray() if issparse(expected) else expected
+
+        np.testing.assert_allclose(out_values, expected_values)
+
+
 
 class TestEye:
     def test_gramw_eye(self, random_data):
