@@ -77,17 +77,6 @@ def _dot_nd(
     else:
         raise TypeError(f"Unsupported types for _dot_nd: {type(A)} and {type(B)}")
 
-# TODO remove, just for tests
-def _broadcast_shapes_left(shape1, shape2):
-    output_shape = []
-    for i in range(max(len(shape1), len(shape2))):
-        a_dim = shape1[i] if i < len(shape1) else 1
-        b_dim = shape2[i] if i < len(shape2) else 1
-        if a_dim != b_dim and a_dim != 1 and b_dim != 1:
-            raise ValueError(f"Cannot broadcast shapes {shape1} and {shape2}")
-        output_shape.append(max(a_dim, b_dim))
-    return tuple(output_shape)
-
 def gramw(
     data_a: csc_matrix | NDArray[np.floating],
     data_b: csc_matrix | NDArray[np.floating] | None = None,
@@ -118,9 +107,14 @@ def gramw(
     # mass = _create_mass_matrix(ved.mass, a.shape[0])
 
     a, b = data_a, data_b
-    mb = _multiply_nd(mass, b if b is not None else a)
+    b = a if b is None else b
+    mb = b if mass is None else _multiply_nd(mass, b)
     amb = _dot_nd(a, mb)
     return amb
+
+def _pad_dims_right(arr: NDArray[np.floating], target_ndim: int) -> NDArray[np.floating]:
+    """Pad the dimensions of an array on the right with singleton dimensions to reach target_ndim."""
+    return arr[(...,) + (None,) * max(0, target_ndim - arr.ndim)]
 
 # TODO: ensure that all functions support nD input, not just 1D/2D
 def dotw(
@@ -157,11 +151,12 @@ def dotw(
 
     # 1. Apply mass operator to b: M @ b  (shape: (n_verts, ...))
     a, b = data_a, data_b
-    mb = _multiply_nd(mass, b)
+    mb = b if mass is None else _multiply_nd(mass, b)
 
     if isinstance(a, np.ndarray) and isinstance(mb, np.ndarray):
-        _right_pad_dims = lambda x: x[(...,) + (None,) * (max(a.ndim, mb.ndim) - x.ndim)]
-        out = np.einsum('v...,v...->...', _right_pad_dims(a), _right_pad_dims(mb))
+        out = np.einsum('v...,v...->...', 
+                        _pad_dims_right(a, max(a.ndim, mb.ndim)), 
+                        _pad_dims_right(mb, max(a.ndim, mb.ndim)))
         if keepdims:
             out = np.expand_dims(out, axis=0)
         return out
@@ -179,11 +174,11 @@ def dotw(
         return out
 
     # Case 3: One Sparse, One Dense
-    sparse_mat = a if issparse(a) else mb
-    dense_arr = mb if issparse(a) else a
+    sparse_mat: csc_matrix = a if issparse(a) else mb
+    dense_arr: NDArray[np.floating] = mb if issparse(a) else a
 
     b_s = sparse_mat.shape[1]
-    b_d = dense_arr.shape[1] if dense_arr.ndim > 1 else None
+    b_d = dense_arr.shape[1] if dense_arr.ndim > 1 else 0
 
     if dense_arr.ndim == 1:
         out = np.asarray(sparse_mat.T @ dense_arr)
@@ -199,11 +194,7 @@ def dotw(
             raise ValueError(
                 f"Cannot broadcast column dimension {b_s} of sparse matrix with {b_d} of dense array."
             )
-
         out = np.asarray(out).squeeze(axis=0)
-        # if not keepdims:
-        #     out = out.squeeze(axis=0)
-        # return out
 
     else:
         coo = sparse_mat.tocoo()

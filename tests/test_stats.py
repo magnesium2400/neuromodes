@@ -22,7 +22,7 @@ from neuromodes.stats import (
     varw,
     vecnormw,
     zscorew,
-    _broadcast_shapes_left
+    _pad_dims_right,
 )
 
 
@@ -89,6 +89,24 @@ class TestGramwShapesAndTypes:
 
 class TestDotwShapesAndTypes:
 
+    def _broadcast_shapes_left(self, shape1, shape2):
+        output_shape = []
+        for i in range(max(len(shape1), len(shape2))):
+            a_dim = shape1[i] if i < len(shape1) else 1
+            b_dim = shape2[i] if i < len(shape2) else 1
+            if a_dim != b_dim and a_dim != 1 and b_dim != 1:
+                raise ValueError(f"Cannot broadcast shapes {shape1} and {shape2}")
+            output_shape.append(max(a_dim, b_dim))
+        return tuple(output_shape)
+
+    def _are_broadcastable(self, shape1, shape2):
+        for i in range(max(len(shape1), len(shape2))):
+            a_dim = shape1[i] if i < len(shape1) else 1
+            b_dim = shape2[i] if i < len(shape2) else 1
+            if a_dim != b_dim and a_dim != 1 and b_dim != 1:
+                return False
+        return True
+
     def _manual_dotw(self, x, y, mass, keepdims):
         # Convert inputs to dense arrays for calculating ground truth
         x_dense = x.toarray() if issparse(x) else np.asarray(x)
@@ -102,8 +120,11 @@ class TestDotwShapesAndTypes:
 
         # Right-pad shapes with 1s to align axis 0 across both arrays
         target_ndim = max(x_dense.ndim, my_dense.ndim)
-        x_aligned = x_dense.reshape(x_dense.shape + (1,) * (target_ndim - x_dense.ndim))
-        my_aligned = my_dense.reshape(my_dense.shape + (1,) * (target_ndim - my_dense.ndim))
+        # x_aligned = x_dense.reshape(x_dense.shape + (1,) * (target_ndim - x_dense.ndim))
+        # my_aligned = my_dense.reshape(my_dense.shape + (1,) * (target_ndim - my_dense.ndim))
+
+        x_aligned = _pad_dims_right(x_dense, target_ndim)
+        my_aligned = _pad_dims_right(my_dense, target_ndim)
 
         # Elementwise multiply with aligned x and sum over spatial axis 0
         return np.sum(x_aligned * my_aligned, axis=0, keepdims=keepdims)
@@ -137,16 +158,11 @@ class TestDotwShapesAndTypes:
             mass = sparse.csc_matrix(mass)
 
         # Check if the FULL array shapes are broadcastable
-        # x and y might have been converted to 2D sparse matrices above
         shape_x = x.shape
         shape_y = y.shape
-        try:
-            full_broadcast_shape = _broadcast_shapes_left(shape_x, shape_y)
-        except ValueError:
-            # Skip invalid non-broadcastable full shape combinations
-            # print(f"Skipping dotw with shapes: x={shape_x}, y={shape_y}, keepdims={keepdims}")
+        if not self._are_broadcastable(shape_x, shape_y):
             return
-        # print(f"Testing dotw with shapes: x={shape_x}, y={shape_y}, keepdims={keepdims}")
+        full_broadcast_shape = self._broadcast_shapes_left(shape_x, shape_y)
         
         out = dotw(x, y, mass=mass, keepdims=keepdims)
 
