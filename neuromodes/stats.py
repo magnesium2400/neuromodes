@@ -155,8 +155,9 @@ def dotw(
 
     if isinstance(a, np.ndarray) and isinstance(mb, np.ndarray):
         out = np.einsum('v...,v...->...', 
-                        _pad_dims_right(a, max(a.ndim, mb.ndim)), 
-                        _pad_dims_right(mb, max(a.ndim, mb.ndim)))
+                        _pad_dims_right(a,  max(a.ndim, mb.ndim)), 
+                        _pad_dims_right(mb, max(a.ndim, mb.ndim))
+                        )
         if keepdims:
             out = np.expand_dims(out, axis=0)
         return out
@@ -174,22 +175,20 @@ def dotw(
         return out
 
     # Case 3: One Sparse, One Dense
-    sparse_mat: csc_matrix = a if issparse(a) else mb
-    dense_arr: NDArray[np.floating] = mb if issparse(a) else a
-
-    b_s = sparse_mat.shape[1]
+    sparse_mat, dense_arr = (a, mb) if issparse(a) else (mb, a)
+    b_s = sparse_mat.shape[1] # csc_matrix is always exactly 2D
     b_d = dense_arr.shape[1] if dense_arr.ndim > 1 else 0
 
     if dense_arr.ndim == 1:
         out = np.asarray(sparse_mat.T @ dense_arr)
 
     elif dense_arr.ndim == 2:
-        if b_s == b_d:
-            out = sparse_mat.multiply(dense_arr).sum(axis=0)
+        if b_s == 1:
+            out = sparse_mat.T @ dense_arr
         elif b_d == 1:
             out = dense_arr.T @ sparse_mat
-        elif b_s == 1:
-            out = sparse_mat.T @ dense_arr
+        elif b_s == b_d:
+            out = sparse_mat.multiply(dense_arr).sum(axis=0)
         else:
             raise ValueError(
                 f"Cannot broadcast column dimension {b_s} of sparse matrix with {b_d} of dense array."
@@ -202,15 +201,15 @@ def dotw(
         out = np.zeros((max(b_s, b_d),) + dense_arr.shape[2:], 
                        dtype=np.result_type(sparse_mat.dtype, dense_arr.dtype))
 
-        if b_s == b_d: # sparse (a, b) vs dense (a, b, ...)
-            d_slices = dense_arr[coo.row, coo.col]
-            np.add.at(out, coo.col, s_vals * d_slices)
+        if b_s == 1: # sparse (a, 1) vs dense (a, b, ...)
+            d_slices = dense_arr[coo.row, :]
+            out = np.sum(s_vals[:, None] * d_slices, axis=0)
         elif b_d == 1: # sparse (a, b) vs dense (a, 1, ...)
             d_slices = dense_arr[coo.row, 0]
             np.add.at(out, coo.col, s_vals * d_slices)
-        elif b_s == 1: # sparse (a, 1) vs dense (a, b, ...)
-            d_slices = dense_arr[coo.row, :]
-            out = np.sum(s_vals[:, None] * d_slices, axis=0)
+        elif b_s == b_d: # sparse (a, b) vs dense (a, b, ...)
+            d_slices = dense_arr[coo.row, coo.col]
+            np.add.at(out, coo.col, s_vals * d_slices)
         else: 
             raise ValueError(
                 f"Cannot broadcast column dimension {b_s} of sparse matrix with {b_d} of dense array."
@@ -274,6 +273,9 @@ def meanw(
     """
     ved = EigenData(data=data, mass=mass)
     data, mass = ved.data, ved.mass
+    # this could potentially be sped up/simplified: 
+    # - change to gramw
+    # - replace first term with areas and remove mass
     num = dotw(np.ones((data.shape[0],)), data, mass=mass, keepdims=keepdims)
     return num / mass.sum() # np.float
 

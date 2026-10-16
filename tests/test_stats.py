@@ -120,10 +120,7 @@ class TestDotwShapesAndTypes:
 
         # Right-pad shapes with 1s to align axis 0 across both arrays
         target_ndim = max(x_dense.ndim, my_dense.ndim)
-        # x_aligned = x_dense.reshape(x_dense.shape + (1,) * (target_ndim - x_dense.ndim))
-        # my_aligned = my_dense.reshape(my_dense.shape + (1,) * (target_ndim - my_dense.ndim))
-
-        x_aligned = _pad_dims_right(x_dense, target_ndim)
+        x_aligned =  _pad_dims_right(x_dense,  target_ndim)
         my_aligned = _pad_dims_right(my_dense, target_ndim)
 
         # Elementwise multiply with aligned x and sum over spatial axis 0
@@ -136,7 +133,7 @@ class TestDotwShapesAndTypes:
     @pytest.mark.parametrize("sparse_m", [True, False])
     @pytest.mark.parametrize("keepdims", [True, False])
     def test_nd_nd(self, dims_x, dims_y, sparse_x, sparse_y, sparse_m, keepdims):
-        A = 3
+        A = 10
 
         x = np.random.rand(A, *dims_x)
         y = np.random.rand(A, *dims_y)
