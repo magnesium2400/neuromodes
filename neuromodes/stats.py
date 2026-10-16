@@ -258,14 +258,53 @@ def dotw(
             out = out.squeeze(axis=0)
         return out
 
-    # prod = _hadamard_nd(a, mb)
+    # Case 3: One Sparse, One Dense
+    sparse_mat = a if issparse(a) else mb
+    dense_arr = mb if issparse(a) else a
 
-    if issparse(a): 
-        prod = _sparse_dense_hadamard_nd(a, mb)
-    else: 
-        prod = _sparse_dense_hadamard_nd(mb, a)
+    a_s, b_s = sparse_mat.shape
+    D_norm = dense_arr[:, None] if dense_arr.ndim == 1 else dense_arr
 
-    out = _sum_nd(prod, axis=0, keepdims=keepdims)
+    if D_norm.shape[0] != a_s:
+        raise ValueError(
+            f"Vertex dimension mismatch: sparse matrix has {a_s} vertices, "
+            f"dense array has {D_norm.shape[0]}."
+        )
+
+    b_d = D_norm.shape[1]
+    if b_s != b_d and b_s != 1 and b_d != 1:
+        raise ValueError(
+            f"Cannot broadcast column dimension {b_s} of sparse matrix with {b_d} of dense array."
+        )
+
+    b_out = max(b_s, b_d)
+    trailing_shape = D_norm.shape[2:]
+    out_shape = (b_out,) + trailing_shape
+    out = np.zeros(out_shape, dtype=np.result_type(sparse_mat.dtype, dense_arr.dtype))
+
+    coo = sparse_mat.tocoo()
+    n_trailing = len(trailing_shape)
+    s_vals = coo.data[(...,) + (None,) * n_trailing]
+
+    if b_s == b_d:
+        d_slices = D_norm[coo.row, coo.col]
+        vals = s_vals * d_slices
+        np.add.at(out, coo.col, vals)
+
+    elif b_d == 1:
+        d_slices = D_norm[coo.row, 0]
+        vals = s_vals * d_slices
+        np.add.at(out, coo.col, vals)
+
+    else:  # b_s == 1 and b_d > 1
+        d_slices = D_norm[coo.row, :]
+        vals = s_vals[:, None] * d_slices
+        out = np.sum(vals, axis=0)
+
+    if keepdims:
+        out = np.expand_dims(out, axis=0)
+
+    return out
 
 
     return out
