@@ -130,15 +130,11 @@ def _hadamard_nd(
 
     print(f"a.shape: {A.shape}, b.shape: {B.shape}, sparse_mat.shape: {sparse_mat.shape}, dense_arr.shape: {dense_arr.shape}, output_shape: {output_shape}")
     
-    out = sparse_dense_hadamard_nd(sparse_mat, dense_arr)
+    out = _sparse_dense_hadamard_nd(sparse_mat, dense_arr)
 
     return out
 
-import numpy as np
-from scipy.sparse import spmatrix
-from numpy.typing import NDArray
-
-def sparse_dense_hadamard_nd(
+def _sparse_dense_hadamard_nd(
     S_sparse: spmatrix, 
     D_dense: NDArray[np.floating]
 ) -> NDArray[np.floating]:
@@ -252,6 +248,14 @@ def gramw(
     amb = _dot_nd(a, mb)
     return amb
 
+def _align_dense(arr: NDArray[np.floating], target_shape: tuple[int, ...]) -> NDArray[np.floating]:
+    """Right-pad array with singleton dimensions to match target shape rank."""
+    pad_dims = len(target_shape) - arr.ndim
+    if pad_dims > 0:
+        return arr.reshape(arr.shape + (1,) * pad_dims)
+    return arr
+
+
 # TODO: ensure that all functions support nD input, not just 1D/2D
 def dotw(
     data_a: csc_matrix | NDArray[np.floating],
@@ -288,9 +292,45 @@ def dotw(
     # 1. Apply mass operator to b: M @ b  (shape: (n_verts, ...))
     a, b = data_a, data_b
     mb = _multiply_nd(mass, b)
+
+    if isinstance(a, np.ndarray) and isinstance(mb, np.ndarray):
+        target_shape = _broadcast_shapes_left(a.shape, mb.shape)
+        a_aligned = _align_dense(a, target_shape)
+        mb_aligned = _align_dense(mb, target_shape)
+
+        out = np.einsum('v...,v...->...', a_aligned, mb_aligned)
+
+        if keepdims:
+            out = np.expand_dims(out, axis=0)
+        return out
+
+    # Case 2: Both Sparse
+    if issparse(a) and issparse(mb):
+        a_cols, b_cols = a.shape[1], mb.shape[1]
+
+        if a_cols == b_cols:
+            # Matching shapes (a, b) and (a, b): elementwise product sum along axis 0
+            out = np.asarray(a.multiply(mb).sum(axis=0))
+        elif a_cols == 1:
+            # a is (a, 1), mb is (a, b) -> a.T @ mb yields (1, b) dot products
+            out = (a.T @ mb).toarray()
+        elif b_cols == 1:
+            # a is (a, b), mb is (a, 1) -> (a.T @ mb).T yields (1, b) dot products
+            out = (a.T @ mb).T.toarray()
+        else:
+            raise ValueError(f"Cannot broadcast sparse shapes {a.shape} and {mb.shape}")
+
+        if not keepdims:
+            out = out.squeeze(axis=0)
+
+        return out
+
     prod = _hadamard_nd(a, mb)
     out = _sum_nd(prod, axis=0, keepdims=keepdims)
+
+
     return out
+
 
 def ssqw(
     data: NDArray[np.floating],
