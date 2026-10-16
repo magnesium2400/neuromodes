@@ -77,6 +77,7 @@ def _dot_nd(
     else:
         raise TypeError(f"Unsupported types for _dot_nd: {type(A)} and {type(B)}")
 
+# TODO remove, just for tests
 def _broadcast_shapes_left(shape1, shape2):
     output_shape = []
     for i in range(max(len(shape1), len(shape2))):
@@ -86,53 +87,6 @@ def _broadcast_shapes_left(shape1, shape2):
             raise ValueError(f"Cannot broadcast shapes {shape1} and {shape2}")
         output_shape.append(max(a_dim, b_dim))
     return tuple(output_shape)
-
-def _hadamard_nd(
-    A: csc_matrix | NDArray[np.floating], 
-    B: csc_matrix | NDArray[np.floating]
-) -> csc_matrix | NDArray[np.floating]:
-    """Perform elementwise multiplication with broadcasting support.
-    
-    Preserves sparse representation when possible, falling back to dense NumPy 
-    broadcasting for N-D tensors (N >= 3).
-    """
-    if A.shape is None or B.shape is None:
-        raise ValueError("Input arrays must have defined shapes.")
-    
-    is_a_sparse, is_b_sparse = issparse(A), issparse(B)
-    # 3. Both Sparse (<= 2D)
-    if is_a_sparse and is_b_sparse:
-        return A.multiply(B)
-    
-
-    output_shape = _broadcast_shapes_left(A.shape, B.shape)
-
-    # Helper for custom right-padded broadcasting alignment
-    def _align(arr: NDArray[np.floating] | csc_matrix) -> NDArray[np.floating]:
-        arr_dense = arr.toarray() if issparse(arr) else arr
-        base_shape = arr_dense.shape + (1,) if arr_dense.ndim == 1 else arr_dense.shape
-        pad_dims = len(output_shape) - len(base_shape)
-        return arr_dense.reshape(*base_shape, *(1,) * pad_dims) if pad_dims > 0 else arr_dense.reshape(base_shape)
-
-    # 1. Fallback to Dense N-D broadcasting immediately if output is N >= 3
-
-
-    # 2. Both Dense (<= 2D)
-    if not is_a_sparse and not is_b_sparse:
-        return (_align(A) * _align(B)).reshape(output_shape)
-
-    # if len(output_shape) > 2:
-    #     return (_align(A) * _align(B)).reshape(output_shape)
-
-    # 4. One Sparse, One Dense (<= 2D)
-    sparse_mat = A if is_a_sparse else B
-    dense_arr = B if is_a_sparse else A
-
-    print(f"a.shape: {A.shape}, b.shape: {B.shape}, sparse_mat.shape: {sparse_mat.shape}, dense_arr.shape: {dense_arr.shape}, output_shape: {output_shape}")
-    
-    out = _sparse_dense_hadamard_nd(sparse_mat, dense_arr)
-
-    return out
 
 def _sparse_dense_hadamard_nd(
     S_sparse: spmatrix, 
@@ -248,14 +202,6 @@ def gramw(
     amb = _dot_nd(a, mb)
     return amb
 
-def _align_dense(arr: NDArray[np.floating], target_shape: tuple[int, ...]) -> NDArray[np.floating]:
-    """Right-pad array with singleton dimensions to match target shape rank."""
-    pad_dims = len(target_shape) - arr.ndim
-    if pad_dims > 0:
-        return arr.reshape(arr.shape + (1,) * pad_dims)
-    return arr
-
-
 # TODO: ensure that all functions support nD input, not just 1D/2D
 def dotw(
     data_a: csc_matrix | NDArray[np.floating],
@@ -294,9 +240,10 @@ def dotw(
     mb = _multiply_nd(mass, b)
 
     if isinstance(a, np.ndarray) and isinstance(mb, np.ndarray):
-        target_shape = _broadcast_shapes_left(a.shape, mb.shape)
-        a_aligned = _align_dense(a, target_shape)
-        mb_aligned = _align_dense(mb, target_shape)
+        # Right-pad singleton dimensions so spatial axis 0 remains left-aligned
+        target_ndim = max(a.ndim, mb.ndim)
+        a_aligned = a[(...,) + (None,) * (target_ndim - a.ndim)]
+        mb_aligned = mb[(...,) + (None,) * (target_ndim - mb.ndim)]
 
         out = np.einsum('v...,v...->...', a_aligned, mb_aligned)
 
@@ -325,7 +272,13 @@ def dotw(
 
         return out
 
-    prod = _hadamard_nd(a, mb)
+    # prod = _hadamard_nd(a, mb)
+
+    if issparse(a): 
+        prod = _sparse_dense_hadamard_nd(a, mb)
+    else: 
+        prod = _sparse_dense_hadamard_nd(mb, a)
+
     out = _sum_nd(prod, axis=0, keepdims=keepdims)
 
 
