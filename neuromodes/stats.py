@@ -182,63 +182,48 @@ def dotw(
     sparse_mat = a if issparse(a) else mb
     dense_arr = mb if issparse(a) else a
 
-    if sparse_mat.shape[0] != dense_arr.shape[0]:
-        raise ValueError(
-            f"Cannot compute dot product: sparse matrix has {sparse_mat.shape[0]} rows, "
-            f"dense array has {dense_arr.shape[0]} rows."
-        )
+    b_s = sparse_mat.shape[1]
+    b_d = dense_arr.shape[1] if dense_arr.ndim > 1 else None
 
-    # ------------------------------------------------------------------
-    # Level 1: 1D and 2D Dense Arrays (Standard Matrix/Vector Ops)
-    # ------------------------------------------------------------------
-    if dense_arr.ndim <= 2:
-        dense_2d = dense_arr[:, None] if dense_arr.ndim == 1 else dense_arr
-        b_s, b_d = sparse_mat.shape[1], dense_2d.shape[1]
+    if dense_arr.ndim == 1:
+        out = np.asarray(sparse_mat.T @ dense_arr)
 
+    elif dense_arr.ndim == 2:
         if b_s == b_d:
-            # TODO: Can sparse.multiply be used? YES!
-            # Elementwise product summed along axis 0
-            out = np.asarray(sparse_mat.multiply(dense_2d).sum(axis=0)).ravel()
-
+            out = sparse_mat.multiply(dense_arr).sum(axis=0)
         elif b_d == 1:
-            # TODO: Can _dot_nd / matmul be used? YES!
-            # (a, b).T @ (a, 1) -> SpMV (Sparse Matrix-Vector product)
-            out = np.asarray(sparse_mat.T @ dense_2d.ravel())
-
+            out = dense_arr.T @ sparse_mat
         elif b_s == 1:
-            # (a, 1).T @ (a, b) -> SpMM (1, a) @ (a, b) -> (1, b)
-            out = np.asarray((sparse_mat.T @ dense_2d)).ravel()
-
+            out = sparse_mat.T @ dense_arr
         else:
             raise ValueError(
                 f"Cannot broadcast column dimension {b_s} of sparse matrix with {b_d} of dense array."
             )
 
-    # ------------------------------------------------------------------
-    # Level 2: 3D+ Dense Tensors (Requires COO Indexing)
-    # ------------------------------------------------------------------
+        out = np.asarray(out).squeeze(axis=0)
+        # if not keepdims:
+        #     out = out.squeeze(axis=0)
+        # return out
+
     else:
-        b_s, b_d = sparse_mat.shape[1], dense_arr.shape[1]
-        if b_s != b_d and b_s != 1 and b_d != 1:
-            raise ValueError(
-                f"Cannot broadcast column dimension {b_s} of sparse matrix with {b_d} of dense array."
-            )
-
-        out_shape = (max(b_s, b_d),) + dense_arr.shape[2:]
-        out = np.zeros(out_shape, dtype=np.result_type(sparse_mat.dtype, dense_arr.dtype))
-
         coo = sparse_mat.tocoo()
         s_vals = coo.data[(...,) + (None,) * (dense_arr.ndim - 2)]
+        out = np.zeros((max(b_s, b_d),) + dense_arr.shape[2:], 
+                       dtype=np.result_type(sparse_mat.dtype, dense_arr.dtype))
 
-        if b_s == 1 and b_d > 1:
-            # (a, 1) sparse broadcasting against (a, b, c, ...) dense
+        if b_s == b_d: # sparse (a, b) vs dense (a, b, ...)
+            d_slices = dense_arr[coo.row, coo.col]
+            np.add.at(out, coo.col, s_vals * d_slices)
+        elif b_d == 1: # sparse (a, b) vs dense (a, 1, ...)
+            d_slices = dense_arr[coo.row, 0]
+            np.add.at(out, coo.col, s_vals * d_slices)
+        elif b_s == 1: # sparse (a, 1) vs dense (a, b, ...)
             d_slices = dense_arr[coo.row, :]
             out = np.sum(s_vals[:, None] * d_slices, axis=0)
-        else:
-            # Handles matching (a, b) vs (a, b) AND (a, b) vs (a, 1, c, ...)
-            col_idx = coo.col if b_s == b_d else 0
-            d_slices = dense_arr[coo.row, col_idx]
-            np.add.at(out, coo.col, s_vals * d_slices)
+        else: 
+            raise ValueError(
+                f"Cannot broadcast column dimension {b_s} of sparse matrix with {b_d} of dense array."
+            )
 
     if keepdims:
         out = np.expand_dims(out, axis=0)
