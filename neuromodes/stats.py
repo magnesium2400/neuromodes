@@ -98,6 +98,12 @@ def _hadamard_nd(
     """
     if A.shape is None or B.shape is None:
         raise ValueError("Input arrays must have defined shapes.")
+    
+    is_a_sparse, is_b_sparse = issparse(A), issparse(B)
+    # 3. Both Sparse (<= 2D)
+    if is_a_sparse and is_b_sparse:
+        return A.multiply(B)
+    
 
     output_shape = _broadcast_shapes_left(A.shape, B.shape)
 
@@ -109,27 +115,92 @@ def _hadamard_nd(
         return arr_dense.reshape(*base_shape, *(1,) * pad_dims) if pad_dims > 0 else arr_dense.reshape(base_shape)
 
     # 1. Fallback to Dense N-D broadcasting immediately if output is N >= 3
-    if len(output_shape) > 2:
-        return (_align(A) * _align(B)).reshape(output_shape)
 
-    is_a_sparse, is_b_sparse = issparse(A), issparse(B)
 
     # 2. Both Dense (<= 2D)
     if not is_a_sparse and not is_b_sparse:
         return (_align(A) * _align(B)).reshape(output_shape)
 
-    # 3. Both Sparse (<= 2D)
-    if is_a_sparse and is_b_sparse:
-        return A.multiply(B)
+    # if len(output_shape) > 2:
+    #     return (_align(A) * _align(B)).reshape(output_shape)
 
     # 4. One Sparse, One Dense (<= 2D)
     sparse_mat = A if is_a_sparse else B
     dense_arr = B if is_a_sparse else A
+
+    print(f"a.shape: {A.shape}, b.shape: {B.shape}, sparse_mat.shape: {sparse_mat.shape}, dense_arr.shape: {dense_arr.shape}, output_shape: {output_shape}")
     
-    # Align dense array to 2D using the same right-padding logic
-    aligned_dense = _align(dense_arr)
-    
-    return sparse_mat.multiply(aligned_dense)
+    out = sparse_dense_hadamard_nd(sparse_mat, dense_arr)
+
+    return out
+
+import numpy as np
+from scipy.sparse import spmatrix
+from numpy.typing import NDArray
+
+def sparse_dense_hadamard_nd(
+    S_sparse: spmatrix, 
+    D_dense: NDArray[np.floating]
+) -> NDArray[np.floating]:
+    """Compute Hadamard product between sparse S (a, b) and dense D.
+
+    Supported shape combinations:
+    -----------------------------
+    For S = (a, 1):
+        - D = (a,)           -> Output: (a, 1)
+        - D = (a, 1)        -> Output: (a, 1)
+        - D = (a, b, c, ...) -> Output: (a, b, c, ...)
+    For S = (a, b):
+        - D = (a,)           -> Output: (a, b)
+        - D = (a, 1)        -> Output: (a, b)
+        - D = (a, b)        -> Output: (a, b)
+        - D = (a, 1, c, ...) -> Output: (a, b, c, ...)
+        - D = (a, b, c, ...) -> Output: (a, b, c, ...)
+    """
+    a_s, b_s = S_sparse.shape
+
+    # 1. Input validation & dimension normalization
+    if D_dense.shape[0] != a_s:
+        raise ValueError(
+            f"Row dimension mismatch: S has {a_s} rows, but D has shape {D_dense.shape}."
+        )
+
+    # Normalize 1D (a,) to 2D (a, 1) for uniform indexing
+    D_norm = D_dense[:, None] if D_dense.ndim == 1 else D_dense
+    b_d = D_norm.shape[1]
+
+    # Validate column broadcasting compatibility
+    if b_s != b_d and b_s != 1 and b_d != 1:
+        raise ValueError(
+            f"Cannot broadcast column dimension {b_s} of S with {b_d} of D."
+        )
+
+    # 2. Compute target output shape and pre-allocate zero array
+    b_out = max(b_s, b_d)
+    trailing_shape = D_norm.shape[2:]  # () if D is 1D/2D, or (c, d, ...) if nD
+    out_shape = (a_s, b_out) + trailing_shape
+    out = np.zeros(out_shape, dtype=np.result_type(S_sparse.dtype, D_dense.dtype))
+
+    # 3. Extract non-zero coordinates and reshape values for trailing broadcasting
+    coo = S_sparse.tocoo()
+    n_trailing = len(trailing_shape)
+    s_vals = coo.data[(...,) + (None,) * n_trailing]  # Shape: (nnz, 1, 1, ...)
+
+    # 4. Execute vectorised slice indexing based on column broadcasting mode
+    if b_s == b_d:
+        # Direct matching (1-to-1 or b-to-b)
+        out[coo.row, coo.col] = s_vals * D_norm[coo.row, coo.col]
+
+    elif b_d == 1:
+        # S has b columns, D has 1 column -> broadcast D across S columns
+        out[coo.row, coo.col] = s_vals * D_norm[coo.row, 0]
+
+    else:  # b_s == 1 and b_d > 1
+        # S has 1 column, D has b columns -> broadcast S across D columns
+        out[coo.row, :] = s_vals[:,None] * D_norm[coo.row, :]
+
+    return out
+
 
 def _sum_nd(
     A: csc_matrix | NDArray[np.floating], 
@@ -550,6 +621,7 @@ def cdistw(
 
     # Reimplement these to support unlumped mass matrix
     if metric == 'sqeuclidean':
+        # TODO generalize to nD arrays, currently only supports 1D/2D
         D = ssqw(a, mass)[:, None] + ssqw(b, mass)[None, :] - 2 * gramw(a, b, mass=mass)
         
     elif metric == 'euclidean':
