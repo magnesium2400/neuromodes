@@ -240,36 +240,22 @@ def dotw(
     mb = _multiply_nd(mass, b)
 
     if isinstance(a, np.ndarray) and isinstance(mb, np.ndarray):
-        # Right-pad singleton dimensions so spatial axis 0 remains left-aligned
-        target_ndim = max(a.ndim, mb.ndim)
-        a_aligned = a[(...,) + (None,) * (target_ndim - a.ndim)]
-        mb_aligned = mb[(...,) + (None,) * (target_ndim - mb.ndim)]
-
-        out = np.einsum('v...,v...->...', a_aligned, mb_aligned)
-
+        _right_pad_dims = lambda x: x[(...,) + (None,) * (max(a.ndim, mb.ndim) - x.ndim)]
+        out = np.einsum('v...,v...->...', _right_pad_dims(a), _right_pad_dims(mb))
         if keepdims:
             out = np.expand_dims(out, axis=0)
         return out
 
     # Case 2: Both Sparse
     if issparse(a) and issparse(mb):
-        a_cols, b_cols = a.shape[1], mb.shape[1]
-
-        if a_cols == b_cols:
-            # Matching shapes (a, b) and (a, b): elementwise product sum along axis 0
-            out = np.asarray(a.multiply(mb).sum(axis=0))
-        elif a_cols == 1:
-            # a is (a, 1), mb is (a, b) -> a.T @ mb yields (1, b) dot products
+        if a.shape[1] == 1:
             out = (a.T @ mb).toarray()
-        elif b_cols == 1:
-            # a is (a, b), mb is (a, 1) -> (a.T @ mb).T yields (1, b) dot products
-            out = (a.T @ mb).T.toarray()
-        else:
-            raise ValueError(f"Cannot broadcast sparse shapes {a.shape} and {mb.shape}")
-
+        elif mb.shape[1] == 1:
+            out = (mb.T @ a).toarray()
+        else: 
+            out = np.asarray(a.multiply(mb).sum(axis=0))
         if not keepdims:
             out = out.squeeze(axis=0)
-
         return out
 
     # prod = _hadamard_nd(a, mb)
