@@ -11,7 +11,7 @@ from warnings import warn
 import numpy as np
 
 from neuromodes.eigen import EigenData
-from neuromodes.stats import _create_mass_matrix, cdistw, lstsqw
+from neuromodes.stats import _create_mass_matrix, cdistw, lstsqw, _multiply_nd
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -147,42 +147,28 @@ def decompose(
     # Manipulate input/output shapes
     output_shapes = [(i,) + data.shape[1:] for i in n_modes]
     coeffs = [np.empty(shape, dtype=data.dtype) for shape in output_shapes]
-    data_2d = data.reshape(data.shape[0], -1) # guaranteed 2d
-    
-    # Handle NaNs with 'regress' by masking out afflicted vertices (separately for each NaN pattern)
-    data_isnan = np.isnan(data_2d)
-    if np.any(data_isnan):
-        if method == 'project':
-            raise ValueError("data contains NaNs; use method='regress' to mask out afflicted "
-                             "vertices prior to decomposition, or consider interpolating missing "
-                             "data.")
-        # method == 'regress'
-        if checks is True or checks == 'maps':
-            warn("NaN values detected in data; these will be disregarded during decomposition "
-                    "by masking corresponding vertices from data, emodes, and mass. This may lead "
-                    "to extreme values in affected areas of the reconstructed data. Consider "
-                    "instead interpolating missing data prior to decomposition.")
-        masks, mask_indices = np.unique(~data_isnan, axis=1, return_inverse=True)
-    elif method == 'regress':
-        # Keep all vertices
-        masks = np.ones((data_2d.shape[0], 1), dtype=bool)
-        mask_indices = np.zeros(data_2d.shape[1], dtype=int)
 
-    # TODO : consider adding a method that does fitting/param estimation (like lstsqw) but using 
-    # full (consistent) mass matrix (not just vertex areas). solvew?
     if method == 'project': 
         # Find the unique mode IDs requested, and the inverse mapping back to mode_ids
         unique_mids, inv = np.unique(np.concatenate(mode_ids), return_inverse=True)
         inv = np.split(inv, np.cumsum([len(m) for m in mode_ids[:-1]])) # back in the same list pattern as mode_ids
         
-        # For each nan/inf pattern, get the coeffs for all the unique modes
-        coeffs_all = emodes[:, unique_mids].T @ (mass @ data_2d) 
+        # Get the coeffs for all the unique modes
+        coeffs_all = _multiply_nd(emodes[:, unique_mids].T @ mass, data)
         
         # Map the unique results back to the specific mode_ids requested
         for j, idxs in enumerate(inv):
-            coeffs[j] = coeffs_all[idxs, :].reshape(output_shapes[j])
+            coeffs[j] = coeffs_all[idxs]
 
     elif method == 'regress':
+        # Find all the nan patterns
+        data_2d = data.reshape(data.shape[0], -1) # guaranteed 2d
+        data_isnan = np.isnan(data_2d)
+        masks = np.ones((data_2d.shape[0], 1), dtype=bool)
+        mask_indices = np.zeros(data_2d.shape[1], dtype=int)
+        if np.any(data_isnan):
+            masks, mask_indices = np.unique(~data_isnan, axis=1, return_inverse=True)
+
         # Have to loop over each set of mode indices
         for j in range(len(mode_ids)):
             coeffs_current = np.empty((n_modes[j], data_2d.shape[1]), dtype=data.dtype)
@@ -279,6 +265,9 @@ def reconstruct(
     if checks is not False:
         ved = EigenData(emodes=emodes, mass=mass, data=data, checks=checks)
         emodes, mass, data = ved.emodes, ved.mass, ved.data
+
+    if coeffs is None: 
+        raise ValueError("'coefficients' must be provided.")
 
     # This should stay here as it needs to be run in both coefficients and data modes
     mode_ids, squeeze_output = _process_mode_ids(mode_counts, mode_ids, emodes.shape[1])
