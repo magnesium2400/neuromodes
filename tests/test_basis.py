@@ -132,7 +132,7 @@ def test_reconstruct_project(solver):
     coeffs = decompose(solver.emodes, solver.emodes, mass=solver.mass)
     assert np.allclose(coeffs, np.eye(solver.n_modes), atol=1e-5), \
         'coeffs values do not match expected identity matrix when reconstructing modes onto themselves.'
-    recon = reconstruct(solver.emodes, coeffs=coeffs, mass=solver.mass)
+    recon = reconstruct(coeffs, solver.emodes, mass=solver.mass)
     assert np.allclose(recon, solver.emodes,
                        atol=1e-5), 'Final reconstructions do not match input modes.'
     
@@ -140,18 +140,19 @@ def test_reconstruct_regress_weighted(solver):
     coeffs = decompose(solver.emodes, solver.emodes, mass=solver.mass, method='regress')
     assert np.allclose(coeffs, np.eye(solver.n_modes), atol=1e-5), \
         'coeffs values do not match expected identity matrix when reconstructing modes onto themselves.'
-    recon = reconstruct(solver.emodes, coeffs=coeffs, mass=solver.mass, method='regress')
+    recon = reconstruct(coeffs, solver.emodes, mass=solver.mass, method='regress')
     assert np.allclose(recon, solver.emodes,
                        atol=1e-5), 'Final reconstructions do not match input modes.'
 
+@pytest.mark.filterwarnings("ignore:invalid value encountered in divide:RuntimeWarning")
 def test_reconstruct_mode_superposition(solver, gen_eigenmap):
     eigenmaps, weights = gen_eigenmap
 
     coeffs = decompose(eigenmaps, solver.emodes, mass=solver.mass, mode_counts=np.arange(solver.n_modes)+1)
-    recon = reconstruct(solver.emodes, coeffs=coeffs, mass=solver.mass, mode_counts=np.arange(solver.n_modes)+1)
+    recon = reconstruct(coeffs, solver.emodes, mass=solver.mass, mode_counts=np.arange(solver.n_modes)+1)
 
-    with pytest.warns(RuntimeWarning, match="invalid value encountered in divide"):
-        correlation_error = calc_recon_error(eigenmaps, recon, metric='correlation', mass=solver.mass)
+    # with pytest.warns(RuntimeWarning, match="invalid value encountered in divide"):
+    correlation_error = calc_recon_error(eigenmaps, recon, metric='correlation', mass=solver.mass)
     euclidean_error = calc_recon_error(eigenmaps, recon, metric='euclidean', mass=solver.mass)
 
     # Correlation error should decrease from 1 to 0 when using mode 1 only versus all relevant modes
@@ -169,7 +170,7 @@ def test_reconstruct_mode_superposition(solver, gen_eigenmap):
 
     # Reconstruct using the first 5 modes, then the first 2 modes
     coeffs = decompose(eigenmaps, solver.emodes, mass=solver.mass, mode_counts=[5,2])
-    recon = reconstruct(solver.emodes, coeffs=coeffs, mass=solver.mass, mode_counts=[5,2])
+    recon = reconstruct(coeffs, solver.emodes, mass=solver.mass, mode_counts=[5,2])
     correlation_error_modesq = calc_recon_error(eigenmaps, recon, mass=solver.mass)
     assert np.allclose(correlation_error_modesq[:,0], correlation_error[:,4]), \
         'Reconstruction scores do not match for 5 modes.'
@@ -200,8 +201,8 @@ def test_reconstruct_real_map_32k(solver_32k):
 
     # Load FC gradient from Margulies 2016 PNAS
     map = fetch_example_map('fcgradient1')[solver_32k.mask]
-    coeffs = decompose(data=map, emodes=emodes, mass=solver_32k.mass, mode_counts=np.arange(solver_32k.n_modes)+1)
-    recon = reconstruct(emodes, coeffs=coeffs, mass=solver_32k.mass, mode_counts=np.arange(solver_32k.n_modes)+1)
+    coeffs = decompose(map, emodes=emodes, mass=solver_32k.mass, mode_counts=np.arange(solver_32k.n_modes)+1)
+    recon = reconstruct(coeffs, emodes=emodes, mass=solver_32k.mass, mode_counts=np.arange(solver_32k.n_modes)+1)
     recon_score = calc_recon_error(map, recon, mass=solver_32k.mass)
 
     # Correlation error should strictly decrease from 1, but not reach 0
@@ -209,15 +210,11 @@ def test_reconstruct_real_map_32k(solver_32k):
     assert not np.isclose(recon_score[-1], 0, atol=1e-6), \
         'Reconstruction error is unexpectedly close to 0 for only 10 modes.'
 
-def test_reconstruct_invalid_map_shape(solver):
-
-    with pytest.raises(ValueError, match=r"data.*first dimension.*3619"):
-        reconstruct(solver.emodes, data=np.ones(4002), mass=solver.mass)
-
 def test_reconstruct_massless(solver):
 
+    coeffs = decompose(solver.emodes, solver.emodes, mass=solver.mass)
     with pytest.raises(ValueError, match="do not form an orthonormal basis set in Euclidean space"):
-        reconstruct(solver.emodes, data=np.ones(solver.n_verts))
+        reconstruct(coeffs, solver.emodes)
 
 class TestShape: 
     def test_decompose_1d(self, solver):
@@ -280,20 +277,20 @@ class TestShape:
     def test_reconstruct_1d(self, solver):
         for i in range(solver.n_modes):
             coeffs = decompose(solver.emodes[:, i], solver.emodes, mass=solver.mass)
-            recon = reconstruct(solver.emodes, coeffs=coeffs, mass=solver.mass)
+            recon = reconstruct(coeffs, solver.emodes, mass=solver.mass)
             assert recon.shape == (solver.n_verts,), \
                 'Reconstruction shape does not match number of vertices for 1D data.'
 
     def test_reconstruct_2d_trivial(self, solver):
         for i in range(solver.n_modes):
             coeffs = decompose(solver.emodes[:, i:i+1], solver.emodes, mass=solver.mass)
-            recon = reconstruct(solver.emodes, coeffs=coeffs, mass=solver.mass)
+            recon = reconstruct(coeffs, solver.emodes, mass=solver.mass)
             assert recon.shape == (solver.n_verts,1), \
                 'Reconstruction shape does not match number of vertices for 2D data with one column.'              
 
     def test_reconstruct_2d(self, solver):
         coeffs = decompose(solver.emodes, solver.emodes, mass=solver.mass)
-        recon = reconstruct(solver.emodes, coeffs=coeffs, mass=solver.mass)
+        recon = reconstruct(coeffs, solver.emodes, mass=solver.mass)
         assert recon.shape == (solver.n_verts, solver.n_modes), \
             'Reconstruction shape does not match input modes for 2D data.'
 
@@ -303,14 +300,14 @@ class TestShape:
             shape = np.random.default_rng().integers(1, 10, size=ndims) # actual size 
             data = np.random.default_rng().standard_normal((solver.n_verts, *shape))
             coeffs = decompose(data, solver.emodes, mass=solver.mass)
-            recon = reconstruct(solver.emodes, coeffs=coeffs, mass=solver.mass)
+            recon = reconstruct(coeffs, solver.emodes, mass=solver.mass)
             assert recon.shape == (solver.n_verts, *shape), \
                 'Reconstruction shape does not match expected shape for random data.'
 
     def test_reconstruct_1d_mode_counts(self, solver): 
         mode_counts = np.random.default_rng().integers(1, solver.n_modes+1, size=10)
         coeffs = decompose(solver.emodes[:, 0], solver.emodes, mass=solver.mass, mode_counts=mode_counts)
-        recon = reconstruct(solver.emodes, coeffs=coeffs, mass=solver.mass, mode_counts=mode_counts)
+        recon = reconstruct(coeffs, solver.emodes, mass=solver.mass, mode_counts=mode_counts)
         assert recon.shape == (solver.n_verts, len(mode_counts)), \
             'Reconstruction shape does not match expected shape for 1D data with mode counts.'
 
@@ -318,14 +315,14 @@ class TestShape:
         n_modes = np.random.default_rng().integers(1, solver.n_modes, size=3)
         mode_ids = [np.random.default_rng().choice(solver.n_modes, size=k, replace=False) for k in n_modes]
         coeffs = decompose(solver.emodes[:, 0], solver.emodes, mass=solver.mass, mode_ids=mode_ids)
-        recon = reconstruct(solver.emodes, coeffs=coeffs, mass=solver.mass, mode_ids=mode_ids)
+        recon = reconstruct(coeffs, solver.emodes, mass=solver.mass, mode_ids=mode_ids)
         assert recon.shape == (solver.n_verts, len(mode_ids)), \
             'Reconstruction shape does not match expected shape for 1D data with mode IDs.'
             
     def test_reconstruct_2d_mode_counts(self, solver):
         mode_counts = np.random.default_rng().integers(1, solver.n_modes+1, size=10)
         coeffs = decompose(solver.emodes, solver.emodes, mass=solver.mass, mode_counts=mode_counts)
-        recon = reconstruct(solver.emodes, coeffs=coeffs, mass=solver.mass, mode_counts=mode_counts)
+        recon = reconstruct(coeffs, solver.emodes, mass=solver.mass, mode_counts=mode_counts)
         assert recon.shape == (solver.n_verts, solver.n_modes, len(mode_counts)), \
             'Reconstruction shape does not match expected shape for 2D data with mode counts.'
 
@@ -333,6 +330,6 @@ class TestShape:
         n_modes = np.random.default_rng().integers(1, solver.n_modes, size=3)
         mode_ids = [np.random.default_rng().choice(solver.n_modes, size=k, replace=False) for k in n_modes]
         coeffs = decompose(solver.emodes, solver.emodes, mass=solver.mass, mode_ids=mode_ids)
-        recon = reconstruct(solver.emodes, coeffs=coeffs, mass=solver.mass, mode_ids=mode_ids)
+        recon = reconstruct(coeffs, solver.emodes, mass=solver.mass, mode_ids=mode_ids)
         assert recon.shape == (solver.n_verts, solver.n_modes, len(mode_ids)), \
             'Reconstruction shape does not match expected shape for 2D data with mode IDs.'

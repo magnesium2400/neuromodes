@@ -6,7 +6,7 @@ each vertex has Voronoi area/volume of 1.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, overload
 from warnings import warn
 
 import numpy as np
@@ -19,6 +19,18 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
     from scipy.spatial.distance import _MetricCallback, _MetricKind
 
+@overload
+def _multiply_nd( # pyright: ignore[reportOverlappingOverload]
+    A: csc_matrix, 
+    B: csc_matrix
+) -> csc_matrix: ...
+
+@overload
+def _multiply_nd(
+    A: csc_matrix | NDArray[np.floating], 
+    B: csc_matrix | NDArray[np.floating]
+) -> NDArray[np.floating]: ...
+    
 def _multiply_nd(
     A: csc_matrix | NDArray[np.floating], 
     B: csc_matrix | NDArray[np.floating]
@@ -47,6 +59,18 @@ def _multiply_nd(
         return (A_2d @ B).reshape(output_shape)
     else:
         raise TypeError(f"Unsupported types for _multiply_nd: {type(A)} and {type(B)}")
+
+@overload
+def _dot_nd( # pyright: ignore[reportOverlappingOverload]
+    A: csc_matrix, 
+    B: csc_matrix
+) -> csc_matrix: ...
+
+@overload
+def _dot_nd(
+    A: csc_matrix | NDArray[np.floating], 
+    B: csc_matrix | NDArray[np.floating]
+) -> NDArray[np.floating]: ...
 
 def _dot_nd(
     A: csc_matrix | NDArray[np.floating], 
@@ -83,7 +107,7 @@ def _pad_dims_right(arr: NDArray[np.floating], target_ndim: int) -> NDArray[np.f
 
 def _dot_diagonal_nd(
     a: csc_matrix | NDArray[np.floating],
-    mb: csc_matrix | NDArray[np.floating], 
+    b: csc_matrix | NDArray[np.floating], 
     keepdims: bool = False
 ) -> NDArray[np.floating]:
     """Compute the dot product of two arrays along their diagonal elements.
@@ -103,32 +127,30 @@ def _dot_diagonal_nd(
     np.ndarray
         The result of the dot product.
     """
-    if a.shape is None or mb.shape is None: # make pyright happy
-        raise ValueError("Input arrays must have defined shapes.")
     
-    if isinstance(a, np.ndarray) and isinstance(mb, np.ndarray):
+    if isinstance(a, np.ndarray) and isinstance(b, np.ndarray):
         out = np.einsum('v...,v...->...', 
-                        _pad_dims_right(a,  max(a.ndim, mb.ndim)), 
-                        _pad_dims_right(mb, max(a.ndim, mb.ndim))
+                        _pad_dims_right(a, max(a.ndim, b.ndim)), 
+                        _pad_dims_right(b, max(a.ndim, b.ndim))
                         )
         if keepdims:
             out = np.expand_dims(out, axis=0)
         return out
     
     # Case 2: Both Sparse
-    if issparse(a) and issparse(mb):
+    if issparse(a) and issparse(b):
         if a.shape[1] == 1:
-            out = (a.T @ mb).toarray()
-        elif mb.shape[1] == 1:
-            out = (mb.T @ a).toarray()
+            out = (a.T @ b).toarray()
+        elif b.shape[1] == 1:
+            out = (b.T @ a).toarray()
         else: 
-            out = np.asarray(a.multiply(mb).sum(axis=0))
+            out = np.asarray(a.multiply(b).sum(axis=0))
         if not keepdims:
             out = out.squeeze(axis=0)
         return out
 
     # Case 3: One Sparse, One Dense
-    sparse_mat, dense_arr = (a, mb) if issparse(a) else (mb, a)
+    sparse_mat, dense_arr = (a, b) if issparse(a) else (b, a)
     b_s = sparse_mat.shape[1] # csc_matrix is always exactly 2D
     b_d = dense_arr.shape[1] if dense_arr.ndim > 1 else 0
 
@@ -208,7 +230,6 @@ def gramw(
     amb = _dot_nd(a, mb)
     return amb
 
-# TODO: ensure that all functions support nD input, not just 1D/2D
 def dotw(
     data_a: csc_matrix | NDArray[np.floating],
     data_b: csc_matrix | NDArray[np.floating],
@@ -354,12 +375,8 @@ def varw(
         The area-weighted variance of shape ``(n_maps,)`` if ``keepdims=False``, or ``(1, n_maps)``
         if ``keepdims=True``.
     """
-    # data = np.asarray(data)
-    # mass = _create_mass_matrix(mass, data.shape[0])
-
-    B = demeanw(data, mass)
-    out = ssqw(B, mass, keepdims=keepdims) / mass.sum()
-    return out
+    out = ssqw(demeanw(data, mass), mass, keepdims=keepdims)
+    return out / mass.sum() if mass is not None else out / data.shape[0]
 
 def momentw(
     data: NDArray[np.floating],
@@ -401,7 +418,6 @@ def momentw(
         # Approximate by lumping
         areas = _mass_to_areas(mass, data.shape[0])
         data_dm = demeanw(data, areas)
-        # Sum rows of the sparse matrix to get a lumped vector, safely flattened
         return meanw(data_dm ** order, areas, keepdims=keepdims)
 
 def stdw(
@@ -449,7 +465,7 @@ def zscorew(
     np.ndarray
         The mass-weighted z-scored spatial maps, of shape ``(n_verts, n_maps)``.
     """
-    # TODO: consider inefficiency of demeaning twice, could be expanded
+    # TODO future: consider inefficiency of demeaning twice, could be expanded
     return demeanw(data, mass) / stdw(data, mass, keepdims=True)
 
 def covw(
@@ -486,15 +502,12 @@ def covw(
     Note that this function does not offer Bessel's correction, as mesh vertices are not IID samples
     and maps typically display spatial autocorrelation.
     """
-    # a = np.asarray(data)
 
-    # mass = _create_mass_matrix(mass, a.shape[0])
-    
     a_dm = demeanw(data, mass)
     b_dm = demeanw(data_b, mass) if data_b is not None else a_dm
     gram = gramw(a_dm, b_dm, mass=mass)
     
-    return gram / mass.sum()
+    return gram / mass.sum() if mass is not None else gram / data.shape[0]
 
 def vecnormw(
     data: NDArray[np.floating],
@@ -700,7 +713,7 @@ def lstsqw(
     return np.linalg.lstsq(aw, bw, rcond=rcond)
 
 def parcellate(
-    data: NDArray[np.floating],
+    data: csc_matrix | NDArray[np.floating],
     parcellation: NDArray[np.integer],
     mass: csc_matrix | NDArray[np.floating] | None,
     method: Literal['mean', 'sum'] = 'mean'
@@ -758,7 +771,8 @@ def parcellate(
 # the mass matrix can't be masked post-hoc
 # TODO add support for dtypes
 def _create_parcellation_matrix(
-    parcellation: NDArray[np.integer]
+    parcellation: NDArray[np.integer], 
+    mask: NDArray[np.bool_] | None = None
 ) -> csc_matrix:
     """
     Converts a parcellation vector to a sparse parcellation matrix.
@@ -780,20 +794,20 @@ def _create_parcellation_matrix(
         If ``parcellation`` is not 1D.
     """
     parcellation = np.asarray(parcellation) # user has to ensure parc is integer
-
-    if parcellation.ndim != 1:
-        raise ValueError("Parcellation map must be 1D.")
-    
     n_verts = parcellation.shape[0]
-    mask = parcellation >= 0 # medial wall should be negative
-    
-    # Construct sparse parcellation matrix as (n_parcels, n_verts)
-    parc_mat = csc_matrix(
-        (np.ones(np.sum(mask)),
-         (np.arange(n_verts)[mask], parcellation[mask])),
-        shape=(n_verts, np.max(parcellation)+1)
-        )
-    
+    mask = np.asarray(mask, dtype=bool) if mask is not None else np.ones(n_verts, dtype=bool)
+
+    if parcellation.ndim == 1: 
+        parc_mat = csc_matrix(
+            (np.ones(np.sum(mask)),
+            (np.arange(n_verts)[mask], parcellation[mask])),
+            shape=(n_verts, np.max(parcellation)+1)
+            )
+    elif parcellation.ndim == 2:
+        parc_mat = csc_matrix(parcellation[mask])
+    else: 
+        raise ValueError(f"Parcellation map must be 1D or 2D; got {parcellation.ndim}D.")
+
     return parc_mat
 
 def sigmoid_rescale(
@@ -848,7 +862,7 @@ def sigmoid_rescale(
 
 def _mass_to_areas(
     mass: csc_matrix | NDArray[np.floating] | None = None,
-    n_verts: int | None = None, 
+    n_verts: int | None = None,
     keepdims: bool = False
 ) -> NDArray[np.floating]:
     mass = np.asarray(_create_mass_matrix(mass=mass, n_verts=n_verts).sum(axis=1))
@@ -856,7 +870,7 @@ def _mass_to_areas(
         mass = mass.squeeze(axis=1)
     return mass
 
-# TODO: consider adding dtype parameter to _create_mass_matrix for w=None case
+# TODO future: consider adding dtype parameter to _create_mass_matrix for w=None case
 # TODO: consider moving to EigenData
 def _create_mass_matrix(
     mass: csc_matrix | NDArray[np.floating] | None = None,
@@ -870,28 +884,20 @@ def _create_mass_matrix(
         warn("Mass matrix not provided; assuming that area at each vertex is 1")
         output = diags(np.ones(n_verts), format='csc')
 
-    elif isinstance(mass, (np.ndarray, list)):        
-        mass_arr = np.asarray(mass)
-        if mass_arr.ndim == 2 and mass_arr.shape[0] == mass_arr.shape[1]:
-            output = mass_arr
-        elif mass_arr.ndim == 1 or mass_arr.shape[0] == 1 or mass_arr.shape[1] == 1:
-            output = diags(np.ravel(mass_arr), format='csc')
-        else: 
-            raise ValueError(f"Mass matrix has invalid shape: {mass_arr.shape} (should be square "
-                             "or vector).")
-
     elif isinstance(mass, spmatrix) and mass.shape is not None: # appease: pyright
         if mass.shape[0] == mass.shape[1]: 
             output = mass
-        elif mass.shape[0] == 1 or mass.shape[1] == 1:
-            output = diags(mass.toarray().flatten(), format='csc')
         else: 
-            raise ValueError(f"Sparse mass matrix has invalid shape: {mass.shape} (should be "
-                             "square or vector).")
-            
-    else:
-        raise TypeError("mass must be a 1D array of vertex areas, a 2D mass matrix, or a sparse "
-                        "matrix.")
+            raise ValueError(f"Sparse mass matrix has invalid shape: {mass.shape} (should be square).")
+
+    elif isinstance(mass, np.ndarray) and mass.ndim == 2:
+        if mass.shape[0] == mass.shape[1]:
+            output = mass
+        else: 
+            raise ValueError(f"Dense mass matrix has invalid shape: {mass.shape} (should be square).")
+
+    else: # 1D array, list, tuple, etc. 
+        output = diags(np.ravel(np.asarray(mass)), format='csc')
 
     output = csc_matrix(output)
     

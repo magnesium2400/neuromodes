@@ -142,9 +142,9 @@ def decompose(
     mass = _create_mass_matrix(mass, data.shape[0])
 
     mode_ids, squeeze_output = _process_mode_ids(mode_counts, mode_ids, emodes.shape[1])
-    n_modes = [len(x) for x in mode_ids]
 
     # Manipulate input/output shapes
+    n_modes = [len(x) for x in mode_ids]
     output_shapes = [(i,) + data.shape[1:] for i in n_modes]
     coeffs = [np.empty(shape, dtype=data.dtype) for shape in output_shapes]
 
@@ -164,10 +164,11 @@ def decompose(
         # Find all the nan patterns
         data_2d = data.reshape(data.shape[0], -1) # guaranteed 2d
         data_isnan = np.isnan(data_2d)
-        masks = np.ones((data_2d.shape[0], 1), dtype=bool)
-        mask_indices = np.zeros(data_2d.shape[1], dtype=int)
         if np.any(data_isnan):
             masks, mask_indices = np.unique(~data_isnan, axis=1, return_inverse=True)
+        else:
+            masks = np.ones((data_2d.shape[0], 1), dtype=bool)
+            mask_indices = np.zeros(data_2d.shape[1], dtype=int)
 
         # Have to loop over each set of mode indices
         for j in range(len(mode_ids)):
@@ -187,16 +188,17 @@ def decompose(
 
     return coeffs[0] if squeeze_output else coeffs # convert back to array if mode_counts was None/scalar
 
+# TODO future: add 'force_list_output' option st. even if coeffs are eg. [(10,),(20,),(30,)], 
+# return a list of 3 arrays instead of a single array of shape (n_verts, ..., 3)
 def reconstruct(
+    coeffs: list[NDArray[np.floating]] | NDArray[np.floating],
     emodes: NDArray[np.floating],
-    data: NDArray[np.floating] | None = None,
-    coeffs: list[NDArray[np.floating]] | NDArray[np.floating] | None = None,
     method: _DecompositionKind = 'project',
     mass: csc_matrix | None = None,
     mode_counts: _IntSequenceKind | int | None = None,
     mode_ids: _SeqSequenceKind | None = None,
     checks: _CheckKind | None = None
-) -> NDArray[np.floating]:
+) -> NDArray[np.floating] | list[NDArray[np.floating]]:
     """
     Calculate the reconstruction of the given independent data using the provided orthonormal
     vectors (e.g., geometric eigenmodes).
@@ -263,42 +265,28 @@ def reconstruct(
         else:
             checks = True
     if checks is not False:
-        ved = EigenData(emodes=emodes, mass=mass, data=data, checks=checks)
-        emodes, mass, data = ved.emodes, ved.mass, ved.data
+        ved = EigenData(emodes=emodes, mass=mass, checks=checks)
+        emodes, mass = ved.emodes, ved.mass
 
-    if coeffs is None: 
-        raise ValueError("'coefficients' must be provided.")
-
-    # This should stay here as it needs to be run in both coefficients and data modes
     mode_ids, squeeze_output = _process_mode_ids(mode_counts, mode_ids, emodes.shape[1])
+    coeffs_same_shape = all(c.shape[1:] == coeffs[0].shape[1:] for c in coeffs)
 
-    # Validate that exactly one of coefficients/data is provided & decompose if only data is provided
-    if coeffs is not None and data is not None:
-        raise ValueError("Exactly one of 'coefficients' or 'data' must be provided.")
-    elif coeffs is not None:
-        if isinstance(coeffs, np.ndarray): # equivalent to `if squeeze_output`, but keeps pyright happy
-            coeffs = [coeffs]
-    elif data is not None: # coefficients will never be squeezed in this case (as mode_ids is passed)
-        coeffs = decompose(data, emodes, method=method, mass=mass, mode_ids=mode_ids, checks=False)
-    else: # neither provided (this order keeps pyright happy)
-        raise ValueError("Exactly one of 'coefficients' or 'data' must be provided.")
-    n_recons = len(coeffs)
-
-    # Main computation 
-    recon_3d_shape = (emodes.shape[0], int(np.prod(coeffs[0].shape[1:])), n_recons)
-    recon_3d = np.empty(recon_3d_shape, dtype=coeffs[0].dtype)
-    for j, mids in enumerate(mode_ids):
-        recon_3d[:, :, j] = emodes[:, mids] @ coeffs[j].reshape(len(mids), -1) # convert to col vec if 1D
-
-    # Reshape outputs
-    if squeeze_output: 
-        recon_nd_shape = (emodes.shape[0],) + coeffs[0].shape[1:] 
-    else: 
-        recon_nd_shape = (emodes.shape[0],) + coeffs[0].shape[1:] + (n_recons,)
-    recon_nd = recon_3d.reshape(recon_nd_shape)
-
+    if squeeze_output: # mode_counts is None or scalar, so coeffs is a single array
+        recon_nd: np.ndarray = _multiply_nd(emodes, coeffs)
+    elif isinstance(coeffs, np.ndarray):
+        recon_nd = np.empty((emodes.shape[0], *coeffs.shape[1:])) # TODO set dtype using emodes and coeffs
+        for j, mids in enumerate(mode_ids):
+            recon_nd[..., j] = _multiply_nd(emodes[:, mids], coeffs[...,j])
+    elif coeffs_same_shape:
+        recon_nd = np.empty((emodes.shape[0], *coeffs[0].shape[1:], len(coeffs))) # TODO set dtype using emodes and coeffs
+        for j, mids in enumerate(mode_ids):
+            recon_nd[..., j] = _multiply_nd(emodes[:, mids], coeffs[j])
+    else:
+        recon_nd = [_multiply_nd(emodes[:, mids], coeffs[j]) for j, mids in enumerate(mode_ids)]
     return recon_nd
 
+# TODO future: see if this can be rewritten with some kind of 'cdistw_diagonal' function
+# which finds the diagonal of the distance matrix without calculating the full matrix
 def calc_recon_error(
     data: NDArray[np.floating],
     recon: NDArray[np.floating],
@@ -396,16 +384,14 @@ def _process_mode_ids(
     if mode_counts is not None and mode_ids is not None:
         raise UserWarning("Both mode_counts and mode_ids provided; mode_counts will be ignored.")
     
-    if isinstance(mode_ids, (list, tuple, np.ndarray)):
+    if mode_ids is not None: # TODO add type checking here to ensure it is sensible
         output = mode_ids
-    elif mode_ids is not None: 
-        raise ValueError("mode_ids must be a list or tuple of arrays of mode indices.")
     elif mode_counts is None:
-        output = (np.arange(n_modes),)
+        output = [range(n_modes),]
     elif isinstance(mode_counts, int):
-        output = (np.arange(mode_counts),)
-    else: 
-        output = [np.arange(mc) for mc in mode_counts]
+        output = [range(mode_counts),]
+    else:
+        output = [range(mc) for mc in mode_counts]
     
     squeeze_output = (mode_ids is None) and (mode_counts is None or isinstance(mode_counts, int))
 
