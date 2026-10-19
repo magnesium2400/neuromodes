@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, overload
 from warnings import warn
 
 import numpy as np
+from scipy.sparse import diags, issparse
 
 from neuromodes.eigen import EigenData
 from neuromodes.stats import _create_mass_matrix, cdistw, lstsqw, _multiply_nd
@@ -284,6 +285,41 @@ def reconstruct(
     else:
         recon_nd = [_multiply_nd(emodes[:, mids], coeffs[j]) for j, mids in enumerate(mode_ids)]
     return recon_nd
+
+
+def spectralfilter(
+        data, 
+        emodes, 
+        evals, 
+        filter = lambda evals: np.ones_like(evals), 
+        mass = None, 
+        mode_ids = None, 
+        mode_counts = None,
+        checks = True
+):
+
+    mode_ids, squeeze_output = _process_mode_ids(mode_counts, mode_ids, emodes.shape[1])
+
+    coeffs = decompose(data, emodes, method='project', mass=mass, mode_ids=mode_ids, checks=checks)
+
+    fe = filter(evals)
+    if fe.ndim == 1:
+        fe = diags(fe, dtype=evals.dtype)
+
+    filtered_coeffs = [_extract_submatrix(fe, m, m) @ c for m,c in zip(mode_ids, coeffs)]
+
+    out = reconstruct(emodes, coeffs=filtered_coeffs, mode_ids=mode_ids, checks=False)
+
+    if squeeze_output:
+        out = np.squeeze(out, axis=-1)
+
+    return out
+
+def _extract_submatrix(A, rows, cols) -> NDArray[np.floating] | csc_matrix:
+    if issparse(A):
+        return A.tocsr()[rows, :].tocsc()[:, cols]
+    return A[np.ix_(rows, cols)]
+
 
 # TODO future: see if this can be rewritten with some kind of 'cdistw_diagonal' function
 # which finds the diagonal of the distance matrix without calculating the full matrix
