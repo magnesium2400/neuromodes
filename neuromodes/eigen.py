@@ -455,9 +455,9 @@ class EigenSolver(Solver):
     
     def reconstruct(
         self,
-        data: NDArray[np.floating],
+        coeffs: NDArray[np.floating],
         **kwargs
-    ) -> NDArray[np.floating]:
+    ) -> NDArray[np.floating] | list[NDArray[np.floating]]:
         """
         This is a wrapper for :func:`~neuromodes.basis.reconstruct`. Note that ``emodes``, ``mass``,
         and ``checks`` are passed automatically by the ``EigenSolver`` instance.
@@ -465,7 +465,7 @@ class EigenSolver(Solver):
         from neuromodes.basis import reconstruct as _reconstruct
             
         return _reconstruct(
-            data=data,
+            coeffs=coeffs,
             emodes=self.emodes,
             mass=self.mass,
             checks='maps',

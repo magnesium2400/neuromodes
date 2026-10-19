@@ -6,12 +6,12 @@ each vertex has Voronoi area/volume of 1.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, overload
 from warnings import warn
 
 import numpy as np
-from scipy.sparse import csc_matrix, diags, spmatrix
-from scipy.spatial.distance import cdist, squareform
+from scipy.sparse import csc_matrix, spmatrix, diags, issparse
+from scipy.spatial.distance import cdist as scipy_cdist, squareform as scipy_squareform
 
 from neuromodes.eigen import EigenData
 
@@ -19,12 +19,188 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
     from scipy.spatial.distance import _MetricCallback, _MetricKind
 
-def gramw(
-    data_a: NDArray[np.floating],
-    data_b: NDArray[np.floating] | None = None,
-    *,
-    mass: spmatrix | NDArray[np.floating] | None
+@overload
+def _multiply_nd( # pyright: ignore[reportOverlappingOverload]
+    A: csc_matrix, 
+    B: csc_matrix
+) -> csc_matrix: ...
+
+@overload
+def _multiply_nd(
+    A: csc_matrix | NDArray[np.floating], 
+    B: csc_matrix | NDArray[np.floating]
+) -> NDArray[np.floating]: ...
+    
+def _multiply_nd(
+    A: csc_matrix | NDArray[np.floating], 
+    B: csc_matrix | NDArray[np.floating]
+) -> csc_matrix | NDArray[np.floating]:
+    """Compute A @ B where contraction occurs over axis 1 of A and axis 0 of B.
+    
+    Preserves sparse matrix types when possible and handles N-D dense arrays.
+    """
+    if A.shape is None or B.shape is None: # make pyright happy
+        raise ValueError("Input arrays must have defined shapes.")
+    if isinstance(A, np.ndarray) and isinstance(B, np.ndarray):
+        # dense @ dense -> N-D tensor contraction
+        return np.tensordot(A, B, axes=(1, 0))
+    elif issparse(A) and issparse(B):
+        # sparse @ sparse -> sparse matrix
+        return A @ B
+    elif issparse(A):
+        # sparse @ dense -> dense array (reshaped to maintain B's trailing axes)
+        B_2d = B.reshape(B.shape[0], -1)
+        output_shape = (A.shape[0],) + B.shape[1:]
+        return (A @ B_2d).reshape(output_shape)
+    elif issparse(B):
+        # dense @ sparse -> dense array (reshaped to maintain A's trailing axes)
+        A_2d = A.reshape(A.shape[0], -1)
+        output_shape = (A.shape[0],) + B.shape[1:]
+        return (A_2d @ B).reshape(output_shape)
+    else:
+        raise TypeError(f"Unsupported types for _multiply_nd: {type(A)} and {type(B)}")
+
+@overload
+def _dot_nd( # pyright: ignore[reportOverlappingOverload]
+    A: csc_matrix, 
+    B: csc_matrix
+) -> csc_matrix: ...
+
+@overload
+def _dot_nd(
+    A: csc_matrix | NDArray[np.floating], 
+    B: csc_matrix | NDArray[np.floating]
+) -> NDArray[np.floating]: ...
+
+def _dot_nd(
+    A: csc_matrix | NDArray[np.floating], 
+    B: csc_matrix | NDArray[np.floating]
+) -> csc_matrix | NDArray[np.floating]:
+    """Compute <A, B> by contracting over axis 0 (the spatial dimension, n_verts).
+    
+    Equivalent to A.T @ B for 2D inputs, but supports any rank N-D arrays.
+    """
+    if A.shape is None or B.shape is None: # make pyright happy
+        raise ValueError("Input arrays must have defined shapes.")
+    if isinstance(A, np.ndarray) and isinstance(B, np.ndarray):
+        # dense.T @ dense -> N-D tensor contraction
+        return np.tensordot(A, B, axes=(0, 0))
+    elif issparse(A) and issparse(B):
+        # sparse.T @ sparse -> works natively in SciPy
+        return A.T @ B
+    elif issparse(A):
+        # sparse.T @ dense -> flatten B's trailing axes, perform sparse matmul, reshape back
+        B_2d = B.reshape(B.shape[0], -1)
+        output_shape = A.shape[1:] + B.shape[1:]
+        return (A.T @ B_2d).reshape(output_shape)
+    elif issparse(B):
+        # dense.T @ sparse -> flatten A's trailing axes, perform sparse matmul, reshape back
+        A_2d = A.reshape(A.shape[0], -1)
+        output_shape = A.shape[1:] + B.shape[1:]
+        return (A_2d.T @ B).reshape(output_shape)
+    else:
+        raise TypeError(f"Unsupported types for _dot_nd: {type(A)} and {type(B)}")
+
+def _pad_dims_right(arr: NDArray[np.floating], target_ndim: int) -> NDArray[np.floating]:
+    """Pad the dimensions of an array on the right with singleton dimensions to reach target_ndim."""
+    return arr[(...,) + (None,) * max(0, target_ndim - arr.ndim)]
+
+def _dot_diagonal_nd(
+    a: csc_matrix | NDArray[np.floating],
+    b: csc_matrix | NDArray[np.floating], 
+    keepdims: bool = False
 ) -> NDArray[np.floating]:
+    """Compute the dot product of two arrays along their diagonal elements.
+
+    This is a specialized function for computing the dot product of two arrays
+    where only the diagonal elements are considered.
+
+    Parameters
+    ----------
+    A : array-like
+        The first array.
+    B : array-like
+        The second array.
+
+    Returns
+    -------
+    np.ndarray
+        The result of the dot product.
+    """
+    
+    if isinstance(a, np.ndarray) and isinstance(b, np.ndarray):
+        out = np.einsum('v...,v...->...', 
+                        _pad_dims_right(a, max(a.ndim, b.ndim)), 
+                        _pad_dims_right(b, max(a.ndim, b.ndim))
+                        )
+        if keepdims:
+            out = np.expand_dims(out, axis=0)
+        return out
+    
+    # Case 2: Both Sparse
+    if issparse(a) and issparse(b):
+        if a.shape[1] == 1:
+            out = (a.T @ b).toarray()
+        elif b.shape[1] == 1:
+            out = (b.T @ a).toarray()
+        else: 
+            out = np.asarray(a.multiply(b).sum(axis=0))
+        if not keepdims:
+            out = out.squeeze(axis=0)
+        return out
+
+    # Case 3: One Sparse, One Dense
+    sparse_mat, dense_arr = (a, b) if issparse(a) else (b, a)
+    b_s = sparse_mat.shape[1] # csc_matrix is always exactly 2D
+    b_d = dense_arr.shape[1] if dense_arr.ndim > 1 else 0
+
+    if dense_arr.ndim == 1:
+        out = np.asarray(sparse_mat.T @ dense_arr)
+
+    elif dense_arr.ndim == 2:
+        if b_s == 1:
+            out = sparse_mat.T @ dense_arr
+        elif b_d == 1:
+            out = dense_arr.T @ sparse_mat
+        elif b_s == b_d:
+            out = sparse_mat.multiply(dense_arr).sum(axis=0)
+        else:
+            raise ValueError(
+                f"Cannot broadcast column dimension {b_s} of sparse matrix with {b_d} of dense array."
+            )
+        out = np.asarray(out).squeeze(axis=0)
+
+    else:
+        coo = sparse_mat.tocoo()
+        s_vals = coo.data[(...,) + (None,) * (dense_arr.ndim - 2)]
+        out = np.zeros((max(b_s, b_d),) + dense_arr.shape[2:], 
+                        dtype=np.result_type(sparse_mat.dtype, dense_arr.dtype))
+
+        if b_s == 1: # sparse (a, 1) vs dense (a, b, ...)
+            d_slices = dense_arr[coo.row, :]
+            out = np.sum(s_vals[:, None] * d_slices, axis=0)
+        elif b_d == 1: # sparse (a, b) vs dense (a, 1, ...)
+            d_slices = dense_arr[coo.row, 0]
+            np.add.at(out, coo.col, s_vals * d_slices)
+        elif b_s == b_d: # sparse (a, b) vs dense (a, b, ...)
+            d_slices = dense_arr[coo.row, coo.col]
+            np.add.at(out, coo.col, s_vals * d_slices)
+        else: 
+            raise ValueError(
+                f"Cannot broadcast column dimension {b_s} of sparse matrix with {b_d} of dense array."
+            )
+
+    if keepdims:
+        out = np.expand_dims(out, axis=0)
+
+    return out
+
+def gramw(
+    data_a: csc_matrix | NDArray[np.floating],
+    data_b: csc_matrix | NDArray[np.floating] | None = None,
+    *,
+    mass: csc_matrix | NDArray[np.floating] | None
+) -> csc_matrix | NDArray[np.floating]:
     """
     Dot product between all brain maps (pairwise), equivalent to ``data.T @ (mass @ data_b)``.
 
@@ -44,65 +220,58 @@ def gramw(
         The Gram matrix of shape ``(n_maps, n_maps_b)`` if ``data_b`` is provided, or
         ``(n_maps, n_maps)`` if not.
     """
-    ved = EigenData(data=(data_a, data_b), mass=mass)
-    a, b = ved.data
-    mass = _create_mass_matrix(ved.mass, a.shape[0])
+    # ved = EigenData(data=(data_a, data_b), mass=mass)
+    # a, b = ved.data
+    # mass = _create_mass_matrix(ved.mass, a.shape[0])
 
-    if b is None:
-        b = a
-    return a.T @ (mass @ b)
+    a, b = data_a, data_b
+    b = a if b is None else b
+    mb = b if mass is None else _multiply_nd(mass, b)
+    amb = _dot_nd(a, mb)
+    return amb
 
-# TODO: ensure that all functions support nD input, not just 1D/2D
 def dotw(
-    data_a: NDArray[np.floating],
-    data_b: NDArray[np.floating],
-    mass: spmatrix | NDArray[np.floating] | None,
+    data_a: csc_matrix | NDArray[np.floating],
+    data_b: csc_matrix | NDArray[np.floating],
+    mass: csc_matrix | NDArray[np.floating] | None = None,
     keepdims: bool = False
 ) -> NDArray[np.floating]:
-    """
-    Dot product between corresponding brain maps (not pairwise), equivalent to ``sum(data_a * (mass
-    @ data_b), axis=0)``.
+    """Calculate the elementwise weighted dot product between spatial maps across axis 0.
+
+    Equivalent to ``np.sum(data_a * (mass @ data_b), axis=0)``. Trailing dimensions
+    beyond axis 0 are broadcasted automatically.
 
     Parameters
     ----------
-    data_a : array-like
-        The first set of spatial maps, of shape ``(n_verts, n_maps)``.
-    data_b : array-like
-        The second set of spatial maps, of shape ``(n_verts, n_maps)``.
-    mass : array-like
-        The mass matrix, of shape ``(n_verts, n_verts)``.
+    data_a : NDArray
+        First set of spatial maps of shape ``(n_verts, ...)``.
+    data_b : NDArray
+        Second set of spatial maps of shape ``(n_verts, ...)``.
+    mass : csc_matrix or NDArray, optional
+        Mass matrix of shape ``(n_verts, n_verts)``.
     keepdims : bool, optional
-        If True, the output will have the same number of dimensions as the input arrays. Default is
-        False.
+        Whether to retain the contracted spatial dimension (axis 0) with length 1.
+        Default is False.
 
     Returns
     -------
-    np.ndarray
-        The dot product of shape ``(n_maps,)`` if ``keepdims=False``, or ``(1, n_maps)`` if
-        ``keepdims=True``.
-
-    Raises
-    ------
-    ValueError
-        If ``data_a`` and ``data_b`` do not have the same number of maps (columns).
+    NDArray
+        The weighted inner product array broadcasted over trailing dimensions.
     """
-    ved = EigenData(data=(data_a, data_b), mass=mass)
-    a, b = ved.data
+    # ved = EigenData(data=(data_a, data_b), mass=mass)
+    # a, b = ved.data
+    # mass = _create_mass_matrix(ved.mass, a.shape[0])
 
-    if a.shape != b.shape:
-        raise ValueError(f"data_a and data_b must have the same shape; got {a.shape} and "
-                         f"{b.shape}.")
+    # 1. Apply mass operator to b: M @ b  (shape: (n_verts, ...))
+    a, b = data_a, data_b
+    mb = b if mass is None else _multiply_nd(mass, b)
+    amb = _dot_diagonal_nd(a, mb, keepdims=keepdims)
+    return amb
 
-    n_verts = a.shape[0]
-    mass = _create_mass_matrix(ved.mass, n_verts)
-    a_2d = a.reshape(n_verts, -1)
-    b_2d = b.reshape(n_verts, -1)
-    out = np.sum(a_2d * (mass @ b_2d), axis=0).reshape(a.shape[1:])
-    return np.expand_dims(out, axis=0) if keepdims else out
 
 def ssqw(
     data: NDArray[np.floating],
-    mass: spmatrix | NDArray[np.floating] | None,
+    mass: csc_matrix | NDArray[np.floating] | None,
     keepdims: bool = False
 ) -> NDArray[np.floating]:
     """
@@ -128,9 +297,9 @@ def ssqw(
 
 def meanw(
     data: NDArray[np.floating],
-    mass: spmatrix | NDArray[np.floating] | None,
+    mass: csc_matrix | NDArray[np.floating] | None,
     keepdims: bool = False
-) -> float:
+) -> NDArray[np.floating]:
     """
     Area-weighted mean of each brain map, equivalent to ``sum(mass @ data) / mass.sum()``.
 
@@ -150,16 +319,18 @@ def meanw(
         The area-weighted mean of shape ``(n_maps,)`` if ``keepdims=False``, or ``(1, n_maps)`` if
         ``keepdims=True``.
     """
-    ved = EigenData(data=data, mass=mass)
-    data, mass = ved.data, ved.mass
-
+    # ved = EigenData(data=data, mass=mass)
+    # data, mass = ved.data, ved.mass
+    data = np.asarray(data)
     areas = _mass_to_areas(mass, data.shape[0])
-    out = np.average(data, axis=0, weights=areas)
-    return out[None, :] if keepdims else out
+    if keepdims: 
+        areas = areas[:, None]
+    num = _dot_nd(areas, data)
+    return num / areas.sum() # np.float
 
 def demeanw(
     data: NDArray[np.floating],
-    mass: spmatrix | NDArray[np.floating] | None
+    mass: csc_matrix | NDArray[np.floating] | None
 ) -> NDArray[np.floating]:
     """
     Removes the area-weighted mean from each brain map.
@@ -176,14 +347,13 @@ def demeanw(
     np.ndarray
         The demeaned spatial maps, of shape ``(n_verts, n_maps)``.
     """
-    data = np.asarray(data)
-    return data - meanw(data, mass)
+    return data - meanw(data, mass, keepdims=True)
 
 def varw(
     data: NDArray[np.floating],
-    mass: spmatrix | NDArray[np.floating] | None,
+    mass: csc_matrix | NDArray[np.floating] | None,
     keepdims: bool = False
-) -> float:
+) -> NDArray[np.floating]:
     """
     Mass-weighted variance of each brain map, equivalent to ``sum((data - mean) * (mass @ (data -
     mean))) / mass.sum()``. Note that this function does not offer Bessel's correction, as mesh
@@ -205,19 +375,15 @@ def varw(
         The area-weighted variance of shape ``(n_maps,)`` if ``keepdims=False``, or ``(1, n_maps)``
         if ``keepdims=True``.
     """
-    data = np.asarray(data)
-    mass = _create_mass_matrix(mass, data.shape[0])
-
-    B = demeanw(data, mass)
-    out = ssqw(B, mass) / mass.sum()
-    return out[None, :] if keepdims else out
+    out = ssqw(demeanw(data, mass), mass, keepdims=keepdims)
+    return out / mass.sum() if mass is not None else out / data.shape[0]
 
 def momentw(
     data: NDArray[np.floating],
-    mass: spmatrix | NDArray[np.floating] | None,
+    mass: csc_matrix | NDArray[np.floating] | None,
     order: int,
     keepdims: bool = False
-) -> float:
+) -> NDArray[np.floating]:
     """
     Mass-weighted central moment of a given order, of each brain map. Central moments are computed
     about the weighted mean. For order 1, the moment is always 0. For order 2, the moment is the
@@ -244,22 +410,21 @@ def momentw(
     data = np.asarray(data)
 
     if order == 1:
-        out = np.zeros(data.shape[1]) if data.ndim == 2 else 0
-        return out[None, :] if keepdims else out
+        out = np.zeros(data.shape[1:], dtype=data.dtype)
+        return np.expand_dims(out, axis=0) if keepdims else out
     elif order == 2:
         return varw(data, mass, keepdims=keepdims)
     else:
         # Approximate by lumping
         areas = _mass_to_areas(mass, data.shape[0])
         data_dm = demeanw(data, areas)
-        # Sum rows of the sparse matrix to get a lumped vector, safely flattened
         return meanw(data_dm ** order, areas, keepdims=keepdims)
 
 def stdw(
     data: NDArray[np.floating],
-    mass: spmatrix | NDArray[np.floating] | None,
+    mass: csc_matrix | NDArray[np.floating] | None,
     keepdims: bool = False
-) -> float:
+) -> NDArray[np.floating]:
     """
     Mass-weighted standard deviation of each brain map.
 
@@ -283,7 +448,7 @@ def stdw(
 
 def zscorew(
     data: NDArray[np.floating],
-    mass: spmatrix | NDArray[np.floating] | None
+    mass: csc_matrix | NDArray[np.floating] | None
 ) -> NDArray[np.floating]:
     """
     Mass-weighted z-scoring of each brain map.
@@ -300,14 +465,14 @@ def zscorew(
     np.ndarray
         The mass-weighted z-scored spatial maps, of shape ``(n_verts, n_maps)``.
     """
-    # TODO: consider inefficiency of demeaning twice, could be expanded
-    return demeanw(data, mass) / stdw(data, mass)
+    # TODO future: consider inefficiency of demeaning twice, could be expanded
+    return demeanw(data, mass) / stdw(data, mass, keepdims=True)
 
 def covw(
     data: NDArray[np.floating],
     data_b: NDArray[np.floating] | None = None,
     *,
-    mass: spmatrix | NDArray[np.floating] | None
+    mass: csc_matrix | NDArray[np.floating] | None
 ) -> NDArray[np.floating]:
     """
     Mass-weighted covariance amongst or between brain maps.
@@ -337,20 +502,16 @@ def covw(
     Note that this function does not offer Bessel's correction, as mesh vertices are not IID samples
     and maps typically display spatial autocorrelation.
     """
-    a = np.asarray(data)
 
-    mass = _create_mass_matrix(mass, a.shape[0])
-    total_area = mass.sum()
-    
-    a_dm = demeanw(a, mass)
+    a_dm = demeanw(data, mass)
     b_dm = demeanw(data_b, mass) if data_b is not None else a_dm
     gram = gramw(a_dm, b_dm, mass=mass)
     
-    return gram / total_area
+    return gram / mass.sum() if mass is not None else gram / data.shape[0]
 
 def vecnormw(
     data: NDArray[np.floating],
-    mass: spmatrix | NDArray[np.floating] | None,
+    mass: csc_matrix | NDArray[np.floating] | None,
     p: int = 2,
     keepdims: bool = False
 ) -> NDArray[np.floating]:
@@ -387,18 +548,15 @@ def vecnormw(
         return np.sqrt(ssqw(data, mass, keepdims=keepdims))
     
     elif p == np.inf: # Exact (ignores the mass matrix)
-        out = np.max(np.abs(data), axis=0)
-        return out[None, :] if (keepdims and data.ndim == 2) else out
+        return np.max(np.abs(data), axis=0, keepdims=keepdims)
     
     else: # Approximate by lumping
-        areas = _mass_to_areas(mass, data.shape[0])
-        out = np.sum(areas * (np.abs(data) ** p), axis=0) ** (1 / p)
-        return out[None, :] if (keepdims and data.ndim == 2) else out
+        return dotw(np.ones((data.shape[0],)), (np.abs(data) ** p), mass=mass, keepdims=keepdims) ** (1 / p)
 
 def cdistw(
     data_a: NDArray[np.floating],
     data_b: NDArray[np.floating],
-    mass: spmatrix | NDArray[np.floating] | None,
+    mass: csc_matrix | NDArray[np.floating] | None,
     metric: _MetricCallback | _MetricKind = 'euclidean'
 ) -> NDArray[np.floating]:
     """
@@ -424,26 +582,26 @@ def cdistw(
         The mass-weighted distance matrix of shape ``(n_maps_a, n_maps_b)``.
     """
     # a lot of redundancy, especially for correlation. TODO: consider adding `checks`, and `checks='mass'` to EigenData
-    ved = EigenData(data=(data_a, data_b), mass=mass)
-    a, b = ved.data
-    mass = ved.mass
+    # ved = EigenData(data=(data_a, data_b), mass=mass)
+    # a, b = ved.data
+    # mass = ved.mass
 
-    if a.ndim == 1:
-        a = a[:, None]
-    if b.ndim == 1:
-        b = b[:, None]
+    a, b = np.asarray(data_a), np.asarray(data_b)
+    target_ndim = (a.ndim - 1) + (b.ndim - 1)
 
-    # Reimplement these to support unlumped mass matrix
     if metric == 'sqeuclidean':
-        D = ssqw(a, mass)[:, None] + ssqw(b, mass)[None, :] - 2 * gramw(a, b, mass=mass)
+        ssqwa = _pad_dims_right(ssqw(a, mass), target_ndim)
+        ssqwb = ssqw(b, mass)
+        gramd = gramw(a, b, mass=mass)
+        D = ssqwa + ssqwb - 2 * gramd
         
     elif metric == 'euclidean':
         D = np.sqrt(cdistw(a, b, mass, 'sqeuclidean'))
         
     elif metric == 'cosine':
         Num = gramw(a, b, mass=mass)
-        DenX = vecnormw(a, mass, 2)[:, None]
-        DenY = vecnormw(b, mass, 2)[None, :]
+        DenX = _pad_dims_right(vecnormw(a, mass, 2), target_ndim)
+        DenY = vecnormw(b, mass, 2)
         D = 1 - Num / (DenX * DenY)
         
     elif metric == 'correlation':
@@ -451,14 +609,15 @@ def cdistw(
         
     else:
         areas = _mass_to_areas(mass, a.shape[0])
-        D = cdist(a, b, metric=metric, mass=areas)
+        D = scipy_cdist(a, b, metric=metric, mass=areas)
 
     return np.maximum(D, 0)
 
 def pdistw(
     data: NDArray[np.floating],
-    mass: spmatrix | NDArray[np.floating] | None,
-    metric: _MetricCallback | _MetricKind = 'euclidean'
+    mass: csc_matrix | NDArray[np.floating] | None,
+    metric: _MetricCallback | _MetricKind = 'euclidean', 
+    squareform: bool | None = None
 ) -> NDArray[np.floating]:
     """
     Mass-weighted pairwise distances amongst a set of brain maps, outputting a condensed vector.
@@ -477,19 +636,18 @@ def pdistw(
     -------
     np.ndarray
         The mass-weighted distance vector of shape ``(n_maps * (n_maps - 1) // 2,)``.
-    """
-    data = np.asarray(data)
-    if data.ndim != 2 or data.shape[1] < 2:
-        raise ValueError(f"data must be a 2D array with at least 2 columns; got shape {data.shape}.")
-
-    D2 = cdistw(data, data, mass, metric)
-    np.fill_diagonal(D2, 0) # Ensures exact 0 on diagonal
-    return squareform(D2, checks=False)
+    """    
+    D2 = cdistw(data, data, mass, metric) # will be either 0d (if input is 1D) or >=2d (if input is >=2D)
+    if squareform is None: 
+        squareform = D2.ndim == 2
+    if squareform:
+        return scipy_squareform(D2, force='tovector', checks=False)
+    return D2
 
 def solvew(
     data_a: NDArray[np.floating],
     data_b: NDArray[np.floating],
-    mass: spmatrix | NDArray[np.floating] | None
+    mass: csc_matrix | NDArray[np.floating] | None
 ) -> NDArray[np.floating]:
     """
     Solves the weighted least squares problem using the normal equations ``(aᵀMa)x = aᵀMb``, where
@@ -519,7 +677,7 @@ def solvew(
 def lstsqw(
     data_a: NDArray[np.floating],
     data_b: NDArray[np.floating],
-    mass: spmatrix | NDArray[np.floating] | None,
+    mass: csc_matrix | NDArray[np.floating] | None,
     rcond: float | None = None
 ) -> tuple[NDArray[np.floating], int, float, NDArray[np.floating]]:
     """
@@ -555,11 +713,11 @@ def lstsqw(
     return np.linalg.lstsq(aw, bw, rcond=rcond)
 
 def parcellate(
-    data: NDArray[np.floating],
+    data: csc_matrix | NDArray[np.floating],
     parcellation: NDArray[np.integer],
-    mass: spmatrix | NDArray[np.floating] | None,
+    mass: csc_matrix | NDArray[np.floating] | None,
     method: Literal['mean', 'sum'] = 'mean'
-) -> NDArray[np.floating]:
+) -> csc_matrix | NDArray[np.floating]:
     """
     Area-weighted parcellation of each brain map.
 
@@ -591,30 +749,30 @@ def parcellate(
         If ``data`` is not 1D or 2D.
     """
     # Format / validate arguments
-    ved = EigenData(data=(data, parcellation), mass=mass)
-    data, parcellation = ved.data
-    if data.ndim > 2:
-        raise ValueError("data must be 1D or 2D.")
-    
+    data = np.asarray(data)
     if method not in ('mean', 'sum'):
         raise ValueError(f"method must be 'mean' or 'sum'; got {method}.")
 
     # Construct p = sparse parcellation matrix as (n_verts, n_parcels)
     # output = p.T @ mass @ data; or 
     # output = p.T @ mass @ data / (p @ mass @ 1) if method == 'mean'
-    parc_mass = _create_parcellation_matrix(parcellation).T @ _create_mass_matrix(ved.mass, data.shape[0])
+    parc_mat = _create_parcellation_matrix(parcellation)
+    parc_mass = _dot_nd(parc_mat, _create_mass_matrix(mass, data.shape[0]))
     if method == 'mean':
         parc_mass /= parc_mass.sum(axis=1) 
 
-    is_data_vec = (data.ndim == 1)
-    data_2d = data[:, np.newaxis] if is_data_vec else data
-    data_parc = parc_mass @ data_2d
-    return data_parc.squeeze(axis=1) if is_data_vec else data_parc
+    data_parc = _multiply_nd(parc_mass, data)
+    return data_parc
 
-# TODO add support for passing through parcellation matrix without modification
+# TODO add support for passing through parcellation matrix without modification. probably if 1d, 
+# assume it's a parcellation vector, if 2d, assume it's a parcellation matrix.
+# TODO probably make mask a separate input, and maybe make it possible to return both 
+# masked and unmasked parcellation matrices. Note that `parcellate` can't handle a mask, because
+# the mass matrix can't be masked post-hoc
 # TODO add support for dtypes
 def _create_parcellation_matrix(
-    parcellation: NDArray[np.integer]
+    parcellation: NDArray[np.integer], 
+    mask: NDArray[np.bool_] | None = None
 ) -> csc_matrix:
     """
     Converts a parcellation vector to a sparse parcellation matrix.
@@ -635,21 +793,21 @@ def _create_parcellation_matrix(
     ValueError
         If ``parcellation`` is not 1D.
     """
-    parcellation = np.asarray(parcellation, copy=True) # user has to ensure parc is integer
-
-    if parcellation.ndim != 1:
-        raise ValueError("Parcellation map must be 1D.")
-    
+    parcellation = np.asarray(parcellation) # user has to ensure parc is integer
     n_verts = parcellation.shape[0]
-    mask = parcellation >= 0 # medial wall should be negative
-    
-    # Construct sparse parcellation matrix as (n_parcels, n_verts)
-    parc_mat = csc_matrix(
-        (np.ones(np.sum(mask)),
-         (np.arange(n_verts)[mask], parcellation[mask])),
-        shape=(n_verts, np.max(parcellation)+1)
-        )
-    
+    mask = np.asarray(mask, dtype=bool) if mask is not None else np.ones(n_verts, dtype=bool)
+
+    if parcellation.ndim == 1: 
+        parc_mat = csc_matrix(
+            (np.ones(np.sum(mask)),
+            (np.arange(n_verts)[mask], parcellation[mask])),
+            shape=(n_verts, np.max(parcellation)+1)
+            )
+    elif parcellation.ndim == 2:
+        parc_mat = csc_matrix(parcellation[mask])
+    else: 
+        raise ValueError(f"Parcellation map must be 1D or 2D; got {parcellation.ndim}D.")
+
     return parc_mat
 
 def sigmoid_rescale(
@@ -703,16 +861,19 @@ def sigmoid_rescale(
     return lower + (upper - lower) / (1 + np.exp(-steepness * (data - center)))
 
 def _mass_to_areas(
-    mass: spmatrix | NDArray[np.floating] | None = None,
-    n_verts: int | None = None
+    mass: csc_matrix | NDArray[np.floating] | None = None,
+    n_verts: int | None = None,
+    keepdims: bool = False
 ) -> NDArray[np.floating]:
-    mass = _create_mass_matrix(mass=mass, n_verts=n_verts)
-    return np.asarray(mass.sum(axis=0)).ravel()
+    mass = np.asarray(_create_mass_matrix(mass=mass, n_verts=n_verts).sum(axis=1))
+    if not keepdims:
+        mass = mass.squeeze(axis=1)
+    return mass
 
-# TODO: consider adding dtype parameter to _create_mass_matrix for w=None case
+# TODO future: consider adding dtype parameter to _create_mass_matrix for w=None case
 # TODO: consider moving to EigenData
 def _create_mass_matrix(
-    mass: spmatrix | NDArray[np.floating] | None = None,
+    mass: csc_matrix | NDArray[np.floating] | None = None,
     n_verts: int | None = None
 ) -> csc_matrix:
     
@@ -723,28 +884,20 @@ def _create_mass_matrix(
         warn("Mass matrix not provided; assuming that area at each vertex is 1")
         output = diags(np.ones(n_verts), format='csc')
 
-    elif isinstance(mass, (np.ndarray, list)):        
-        mass_arr = np.asarray(mass)
-        if mass_arr.ndim == 2 and mass_arr.shape[0] == mass_arr.shape[1]:
-            output = mass_arr
-        elif mass_arr.ndim == 1 or mass_arr.shape[0] == 1 or mass_arr.shape[1] == 1:
-            output = diags(np.ravel(mass_arr), format='csc')
-        else: 
-            raise ValueError(f"Mass matrix has invalid shape: {mass_arr.shape} (should be square "
-                             "or vector).")
-
     elif isinstance(mass, spmatrix) and mass.shape is not None: # appease: pyright
         if mass.shape[0] == mass.shape[1]: 
             output = mass
-        elif mass.shape[0] == 1 or mass.shape[1] == 1:
-            output = diags(mass.toarray().flatten(), format='csc')
         else: 
-            raise ValueError(f"Sparse mass matrix has invalid shape: {mass.shape} (should be "
-                             "square or vector).")
-            
-    else:
-        raise TypeError("mass must be a 1D array of vertex areas, a 2D mass matrix, or a sparse "
-                        "matrix.")
+            raise ValueError(f"Sparse mass matrix has invalid shape: {mass.shape} (should be square).")
+
+    elif isinstance(mass, np.ndarray) and mass.ndim == 2:
+        if mass.shape[0] == mass.shape[1]:
+            output = mass
+        else: 
+            raise ValueError(f"Dense mass matrix has invalid shape: {mass.shape} (should be square).")
+
+    else: # 1D array, list, tuple, etc. 
+        output = diags(np.ravel(np.asarray(mass)), format='csc')
 
     output = csc_matrix(output)
     

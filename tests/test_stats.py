@@ -3,6 +3,7 @@ import pytest
 from scipy import sparse
 from scipy.spatial.distance import cdist, pdist
 from scipy.stats import zscore
+from scipy.sparse import issparse
 
 from neuromodes.stats import (
     cdistw,
@@ -21,27 +22,164 @@ from neuromodes.stats import (
     varw,
     vecnormw,
     zscorew,
+    _pad_dims_right,
 )
 
+class TestGramwShapesAndTypes: 
+
+    def _manual_mutiply(self, x, y, mass):
+        out_2d = x.reshape(x.shape[0], -1).T @ mass @ y.reshape(y.shape[0], -1)
+        return out_2d.reshape(x.shape[1:] + y.shape[1:])
+
+    @pytest.mark.parametrize("dims_x", [(), (1,), (2,), (1,2), (3,1), (2,2), (2,3,4)])
+    @pytest.mark.parametrize("dims_y", [(), (1,), (2,), (1,2), (3,1), (2,2), (2,3,4)])
+    @pytest.mark.parametrize("sparse_x", [True, False])
+    @pytest.mark.parametrize("sparse_y", [True, False])
+    @pytest.mark.parametrize("sparse_m", [True, False])
+    def test_nd_nd(self, dims_x, dims_y, sparse_x, sparse_y, sparse_m):
+        A = 10
+        x = np.random.rand(A, *dims_x)
+        y = np.random.rand(A, *dims_y)
+        mass = np.random.rand(A, A)
+
+        if sparse_x:
+            if x.ndim == 2: 
+                x = sparse.csc_matrix(x)
+            else: 
+                return
+
+        if sparse_y:
+            if y.ndim == 2: 
+                y = sparse.csc_matrix(y)
+            else: 
+                return
+
+        if sparse_m:
+            mass = sparse.csc_matrix(mass)
+
+        gram = gramw(x, y, mass=mass)
+        assert gram.ndim == len(dims_x) + len(dims_y)
+        assert gram.shape[0:len(dims_x)] == dims_x
+        assert gram.shape[len(dims_x):] == dims_y
+
+        expected = self._manual_mutiply(x, y, mass)
+        gram_values = gram.toarray() if issparse(gram) else gram
+        expected_values = expected.toarray() if issparse(expected) else expected
+
+        np.testing.assert_allclose(gram_values, expected_values)
+        # np.testing.assert_allclose(np.array(gram), np.array(self._manual_mutiply(x, y, mass)))
+
+class TestDotwShapesAndTypes:
+
+    def _broadcast_shapes_left(self, shape1, shape2):
+        output_shape = []
+        for i in range(max(len(shape1), len(shape2))):
+            a_dim = shape1[i] if i < len(shape1) else 1
+            b_dim = shape2[i] if i < len(shape2) else 1
+            if a_dim != b_dim and a_dim != 1 and b_dim != 1:
+                raise ValueError(f"Cannot broadcast shapes {shape1} and {shape2}")
+            output_shape.append(max(a_dim, b_dim))
+        return tuple(output_shape)
+
+    def _are_broadcastable(self, shape1, shape2):
+        for i in range(max(len(shape1), len(shape2))):
+            a_dim = shape1[i] if i < len(shape1) else 1
+            b_dim = shape2[i] if i < len(shape2) else 1
+            if a_dim != b_dim and a_dim != 1 and b_dim != 1:
+                return False
+        return True
+
+    def _manual_dotw(self, x, y, mass, keepdims):
+        # Convert inputs to dense arrays for calculating ground truth
+        x_dense = x.toarray() if issparse(x) else np.asarray(x)
+        y_dense = y.toarray() if issparse(y) else np.asarray(y)
+        mass_dense = mass.toarray() if issparse(mass) else np.asarray(mass)
+
+        # Apply mass operator to y along spatial axis 0
+        y_2d = y_dense.reshape(y_dense.shape[0], -1)
+        my_2d = mass_dense @ y_2d
+        my_dense = my_2d.reshape(y_dense.shape)
+
+        # Right-pad shapes with 1s to align axis 0 across both arrays
+        target_ndim = max(x_dense.ndim, my_dense.ndim)
+        x_aligned =  _pad_dims_right(x_dense,  target_ndim)
+        my_aligned = _pad_dims_right(my_dense, target_ndim)
+
+        # Elementwise multiply with aligned x and sum over spatial axis 0
+        return np.sum(x_aligned * my_aligned, axis=0, keepdims=keepdims)
+
+    @pytest.mark.parametrize("dims_x", [(), (1,), (2,), (1, 2), (3, 1), (3, 2), (3, 2, 4)])
+    @pytest.mark.parametrize("dims_y", [(), (1,), (2,), (1, 2), (3, 1), (3, 2), (3, 2, 4)])
+    @pytest.mark.parametrize("sparse_x", [True, False])
+    @pytest.mark.parametrize("sparse_y", [True, False])
+    @pytest.mark.parametrize("sparse_m", [True, False])
+    @pytest.mark.parametrize("keepdims", [True, False])
+    def test_nd_nd(self, dims_x, dims_y, sparse_x, sparse_y, sparse_m, keepdims):
+        A = 10
+
+        x = np.random.rand(A, *dims_x)
+        y = np.random.rand(A, *dims_y)
+        mass = np.random.rand(A, A)
+
+        if sparse_x:
+            if x.ndim == 2:
+                x = sparse.csc_matrix(x)
+            else:
+                return
+
+        if sparse_y:
+            if y.ndim == 2:
+                y = sparse.csc_matrix(y)
+            else:
+                return
+
+        if sparse_m:
+            mass = sparse.csc_matrix(mass)
+
+        # Check if the FULL array shapes are broadcastable
+        shape_x = x.shape
+        shape_y = y.shape
+        if not self._are_broadcastable(shape_x, shape_y):
+            return
+        full_broadcast_shape = self._broadcast_shapes_left(shape_x, shape_y)
+        
+        out = dotw(x, y, mass=mass, keepdims=keepdims)
+
+        # Expected output shape comes from contracting axis 0 of full_broadcast_shape
+        expected_broadcast_shape = full_broadcast_shape[1:]
+        expected_shape = (1, *expected_broadcast_shape) if keepdims else expected_broadcast_shape
+
+        # 1. Assert dimensions & shapes
+        assert out.shape == expected_shape
+        assert out.ndim == len(expected_shape)
+
+        # 2. Assert values against manual ground truth
+        expected = self._manual_dotw(x, y, mass, keepdims)
+        # if keepdims:
+        #     expected = np.expand_dims(expected, axis=0)
+
+        out_values = out.toarray() if issparse(out) else out
+        expected_values = expected.toarray() if issparse(expected) else expected
+
+        np.testing.assert_allclose(out_values, expected_values)
 
 @pytest.fixture(scope='module')
-def random_data():
+def random_2d():
     """Generate random data for testing."""
-    rng = np.random.default_rng(0)
-    n_verts = 10
+    n_verts = 100
     n_maps = 3
 
-    X = rng.standard_normal(size=(n_verts, n_maps))
-    Y = rng.standard_normal(size=(n_verts, n_maps))
+    X = np.random.rand(n_verts, n_maps)
+    Y = np.random.rand(n_verts, n_maps)
 
     eye = sparse.eye(n_verts)  # identity mass for testing
-    noneye = sparse.diags(np.arange(1, n_verts + 1), dtype=np.float64)
+    lumped = sparse.diags(np.random.rand(n_verts), dtype=np.float64)
 
-    return X, Y, eye, noneye
+    return X, Y, eye, lumped
 
-class TestEye:
-    def test_gramw_eye(self, random_data):
-        X, Y, eye, noneye = random_data
+class TestEye2D:
+    def test_gramw_eye(self, random_2d):
+        X, Y, eye, noneye = random_2d
         gram_w = gramw(X, Y, mass=eye)
         gram_u = X.T @ Y
         assert np.allclose(gram_w, gram_u), "Gram matrix with identity mass should be the same " \
@@ -50,8 +188,8 @@ class TestEye:
         assert not np.allclose(gram_wn, gram_w), "Gram matrix with non-identity mass should not " \
                                                  "be the same " \
 
-    def test_dotw_eye(self, random_data):
-        X, Y, eye, noneye = random_data
+    def test_dotw_eye(self, random_2d):
+        X, Y, eye, noneye = random_2d
         dot_w = dotw(X, Y, mass=eye)
         dot_u = np.einsum('ij,ij->j', X, Y)
         assert np.allclose(dot_w, dot_u), "Dot product with identity mass should be the same as " \
@@ -60,8 +198,8 @@ class TestEye:
         dot_wn = dotw(X, Y, mass=noneye)
         assert not np.allclose(dot_wn, dot_w), "Dot product with non-identity mass should not " \
                                                "be the same as unweighted dot product."
-    def test_ssqw_eye(self, random_data):
-        X, _, eye, noneye = random_data
+    def test_ssqw_eye(self, random_2d):
+        X, _, eye, noneye = random_2d
         ssq_w = ssqw(X, mass=eye)
         ssq_u = np.sum(X**2, axis=0)
         assert np.allclose(ssq_w, ssq_u), "Sum of squares with identity mass should be the same " \
@@ -71,8 +209,8 @@ class TestEye:
         assert not np.allclose(ssq_wn, ssq_w), "Sum of squares with non-identity mass should not " \
                                                "be the same as unweighted sum of squares."
         
-    def test_meanw_eye(self, random_data):
-        X, _, eye, noneye = random_data
+    def test_meanw_eye(self, random_2d):
+        X, _, eye, noneye = random_2d
         mean_w = meanw(X, mass=eye)
         mean_u = np.mean(X, axis=0)
         assert np.allclose(mean_w, mean_u), "Mean with identity mass should be the same as " \
@@ -82,8 +220,8 @@ class TestEye:
         assert not np.allclose(mean_wn, mean_w), "Mean with non-identity mass should not be the " \
                                                  "same as unweighted mean."
         
-    def test_varw_eye(self, random_data):
-        X, _, eye, noneye = random_data
+    def test_varw_eye(self, random_2d):
+        X, _, eye, noneye = random_2d
         var_w = varw(X, mass=eye)
         var_u = np.var(X, axis=0, ddof=0)
         assert np.allclose(var_w, var_u), "Variance with identity mass should be the same as " \
@@ -93,8 +231,8 @@ class TestEye:
         assert not np.allclose(var_wn, var_w), "Variance with non-identity mass should not be " \
                                                "the same as unweighted variance."
         
-    def test_stdw_eye(self, random_data):
-        X, _, eye, noneye = random_data
+    def test_stdw_eye(self, random_2d):
+        X, _, eye, noneye = random_2d
         std_w = stdw(X, mass=eye)
         std_u = np.std(X, axis=0)
         assert np.allclose(std_w, std_u), "Standard deviation with identity mass should be the " \
@@ -104,8 +242,8 @@ class TestEye:
         assert not np.allclose(std_wn, std_w), "Standard deviation with non-identity mass should " \
                                                "not be the same as unweighted standard deviation."
         
-    def test_zscorew_eye(self, random_data):
-        X, _, eye, noneye = random_data
+    def test_zscorew_eye(self, random_2d):
+        X, _, eye, noneye = random_2d
         zscore_w = zscorew(X, mass=eye)
         zscore_u = zscore(X)
         assert np.allclose(zscore_w, zscore_u), "Z-score with identity mass should be the same " \
@@ -115,8 +253,8 @@ class TestEye:
         assert not np.allclose(zscore_wn, zscore_w), "Z-score with non-identity mass should not " \
                                                      "be the same as unweighted z-score."
 
-    def test_covw_eye(self, random_data):
-        X, Y, eye, noneye = random_data
+    def test_covw_eye(self, random_2d):
+        X, Y, eye, noneye = random_2d
         cov_w = covw(X, Y, mass=eye)
         cov_u = np.cov(X, Y, rowvar=False, bias=True)[:X.shape[1], X.shape[1]:]
         assert np.allclose(cov_w, cov_u), "Covariance with identity mass should be the same as " \
@@ -126,8 +264,8 @@ class TestEye:
         assert not np.allclose(cov_wn, cov_w), "Covariance with non-identity mass should not be " \
                                                "the same as unweighted covariance."
 
-    def test_vecnormw_eye(self, random_data):
-        X, _, eye, noneye = random_data
+    def test_vecnormw_eye(self, random_2d):
+        X, _, eye, noneye = random_2d
         norm_w = vecnormw(X, mass=eye)
         norm_u = np.linalg.norm(X, axis=0)
         assert np.allclose(norm_w, norm_u), "Vector norm with identity mass should be the same " \
@@ -137,8 +275,8 @@ class TestEye:
         assert not np.allclose(norm_wn, norm_w), "Vector norm with non-identity mass should not " \
                                                  "be the same as unweighted vector norm."
 
-    def test_demeanw_eye(self, random_data):
-        X, _, eye, noneye = random_data
+    def test_demeanw_eye(self, random_2d):
+        X, _, eye, noneye = random_2d
         demean_w = demeanw(X, mass=eye)
         demean_u = X - np.mean(X, axis=0)
         assert np.allclose(demean_w, demean_u), "Demean with identity mass should be the same as " \
@@ -148,8 +286,8 @@ class TestEye:
         assert not np.allclose(demean_wn, demean_w), "Demean with non-identity mass should not " \
                                                      "be the same as unweighted demean."
         
-    def test_lstsqw_eye(self, random_data):
-        X, Y, eye, noneye = random_data
+    def test_lstsqw_eye(self, random_2d):
+        X, Y, eye, noneye = random_2d
         lstsq_w = lstsqw(X, Y, mass=eye)[0]
         lstsq_u = np.linalg.lstsq(X, Y, rcond=None)[0]
         assert np.allclose(lstsq_w, lstsq_u), "Least squares with identity mass should be the " \
@@ -159,8 +297,8 @@ class TestEye:
         assert not np.allclose(lstsq_wn, lstsq_w), "Least squares with non-identity mass should " \
                                                    "not be the same as unweighted least squares."
 
-    def test_solvew_eye(self, random_data):
-        X, Y, eye, noneye = random_data
+    def test_solvew_eye(self, random_2d):
+        X, Y, eye, noneye = random_2d
 
         solve_w = solvew(X, Y, mass=eye)
         solve_u = np.linalg.solve(X.T @ X, X.T @ Y)
@@ -170,112 +308,113 @@ class TestEye:
         solve_wn = solvew(X, Y, mass=noneye)
         assert not np.allclose(solve_wn, solve_w), "Solve with non-identity mass should not be " \
                                                    "the same as unweighted solve."
+
+    @pytest.mark.parametrize("metric", ['euclidean', 'sqeuclidean', 'cosine', 'correlation'])
+    def test_cdistw_eye(self, random_2d, metric):
+        X, Y, eye, noneye = random_2d
         
-    def test_cdistw_eye(self, random_data):
-        X, Y, eye, noneye = random_data
-        for metric in ['euclidean', 'sqeuclidean', 'cosine', 'correlation']:
-            cdist_w = cdistw(X, Y, mass=eye, metric=metric)
-            cdist_u = cdist(X.T, Y.T, metric=metric)
-            assert np.allclose(cdist_w, cdist_u), "Pairwise distances with identity mass should " \
-                                                  "be the same as unweighted pairwise distances " \
-                                                  f"for metric '{metric}'."
-            
-            cdist_wn = cdistw(X, Y, mass=noneye, metric=metric)
-            assert not np.allclose(cdist_wn, cdist_w), (
-                "Pairwise distances with non-identity mass should not be the same as unweighted "
-                f"pairwise distances for metric '{metric}'."
-            )
+        cdist_w = cdistw(X, Y, mass=eye, metric=metric)
+        cdist_u = cdist(X.T, Y.T, metric=metric)
+        assert np.allclose(cdist_w, cdist_u), "Pairwise distances with identity mass should " \
+                                                "be the same as unweighted pairwise distances " \
+                                                f"for metric '{metric}'."
+        
+        cdist_wn = cdistw(X, Y, mass=noneye, metric=metric)
+        assert not np.allclose(cdist_wn, cdist_w), (
+            "Pairwise distances with non-identity mass should not be the same as unweighted "
+            f"pairwise distances for metric '{metric}'."
+        )
 
-    def test_pdistw_eye(self, random_data):
-        X, _, eye, noneye = random_data
+    @pytest.mark.parametrize("metric", ['euclidean', 'sqeuclidean', 'cosine', 'correlation'])
+    def test_pdistw_eye(self, random_2d, metric):
+        X, _, eye, noneye = random_2d
 
-        for metric in ['euclidean', 'sqeuclidean', 'cosine', 'correlation']:
-            pdist_w = pdistw(X, mass=eye, metric=metric)
-            pdist_u = pdist(X.T, metric=metric)
-            assert np.allclose(pdist_w, pdist_u), "Pairwise distances with identity mass should " \
-                                                  "be the same as unweighted pairwise distances " \
-                                                  f"for metric '{metric}'."
-            
-            pdist_wn = pdistw(X, mass=noneye, metric=metric)
-            assert not np.allclose(pdist_wn, pdist_w), (
-                "Pairwise distances with non-identity mass should not be the same as unweighted "
-                f"pairwise distances for metric '{metric}'."
-            )
+        pdist_w = pdistw(X, mass=eye, metric=metric)
+        pdist_u = pdist(X.T, metric=metric)
+        assert np.allclose(pdist_w, pdist_u), "Pairwise distances with identity mass should " \
+                                                "be the same as unweighted pairwise distances " \
+                                                f"for metric '{metric}'."
+        
+        pdist_wn = pdistw(X, mass=noneye, metric=metric)
+        assert not np.allclose(pdist_wn, pdist_w), (
+            "Pairwise distances with non-identity mass should not be the same as unweighted "
+            f"pairwise distances for metric '{metric}'."
+        )
 
-class Test1D:
-    def test_dotw_1d(self, random_data):
-        X, Y, eye, _ = random_data
+class TestEye1D:
+    def test_dotw_1d(self, random_2d):
+        X, Y, eye, _ = random_2d
         x_1d = X[:, 0]
         y_1d = Y[:, 0]
         assert np.allclose(dotw(x_1d, y_1d, mass=eye), np.dot(x_1d, y_1d))
     
-    def test_gramw_1d(self, random_data):
-        X, Y, eye, _ = random_data
+    def test_gramw_1d(self, random_2d):
+        X, Y, eye, _ = random_2d
         x_1d = X[:, 0]
         y_1d = Y[:, 0]
         gram_w = gramw(x_1d, y_1d, mass=eye)
         gram_u = np.dot(x_1d, y_1d)
         assert np.allclose(gram_w, gram_u), "Gramw with 1D input should match dot product."
     
-    def test_ssqw_1d(self, random_data):
-        X, _, eye, _ = random_data
+    def test_ssqw_1d(self, random_2d):
+        X, _, eye, _ = random_2d
         x_1d = X[:, 0]
         ssq_w = ssqw(x_1d, mass=eye)
         ssq_u = np.sum(x_1d**2)
         assert np.allclose(ssq_w, ssq_u), "Ssqw with 1D input should match sum of squares."
     
-    def test_meanw_1d(self, random_data):
-        X, _, eye, _ = random_data
+    def test_meanw_1d(self, random_2d):
+        X, _, eye, _ = random_2d
         x_1d = X[:, 0]
         mean_w = meanw(x_1d, mass=eye)
         mean_u = np.mean(x_1d)
         assert np.allclose(mean_w, mean_u), "Meanw with 1D input should match unweighted mean."
     
-    def test_demeanw_1d(self, random_data):
-        X, _, eye, _ = random_data
+    def test_demeanw_1d(self, random_2d):
+        X, _, eye, _ = random_2d
         x_1d = X[:, 0]
         demean_w = demeanw(x_1d, mass=eye)
         demean_u = x_1d - np.mean(x_1d)
         assert np.allclose(demean_w, demean_u), "Demeanw with 1D input should match unweighted demean."
     
-    def test_varw_1d(self, random_data):
-        X, _, eye, _ = random_data
+    def test_varw_1d(self, random_2d):
+        X, _, eye, _ = random_2d
         x_1d = X[:, 0]
         var_w = varw(x_1d, mass=eye)
         var_u = np.var(x_1d, ddof=0)
         assert np.allclose(var_w, var_u), "Varw with 1D input should match unweighted variance."
     
-    def test_stdw_1d(self, random_data):
-        X, _, eye, _ = random_data
+    def test_stdw_1d(self, random_2d):
+        X, _, eye, _ = random_2d
         x_1d = X[:, 0]
         std_w = stdw(x_1d, mass=eye)
         std_u = np.std(x_1d)
         assert np.allclose(std_w, std_u), "Stdw with 1D input should match unweighted std dev."
     
-    def test_zscorew_1d(self, random_data):
-        X, _, eye, _ = random_data
+    def test_zscorew_1d(self, random_2d):
+        X, _, eye, _ = random_2d
         x_1d = X[:, 0]
         zscore_w = zscorew(x_1d, mass=eye)
         zscore_u = zscore(x_1d)
         assert np.allclose(zscore_w, zscore_u), "Zscorew with 1D input should match unweighted z-score."
     
-    def test_covw_1d(self, random_data):
-        X, Y, eye, _ = random_data
+    def test_covw_1d(self, random_2d):
+        X, Y, eye, _ = random_2d
         x_1d = X[:, 0]
         y_1d = Y[:, 0]
         cov_w = covw(x_1d, y_1d, mass=eye)
         cov_u = np.cov(x_1d, y_1d, bias=True)[0, 1]
         assert np.allclose(cov_w, cov_u), "Covw with 1D input should match unweighted covariance."
     
-    def test_vecnormw_1d(self, random_data):
-        X, _, eye, _ = random_data
+    def test_vecnormw_1d(self, random_2d):
+        X, _, eye, _ = random_2d
         x_1d = X[:, 0]
         norm_w = vecnormw(x_1d, mass=eye)
         norm_u = np.linalg.norm(x_1d)
         assert np.allclose(norm_w, norm_u), "Vecnormw with 1D input should match unweighted norm."
     
-    def test_lstsqw_1d(self, random_data):
-        X, Y, eye, _ = random_data
+    def test_lstsqw_1d(self, random_2d):
+        X, Y, eye, _ = random_2d
         x_1d = X[:, 0]
         y_1d = Y[:, 0]
         # lstsqw expects 2D, so reshape 1D to (n, 1)
@@ -283,8 +422,8 @@ class Test1D:
         lstsq_u = np.linalg.lstsq(x_1d[:, np.newaxis], y_1d[:, np.newaxis], rcond=None)[0]
         assert np.allclose(lstsq_w, lstsq_u), "Lstsqw with 1D input should match unweighted lstsq."
     
-    def test_solvew_1d(self, random_data):
-        X, Y, eye, _ = random_data
+    def test_solvew_1d(self, random_2d):
+        X, Y, eye, _ = random_2d
         x_1d = X[:, 0]
         y_1d = Y[:, 0]
         # solvew expects 2D, so reshape 1D to (n, 1)
@@ -292,15 +431,194 @@ class Test1D:
         solve_u = np.linalg.solve(x_1d[:, np.newaxis].T @ x_1d[:, np.newaxis], 
                                   x_1d[:, np.newaxis].T @ y_1d[:, np.newaxis])
         assert np.allclose(solve_w, solve_u), "Solvew with 1D input should match unweighted solve."
-    
-    def test_cdistw_1d(self, random_data):
-        X, Y, eye, _ = random_data
+
+    @pytest.mark.parametrize("metric", ['euclidean', 'sqeuclidean', 'cosine', 'correlation'])
+    def test_cdistw_1d(self, random_2d, metric):
+        X, Y, eye, _ = random_2d
         x_1d = X[:, 0]
         y_1d = Y[:, 0]
         # cdistw expects column vectors
-        cdist_w = cdistw(x_1d, y_1d, mass=eye)
-        cdist_u = cdist(x_1d[:, np.newaxis].T, y_1d[:, np.newaxis].T)
+        cdist_w = cdistw(x_1d, y_1d, mass=eye, metric=metric)
+        cdist_u = cdist(x_1d[:, np.newaxis].T, y_1d[:, np.newaxis].T, metric=metric)
         assert np.allclose(cdist_w, cdist_u), "Cdistw with 1D input should match unweighted cdist."
+
+    @pytest.mark.parametrize("metric", ['euclidean', 'sqeuclidean', 'cosine', 'correlation'])
+    def test_pdistw_1d(self, random_2d, metric):
+        X, _, eye, _ = random_2d
+        x_1d = X[:, 0]
+        # pdistw expects column vector
+        pdist_w = pdistw(x_1d, mass=eye, metric=metric)
+        assert pdist_w.shape == (), "Pairwise distances of a single 1D vector should be empty." 
+
+class TestLumped2D: 
+    def test_gramw_noneye(self, random_2d):
+        X, Y, _, noneye = random_2d
+        gram_w = gramw(X, Y, mass=noneye)
+        gram_u = X.T @ (noneye @ Y)
+        np.testing.assert_allclose(gram_w, gram_u)
+
+    @pytest.mark.parametrize('keepdims', [True, False])
+    def test_dotw_noneye(self, random_2d, keepdims):
+        X, Y, _, noneye = random_2d
+        dot_w = dotw(X, Y, mass=noneye, keepdims=keepdims)
+        dot_u = np.einsum('ij,ij->j', X, noneye @ Y)
+        if keepdims:
+            dot_u = np.expand_dims(dot_u, axis=0)
+        np.testing.assert_allclose(dot_w, dot_u)
+
+    @pytest.mark.parametrize('keepdims', [True, False])
+    def test_ssqw_noneye(self, random_2d, keepdims):
+        X, _, _, noneye = random_2d
+        ssq_w = ssqw(X, mass=noneye, keepdims=keepdims)
+        ssq_u = np.sum(X * (noneye @ X), axis=0, keepdims=keepdims)
+        np.testing.assert_allclose(ssq_w, ssq_u)
+
+    @pytest.mark.parametrize('keepdims', [True, False])
+    def test_meanw_noneye(self, random_2d, keepdims):
+        X, _, _, noneye = random_2d
+        mean_w = meanw(X, mass=noneye, keepdims=keepdims)
+        mean_u = np.average(X, weights=noneye.diagonal(), axis=0, keepdims=keepdims)
+        np.testing.assert_allclose(mean_w, mean_u)
+
+    def test_demeanw_noneye(self, random_2d):
+        X, _, _, noneye = random_2d
+        demean_w = demeanw(X, mass=noneye)
+        demean_u = X - np.average(X, weights=noneye.diagonal(), axis=0, keepdims=True)
+        np.testing.assert_allclose(demean_w, demean_u)
+
+    @pytest.mark.parametrize('keepdims', [True, False])
+    def test_varw_noneye(self, random_2d, keepdims):
+        X, _, _, noneye = random_2d
+        var_w = varw(X, mass=noneye, keepdims=keepdims)
+        mean_u = np.average(X, weights=noneye.diagonal(), axis=0, keepdims=True)
+        var_u = np.average((X - mean_u) ** 2, weights=noneye.diagonal(), axis=0, keepdims=keepdims)
+        np.testing.assert_allclose(var_w, var_u)
+
+    @pytest.mark.parametrize('keepdims', [True, False])
+    def test_stdw_noneye(self, random_2d, keepdims):
+        X, _, _, noneye = random_2d
+        std_w = stdw(X, mass=noneye, keepdims=keepdims)
+        std_u = np.sqrt(varw(X, mass=noneye, keepdims=keepdims))
+        np.testing.assert_allclose(std_w, std_u)
+
+    @pytest.mark.parametrize('metric', ['euclidean', 'sqeuclidean', 'cosine', 'correlation'])
+    def test_cdistw_noneye(self, random_2d, metric):
+        X, Y, _, noneye = random_2d
+        cdist_w = cdistw(X, Y, mass=noneye, metric=metric)
+        cdist_u = cdist(X.T, Y.T, metric=metric, w=noneye.diagonal())
+        np.testing.assert_allclose(cdist_w, cdist_u)
+
+    @pytest.mark.parametrize('metric', ['euclidean', 'sqeuclidean', 'cosine', 'correlation'])
+    def test_pdistw_noneye(self, random_2d, metric):
+        X, _, _, noneye = random_2d
+        cdist_w = pdistw(X, mass=noneye, metric=metric)
+        cdist_u = pdist(X.T, metric=metric, w=noneye.diagonal())
+        np.testing.assert_allclose(cdist_w, cdist_u)
+    
+@pytest.fixture(scope='module')
+def random_3d(): 
+    nv = 23
+    X = np.random.rand(nv, 3, 4)  # 3D data
+    Y = np.random.rand(nv, 2, 5)  # 3D data
+    massL = np.random.rand(nv, nv)
+    mass = massL @ massL.T  # positive semi-definite mass matrix
+    return X, Y, mass, massL
+
+class TestConsistent3D: 
+    
+    def test_gramw_nd(self, random_3d):
+        X, Y, mass, _ = random_3d
+        gram_w = gramw(X, Y, mass=mass)
+        expected = np.einsum('ijk,il,lmn->jkmn', X, mass, Y)
+        np.testing.assert_allclose(gram_w, expected)
+
+    def test_dotw_nd(self, random_3d):
+        X, Y, mass, _ = random_3d
+        X = X[:, :, 0]
+        Y = Y[:, [0], :]  
+        dot_w = dotw(X, Y, mass=mass)
+        expected = np.einsum('ij,il,ljk->jk', X, mass, Y)
+        np.testing.assert_allclose(dot_w, expected)
+
+    def test_ssqw_nd(self, random_3d):
+        X, _, mass, _ = random_3d
+        ssq_w = ssqw(X, mass=mass)
+        expected = np.einsum('ijk,il,ljk->jk', X, mass, X)
+        np.testing.assert_allclose(ssq_w, expected)
+
+    def test_meanw_nd(self, random_3d):
+        X, _, mass, _ = random_3d
+        mean_w = meanw(X, mass=mass)
+        expected = np.einsum('ijk,il->jk', X, mass) / mass.sum()
+        np.testing.assert_allclose(mean_w, expected)
+
+    def test_varw_nd(self, random_3d):
+        X, _, mass, _ = random_3d
+        var_w = varw(X, mass=mass)
+        X_dm = demeanw(X, mass)
+        expected = np.einsum('ijk,il,ljk->jk', X_dm, mass, X_dm) / mass.sum()
+        np.testing.assert_allclose(var_w, expected)
+
+    def test_stdw_nd(self, random_3d):
+        X, _, mass, _ = random_3d
+        std_w = stdw(X, mass=mass)
+        X_dm = demeanw(X, mass)
+        expected = np.sqrt(np.einsum('ijk,il,ljk->jk', X_dm, mass, X_dm) / mass.sum())
+        np.testing.assert_allclose(std_w, expected)
+
+    def test_covw_nd(self, random_3d):
+        X, Y, mass, _ = random_3d
+        cov_w = covw(X, Y, mass=mass)
+        X_dm = demeanw(X, mass)
+        Y_dm = demeanw(Y, mass)
+        expected = np.einsum('ijk,il,lmn->jkmn', X_dm, mass, Y_dm) / mass.sum()
+        np.testing.assert_allclose(cov_w, expected)
+
+    def test_vecnormw_nd(self, random_3d):
+        X, _, mass, _ = random_3d
+        norm_w = vecnormw(X, mass=mass)
+        expected = np.sqrt(np.einsum('ijk,il,ljk->jk', X, mass, X))
+        np.testing.assert_allclose(norm_w, expected)
+
+    @pytest.mark.parametrize('metric', ['correlation', 'cosine'])
+    @pytest.mark.parametrize('func', ['cdist', 'pdist'])
+    def test_distw_cosine_nd(self, random_3d, metric, func):
+        X, Y, mass, _ = random_3d
+        
+        if func == 'pdist':
+            dist_w = pdistw(X, mass, metric=metric)
+            Y = X # For explicit calculation, just set Y to X
+        else:
+            dist_w = cdistw(X, Y, mass=mass, metric=metric)
+
+        if metric == 'correlation':
+            X = demeanw(X, mass=mass)
+            Y = demeanw(Y, mass=mass)
+        X_normalized = X / vecnormw(X, mass=mass, keepdims=True)
+        Y_normalized = Y / vecnormw(Y, mass=mass, keepdims=True)
+        expected = 1 - np.einsum('ijk,il,lmn->jkmn', X_normalized, mass, Y_normalized)
+        
+        np.testing.assert_allclose(dist_w, expected, atol=1e-12)
+
+    @pytest.mark.parametrize('metric', ['euclidean', 'sqeuclidean'])
+    @pytest.mark.parametrize('func', ['cdist', 'pdist'])
+    def test_distw_sqeuclidean_nd(self, random_3d, metric, func):
+        X, Y, mass, _ = random_3d
+        
+        if func == 'pdist':
+            dist_w = pdistw(X, mass=mass, metric=metric)
+            Y = X
+        else:
+            dist_w = cdistw(X, Y, mass=mass, metric=metric)
+
+        diff = X[:, :, :, None, None] - Y[:, None, None, :, :]
+        expected = np.einsum('vjkmn,vw,wjkmn->jkmn', diff, mass, diff)
+
+        atol = 1e-12
+        if metric == 'euclidean':
+            expected = np.sqrt(expected)
+            atol = np.sqrt(atol)
+        np.testing.assert_allclose(dist_w, expected, atol=atol)
 
 def test_sigmoid_rescale():
     size = 1000
@@ -322,15 +640,15 @@ def test_sigmoid_rescale():
 
 class TestParcellate:
     @pytest.fixture(scope='class')
-    def parcellation(self, random_data):
-        n_verts = random_data[0].shape[0]
+    def parcellation(self, random_2d):
+        n_verts = random_2d[0].shape[0]
         parc = np.zeros(n_verts, dtype=int)
         parc[n_verts//3:] = 1
         parc[2*n_verts//3:] = 2
         return parc
 
-    def test_parcellate_sum_eye(self, random_data, parcellation):
-        X, _, eye, _ = random_data
+    def test_parcellate_sum_eye(self, random_2d, parcellation):
+        X, _, eye, _ = random_2d
         n_verts = X.shape[0]
 
         # identity mass and method='sum' should sum values within parcels
@@ -343,8 +661,8 @@ class TestParcellate:
         assert np.allclose(parc_sum, expected_sum), \
             "Parcellate with identity mass and method='sum' should sum vertex values."
     
-    def test_parcellate_mean_eye(self, random_data, parcellation):
-        X, _, eye, _ = random_data
+    def test_parcellate_mean_eye(self, random_2d, parcellation):
+        X, _, eye, _ = random_2d
         n_verts = X.shape[0]
 
         # identity mass and method='mean' should average values within parcels
@@ -357,8 +675,8 @@ class TestParcellate:
         assert np.allclose(parc_mean, expected_mean), \
             "Parcellate with identity mass and method='mean' should average vertex values."
 
-    def test_parcellate_sum_vs_mean(self, random_data, parcellation):
-        X, _, eye, _ = random_data
+    def test_parcellate_sum_vs_mean(self, random_2d, parcellation):
+        X, _, eye, _ = random_2d
         X_abs = np.abs(X)
 
         parc_sum = parcellate(X_abs, parcellation, mass=eye, method='sum')
@@ -368,8 +686,8 @@ class TestParcellate:
         assert np.all(parc_sum > parc_mean), \
             "Parcellate sum should be > mean for positive data."
     
-    def test_parcellate_1d_data(self, random_data, parcellation):
-        X, _, eye, _ = random_data
+    def test_parcellate_1d_shape(self, random_2d, parcellation):
+        X, _, eye, _ = random_2d
         X_1d = X[:, 0]  # Get first column as 1D
 
         # Test with 1D data should return 1D result
@@ -377,8 +695,8 @@ class TestParcellate:
         assert parc_result.ndim == 1, "Parcellate with 1D data should return 1D result."
         assert parc_result.shape[0] == 3, "Result should have 3 parcels."
     
-    def test_parcellate_nonidentity_mass(self, random_data, parcellation):
-        X, _, eye, noneye = random_data
+    def test_parcellate_nonidentity_mass(self, random_2d, parcellation):
+        X, _, eye, noneye = random_2d
         
         parc_eye = parcellate(X, parcellation, mass=eye, method='mean')
         parc_noneye = parcellate(X, parcellation, mass=noneye, method='mean')
@@ -386,22 +704,23 @@ class TestParcellate:
         # Non-identity mass should produce different results
         assert not np.allclose(parc_eye, parc_noneye), \
             "Parcellate with non-identity mass should produce different results."
+
+    def test_parcellate_2d_lumped(self, random_2d, parcellation):
+        X, _, _, noneye = random_2d
+        out = np.empty((max(parcellation)+1, X.shape[1]), dtype=X.dtype)
+        for i in range(max(parcellation)+1):
+            mask = parcellation == i
+            out[i] = np.average(X[mask], weights=noneye.diagonal()[mask], axis=0)
+        np.testing.assert_allclose(out, parcellate(X, parcellation, mass=noneye, method='mean'))
     
-    def test_parcellate_invalid_method(self, random_data, parcellation):
-        X, _, eye, _ = random_data
+    def test_parcellate_invalid_method(self, random_2d, parcellation):
+        X, _, eye, _ = random_2d
         
         with pytest.raises(ValueError, match="method must be 'mean' or 'sum'"):
             parcellate(X, parcellation, mass=eye, method='how2say')
     
-    def test_parcellate_invalid_data_dim(self, random_data, parcellation):
-        X, _, eye, _ = random_data
-        X_3d = X[:, :, np.newaxis]
-        
-        with pytest.raises(ValueError, match="data must be 1D or 2D"):
-            parcellate(X_3d, parcellation, mass=eye)
-    
-    def test_parcellate_invalid_parc_dim(self, random_data, parcellation):
-        X, _, eye, _ = random_data
+    def test_parcellate_invalid_parc_dim(self, random_2d, parcellation):
+        X, _, eye, _ = random_2d
         parc_2d = np.stack([parcellation, parcellation], axis=-1)
         
         with pytest.raises(ValueError, match="Parcellation map must be 1D"):
