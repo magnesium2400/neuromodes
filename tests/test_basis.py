@@ -110,7 +110,7 @@ def test_decompose_nans(solver_32k):
     with pytest.warns(UserWarning, match="values detected in data"):
         coeffs_masked = decompose(data_nans, modes_noise, method='regress', checks='maps',
                                   mass=csc_matrix(eye(solver_32k.n_verts+extraverts)))
-    assert np.allclose(coeffs, coeffs_masked, atol=1e-2), \
+    assert np.allclose(coeffs, coeffs_masked), \
         'coeffs values for project method are not close when data contains NaNs'
 
 # TODO: more complicated version of above test, where three maps have two unique patterns of NaNs
@@ -122,8 +122,7 @@ def gen_eigenmap(solver):
 
     # Use randomly weighted sums of modes to generate maps
     n_maps = 5
-    rng = np.random.default_rng(0)
-    weights = rng.standard_normal(size=(solver.n_modes, n_maps))
+    weights = np.random.default_rng().standard_normal(size=(solver.n_modes, n_maps))
     eigenmaps = solver.emodes @ weights
 
     return eigenmaps, weights
@@ -168,6 +167,18 @@ class TestFilter:
         np.testing.assert_allclose(filtered, solver.emodes @ (filter_func(solver.evals)[:, np.newaxis] * weights))
         np.testing.assert_allclose(solver.decompose(filtered), filter_func(solver.evals)[:, np.newaxis] * weights)
 
+    def test_filter_reciprocal(self, solver, gen_eigenmap):
+        eigenmaps, weights = gen_eigenmap
+        r = np.random.rand()  # Regularization parameter
+
+        # Apply a reciprocal filter to the eigenvalues
+        filter_func = lambda evals: 1 / (1 + r**2 * evals)  # Avoid division by zero
+        filtered = spectralfilter(eigenmaps, solver.emodes, solver.evals, mass=solver.mass, filter=filter_func)
+
+        # Check that the filtered maps are not equal to the original maps
+        assert not np.allclose(filtered, eigenmaps), "Filtered maps should not be equal to the original maps."
+        np.testing.assert_allclose(filtered, solver.emodes @ (filter_func(solver.evals)[:, np.newaxis] * weights))
+        np.testing.assert_allclose(solver.decompose(filtered), filter_func(solver.evals)[:, np.newaxis] * weights)
 
 def test_reconstruct_project(solver):
     coeffs = decompose(solver.emodes, solver.emodes, mass=solver.mass)

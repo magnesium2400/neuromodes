@@ -764,14 +764,8 @@ def parcellate(
     data_parc = _multiply_nd(parc_mass, data)
     return data_parc
 
-# TODO add support for passing through parcellation matrix without modification. probably if 1d, 
-# assume it's a parcellation vector, if 2d, assume it's a parcellation matrix.
-# TODO probably make mask a separate input, and maybe make it possible to return both 
-# masked and unmasked parcellation matrices. Note that `parcellate` can't handle a mask, because
-# the mass matrix can't be masked post-hoc
-# TODO add support for dtypes
 def _create_parcellation_matrix(
-    parcellation: NDArray[np.integer], 
+    parcellation: csc_matrix | NDArray[np.integer], 
     mask: NDArray[np.bool_] | None = None
 ) -> csc_matrix:
     """
@@ -793,11 +787,10 @@ def _create_parcellation_matrix(
     ValueError
         If ``parcellation`` is not 1D.
     """
-    parcellation = np.asarray(parcellation) # user has to ensure parc is integer
     n_verts = parcellation.shape[0]
     mask = np.asarray(mask, dtype=bool) if mask is not None else np.ones(n_verts, dtype=bool)
 
-    if parcellation.ndim == 1: 
+    if parcellation.ndim == 1: # will be dense
         parc_mat = csc_matrix(
             (np.ones(np.sum(mask)),
             (np.arange(n_verts)[mask], parcellation[mask])),

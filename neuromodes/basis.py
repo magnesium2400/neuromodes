@@ -66,6 +66,8 @@ def decompose(
 	checks: _CheckKind | None = ...
 ) -> list[NDArray[np.floating]]: ...
 
+# TODO P3: add `integrate` option like LaPy for when data are already mass-corrected
+# TODO P4? add support for data=None which is equivalent to data=speye(n_verts)
 def decompose(
     data: NDArray[np.floating],
     emodes: NDArray[np.floating],
@@ -189,8 +191,11 @@ def decompose(
 
     return coeffs[0] if squeeze_output else coeffs # convert back to array if mode_counts was None/scalar
 
-# TODO future: add 'force_list_output' option st. even if coeffs are eg. [(10,),(20,),(30,)], 
+# TODO P1? add checks to ensure that coeffs and mode_ids/mode_counts are compatible 
+# (namely that len(mode_ids) == len(coeffs) and coeffs[j].shape[0] == len(mode_ids[j]) for all j)
+# TODO P5: add 'force_list_output' option st. even if coeffs are eg. [(10,),(20,),(30,)], 
 # return a list of 3 arrays instead of a single array of shape (n_verts, ..., 3)
+# or force_same_output. or perhaps default to that and have force_array_output option?
 def reconstruct(
     coeffs: list[NDArray[np.floating]] | NDArray[np.floating],
     emodes: NDArray[np.floating],
@@ -271,15 +276,16 @@ def reconstruct(
 
     mode_ids, squeeze_output = _process_mode_ids(mode_counts, mode_ids, emodes.shape[1])
     coeffs_same_shape = all(c.shape[1:] == coeffs[0].shape[1:] for c in coeffs)
+    output_dtype = np.result_type(*[c.dtype for c in coeffs], emodes.dtype)
 
     if squeeze_output: # mode_counts is None or scalar, so coeffs is a single array
         recon_nd: np.ndarray = _multiply_nd(emodes, coeffs)
     elif isinstance(coeffs, np.ndarray):
-        recon_nd = np.empty((emodes.shape[0], *coeffs.shape[1:])) # TODO set dtype using emodes and coeffs
+        recon_nd = np.empty((emodes.shape[0], *coeffs.shape[1:]), dtype=output_dtype)
         for j, mids in enumerate(mode_ids):
             recon_nd[..., j] = _multiply_nd(emodes[:, mids], coeffs[...,j])
     elif coeffs_same_shape:
-        recon_nd = np.empty((emodes.shape[0], *coeffs[0].shape[1:], len(coeffs))) # TODO set dtype using emodes and coeffs
+        recon_nd = np.empty((emodes.shape[0], *coeffs[0].shape[1:], len(coeffs)), dtype=output_dtype)
         for j, mids in enumerate(mode_ids):
             recon_nd[..., j] = _multiply_nd(emodes[:, mids], coeffs[j])
     else:
@@ -287,6 +293,8 @@ def reconstruct(
     return recon_nd
 
 
+# TODO P2: add support for data=None which is equivalent to data=speye(n_verts)
+# TODO P3: add `integrate` option like LaPy for when data are already mass-corrected
 def spectralfilter(
         data, 
         emodes, 
@@ -297,6 +305,12 @@ def spectralfilter(
         mode_counts = None,
         checks = True
 ):
+    """
+    filter should be a function that takes in the vector of eigenvalues and returns either
+    (i) a vector of the same length (which will be converted to a diagonal matrix), or 
+    (ii) a numpy or scipy.sparse matrix of shape (n_modes, n_modes).
+    Note that only the corresponding modes in mode_ids/mode_counts will be used for each iteration.
+    """
 
     mode_ids, squeeze_output = _process_mode_ids(mode_counts, mode_ids, emodes.shape[1])
 
@@ -306,9 +320,9 @@ def spectralfilter(
     if fe.ndim == 1:
         fe = diags(fe, dtype=evals.dtype)
 
-    filtered_coeffs = [_extract_submatrix(fe, m, m) @ c for m,c in zip(mode_ids, coeffs)]
+    filtered_coeffs = [_multiply_nd(_extract_submatrix(fe, m, m), c) for m,c in zip(mode_ids, coeffs)]
 
-    out = reconstruct(emodes, coeffs=filtered_coeffs, mode_ids=mode_ids, checks=False)
+    out = reconstruct(filtered_coeffs, emodes, mode_ids=mode_ids, checks=False)
 
     if squeeze_output:
         out = np.squeeze(out, axis=-1)
@@ -321,7 +335,7 @@ def _extract_submatrix(A, rows, cols) -> NDArray[np.floating] | csc_matrix:
     return A[np.ix_(rows, cols)]
 
 
-# TODO future: see if this can be rewritten with some kind of 'cdistw_diagonal' function
+# TODO P5: see if this can be rewritten with some kind of 'cdistw_diagonal' function
 # which finds the diagonal of the distance matrix without calculating the full matrix
 def calc_recon_error(
     data: NDArray[np.floating],

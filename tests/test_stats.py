@@ -58,16 +58,15 @@ class TestGramwShapesAndTypes:
             mass = sparse.csc_matrix(mass)
 
         gram = gramw(x, y, mass=mass)
+        gram_values = gram.toarray() if issparse(gram) else gram
         assert gram.ndim == len(dims_x) + len(dims_y)
         assert gram.shape[0:len(dims_x)] == dims_x
         assert gram.shape[len(dims_x):] == dims_y
 
         expected = self._manual_mutiply(x, y, mass)
-        gram_values = gram.toarray() if issparse(gram) else gram
         expected_values = expected.toarray() if issparse(expected) else expected
 
         np.testing.assert_allclose(gram_values, expected_values)
-        # np.testing.assert_allclose(np.array(gram), np.array(self._manual_mutiply(x, y, mass)))
 
 class TestDotwShapesAndTypes:
 
@@ -717,15 +716,9 @@ class TestParcellate:
         X, _, eye, _ = random_2d
         
         with pytest.raises(ValueError, match="method must be 'mean' or 'sum'"):
-            parcellate(X, parcellation, mass=eye, method='how2say')
-    
-    def test_parcellate_invalid_parc_dim(self, random_2d, parcellation):
-        X, _, eye, _ = random_2d
-        parc_2d = np.stack([parcellation, parcellation], axis=-1)
-        
-        with pytest.raises(ValueError, match="Parcellation map must be 1D"):
-            parcellate(X, parc_2d, mass=eye)
+            parcellate(X, parcellation, mass=eye, method='foo') # type: ignore
 
+    # TODO add tests for 2d parcellation array (parcellation passed through)
     # TODO: add something similar to MGH's example where a simple function is irregularly sampled
     # but accounted for by the mass matrix, and check that parcellation recovers the expected values
     # in each parcel.
