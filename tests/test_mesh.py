@@ -2,7 +2,7 @@ import numpy as np
 from lapy import TetMesh, TriaMesh
 from pytest import raises
 
-from neuromodes.mesh import check_surf, check_vol, mask_mesh
+from neuromodes.mesh import check_surf, check_vol, mask_geometry
 
 
 def test_mask_surf():
@@ -27,7 +27,7 @@ def test_mask_surf():
 
     mask = np.array([True, True, True, True, False, False])
 
-    masked_vol = mask_mesh(vol, mask)
+    masked_vol = mask_geometry(vol, mask)
 
     # Only the first tetrahedron should remain
     assert masked_vol.v.shape[0] == 4
@@ -74,7 +74,7 @@ def test_mask_vol():
 
     mask = np.array([True, True, True, True, False, False])
 
-    masked_vol = mask_mesh(vol, mask)
+    masked_vol = mask_geometry(vol, mask)
 
     # Only the first tetrahedron should remain
     assert masked_vol.v.shape[0] == 4

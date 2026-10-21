@@ -13,9 +13,11 @@ import numpy as np
 from scipy.sparse import csc_matrix, spmatrix, diags, issparse
 from scipy.spatial.distance import cdist as scipy_cdist, squareform as scipy_squareform
 
-from neuromodes.eigen import EigenData
+# from neuromodes.eigen import EigenData
+from neuromodes.validation import _create_mass_matrix, _create_parcellation_matrix, _mass_to_areas, _check_n_verts
 
 if TYPE_CHECKING:
+    from typing import Any
     from numpy.typing import NDArray
     from scipy.spatial.distance import _MetricCallback, _MetricKind
 
@@ -322,9 +324,7 @@ def meanw(
     # ved = EigenData(data=data, mass=mass)
     # data, mass = ved.data, ved.mass
     data = np.asarray(data)
-    areas = _mass_to_areas(mass, data.shape[0])
-    if keepdims: 
-        areas = areas[:, None]
+    areas = _mass_to_areas(mass, data.shape[0], keepdims=keepdims)
     num = _dot_nd(areas, data)
     return num / areas.sum() # np.float
 
@@ -668,9 +668,11 @@ def solvew(
     np.ndarray
         The solution to the weighted least squares problem, of shape ``(n_maps_a, n_maps_b)``.
     """
-    ved = EigenData(data=(data_a, data_b), mass=mass)
-    a, b = ved.data
-    mass = _create_mass_matrix(ved.mass, a.shape[0])
+    # ved = EigenData(data=(data_a, data_b), mass=mass)
+    # a, b = ved.data
+    a, b = data_a, data_b
+    mass = _create_mass_matrix(mass, a.shape[0])
+    _check_n_verts(a=a, b=b, mass=mass)
     # Solves (a'Wa)x = (a'Wb)
     return np.linalg.solve(a.T @ mass @ a, a.T @ mass @ b)
 
@@ -679,7 +681,8 @@ def lstsqw(
     data_b: NDArray[np.floating],
     mass: csc_matrix | NDArray[np.floating] | None,
     rcond: float | None = None
-) -> tuple[NDArray[np.floating], int, float, NDArray[np.floating]]:
+# ) -> tuple[NDArray[np.floating], int, float, NDArray[np.floating]]:
+) -> tuple[NDArray[np.floating[Any]], NDArray[np.floating[Any]], np.int32, NDArray[np.floating[Any]]]: 
     """
     Solve the weighted least squares problem using the vertex areas (i.e., lumped mass matrix),
     equivalent to the approximation ``(√(areas)a)x ≈ √(areas)b``.
@@ -704,10 +707,13 @@ def lstsqw(
         Least-squares solution. Shape is ``(n_maps_a, n_maps_b)`` if ``data_b`` is 2D, or
         ``(n_maps_a,)`` if ``data_b`` is 1D.
     """
-    ved = EigenData(data=(data_a, data_b), mass=mass)
-    a, b = ved.data
+    # ved = EigenData(data=(data_a, data_b), mass=mass)
+    # a, b = ved.data
+    mass = _create_mass_matrix(mass, data_a.shape[0])
+    a, b = data_a, data_b
+    _check_n_verts(a=a, b=b, mass=mass)
 
-    va = np.sqrt(_mass_to_areas(ved.mass, a.shape[0])) # (n_verts,)
+    va = np.sqrt(_mass_to_areas(mass, a.shape[0])) # (n_verts,)
     aw = a * va[:, np.newaxis]
     bw = b * va[:, np.newaxis] if b.ndim != 1 else b * va
     return np.linalg.lstsq(aw, bw, rcond=rcond)
@@ -764,44 +770,6 @@ def parcellate(
     data_parc = _multiply_nd(parc_mass, data)
     return data_parc
 
-def _create_parcellation_matrix(
-    parcellation: csc_matrix | NDArray[np.integer], 
-    mask: NDArray[np.bool_] | None = None
-) -> csc_matrix:
-    """
-    Converts a parcellation vector to a sparse parcellation matrix.
-
-    Parameters
-    ----------
-    parcellation : array-like
-        The parcellation map, of shape ``(n_verts,)``, where each value is an integer representing
-        the parcel ID for the corresponding vertex.
-
-    Returns
-    -------
-    scipy.sparse.csc_matrix
-        The sparse parcellation matrix, of shape ``(n_verts, n_parcels)``.
-
-    Raises
-    ------
-    ValueError
-        If ``parcellation`` is not 1D.
-    """
-    n_verts = parcellation.shape[0]
-    mask = np.asarray(mask, dtype=bool) if mask is not None else np.ones(n_verts, dtype=bool)
-
-    if parcellation.ndim == 1: # will be dense
-        parc_mat = csc_matrix(
-            (np.ones(np.sum(mask)),
-            (np.arange(n_verts)[mask], parcellation[mask])),
-            shape=(n_verts, np.max(parcellation)+1)
-            )
-    elif parcellation.ndim == 2:
-        parc_mat = csc_matrix(parcellation[mask])
-    else: 
-        raise ValueError(f"Parcellation map must be 1D or 2D; got {parcellation.ndim}D.")
-
-    return parc_mat
 
 def sigmoid_rescale(
     data: NDArray[np.floating],
@@ -848,58 +816,7 @@ def sigmoid_rescale(
         the human and non-human primate cortex. bioRxiv. https://doi.org/10.64898/2026.01.22.701178
     """
     # Format / validate arguments
-    if checks is not False:
-        data = EigenData(data=data).data
+    # if checks is not False:
+    #     data = EigenData(data=data).data
     
     return lower + (upper - lower) / (1 + np.exp(-steepness * (data - center)))
-
-def _mass_to_areas(
-    mass: csc_matrix | NDArray[np.floating] | None = None,
-    n_verts: int | None = None,
-    keepdims: bool = False
-) -> NDArray[np.floating]:
-    mass = np.asarray(_create_mass_matrix(mass=mass, n_verts=n_verts).sum(axis=1))
-    if not keepdims:
-        mass = mass.squeeze(axis=1)
-    return mass
-
-# TODO future: consider adding dtype parameter to _create_mass_matrix for w=None case
-# TODO: consider moving to EigenData
-def _create_mass_matrix(
-    mass: csc_matrix | NDArray[np.floating] | None = None,
-    n_verts: int | None = None
-) -> csc_matrix:
-    
-    if mass is None and n_verts is None:
-        raise ValueError("Either mass or n_verts must be provided.")
-    
-    elif mass is None and n_verts is not None: # appease: pyright
-        warn("Mass matrix not provided; assuming that area at each vertex is 1")
-        output = diags(np.ones(n_verts), format='csc')
-
-    elif isinstance(mass, spmatrix) and mass.shape is not None: # appease: pyright
-        if mass.shape[0] == mass.shape[1]: 
-            output = mass
-        else: 
-            raise ValueError(f"Sparse mass matrix has invalid shape: {mass.shape} (should be square).")
-
-    elif isinstance(mass, np.ndarray) and mass.ndim == 2:
-        if mass.shape[0] == mass.shape[1]:
-            output = mass
-        else: 
-            raise ValueError(f"Dense mass matrix has invalid shape: {mass.shape} (should be square).")
-
-    else: # 1D array, list, tuple, etc. 
-        output = diags(np.ravel(np.asarray(mass)), format='csc')
-
-    output = csc_matrix(output)
-    
-    if output.shape is None: 
-        raise ValueError("Mass matrix has undefined shape.")
-    elif output.shape[0] != output.shape[1]:
-        raise ValueError(f"Mass matrix must be square; got shape {output.shape}.")
-    if n_verts is not None and output.shape != (n_verts, n_verts):
-        raise ValueError(f"Mass matrix has invalid shape: {output.shape} (should be ({n_verts}, "
-                         f"{n_verts})).")
-
-    return output

@@ -14,7 +14,9 @@ from scipy.integrate import solve_ivp
 from scipy.sparse import linalg
 
 from neuromodes.basis import decompose
-from neuromodes.eigen import EigenData
+# from neuromodes.eigen import EigenData
+from neuromodes.validation import _check_n_verts, _create_mass_matrix
+from neuromodes.stats import _multiply_nd
 
 if TYPE_CHECKING:
     from typing import Literal
@@ -143,22 +145,37 @@ def sim_nft_waves(
         activity in the cerebral cortex. Physical Review E. https://doi.org/10.1103/physreve.56.826
     """
     # Format / validate arguments
-    if checks is not False:
-        ved = EigenData(
-            emodes=emodes, evals=evals, mass=mass, stiffness=stiffness, 
-            hetero=hetero, data=ext_input, checks=checks
-            )
-        emodes, evals, mass, stiffness, ext_input, hetero = \
-            ved.emodes, ved.evals, ved.mass, ved.stiffness, ved.data, ved.hetero
-        
-    if emodes is not None: 
+    # if checks is not False:
+    #     ved = EigenData(
+    #         emodes=emodes, evals=evals, mass=mass, stiffness=stiffness, 
+    #         hetero=hetero, data=ext_input, checks=checks
+    #         )
+    #     emodes, evals, mass, stiffness, ext_input, hetero = \
+    #         ved.emodes, ved.evals, ved.mass, ved.stiffness, ved.data, ved.hetero
+
+    if method == 'fem':
+        if mass is None or stiffness is None or mass.shape is None: # make pyright happy
+            raise ValueError("Mass and stiffness matrices must be provided for FEM method.")
+        n_verts = mass.shape[0]
+    elif method in ['fourier', 'ode']:
+        if emodes is None or evals is None:
+            raise ValueError(f"emodes and evals must be provided for {method} method.")
+        if method == 'fourier':
+            mass = _create_mass_matrix(mass, emodes.shape[0])
         n_verts = emodes.shape[0]
-    elif stiffness is not None:
-        n_verts = stiffness.shape[0]
-    elif method == 'fem':
-        raise ValueError(f"mass and stiffness matrices must be provided for {method} method.")
     else: 
-        raise ValueError(f"emodes must be provided for {method} method.")
+        raise ValueError(f"Invalid PDE method '{method}'; must be 'fourier', 'ode', or 'fem'.")
+
+    _check_n_verts(n_verts, emodes=emodes, ext_input=ext_input, mass=mass, stiffness=stiffness, hetero=hetero)
+        
+    # if emodes is not None: 
+    #     n_verts = emodes.shape[0]
+    # elif stiffness is not None:
+    #     n_verts = stiffness.shape[0]
+    # elif method == 'fem':
+    #     raise ValueError(f"mass and stiffness matrices must be provided for {method} method.")
+    # else: 
+    #     raise ValueError(f"emodes must be provided for {method} method.")
         
     r = float(r)
     gamma = float(gamma)
@@ -183,8 +200,8 @@ def sim_nft_waves(
                  f"outside the range of {speed_limits[0]}-{speed_limits[1]} m/s (calculated "
                  f"{calc_str} m/s). Consider changing these parameters to ensure physiologically "
                  "plausible wave speeds, or adjust speed_limits.")
-    if method not in ['fourier', 'ode', 'fem']:
-        raise ValueError(f"Invalid PDE method '{method}'; must be 'fourier', 'ode', or 'fem'.")
+    # if method not in ['fourier', 'ode', 'fem']:
+    #     raise ValueError(f"Invalid PDE method '{method}'; must be 'fourier', 'ode', or 'fem'.")
 
     if ext_input is not None:
         if nt is not None:
@@ -222,7 +239,7 @@ def sim_nft_waves(
     _model_wave = _model_wave_fourier if method == 'fourier' else _model_wave_ode
     activity_coeffs = _model_wave(input_coeffs, dt, r, gamma, evals)
 
-    return emodes @ activity_coeffs
+    return _multiply_nd(emodes, activity_coeffs)
 
 def balloon_model(
     activity: NDArray[np.floating],
@@ -279,9 +296,11 @@ def balloon_model(
         https://doi.org/10.1016/j.neuroimage.2007.07.040
     """
     # Format / validate arguments
-    if checks is not False:
-        ved = EigenData(emodes=emodes, mass=mass, data=activity, checks=checks)
-        emodes, mass, activity = ved.emodes, ved.mass, ved.data
+    # if checks is not False:
+    #     ved = EigenData(emodes=emodes, mass=mass, data=activity, checks=checks)
+    #     emodes, mass, activity = ved.emodes, ved.mass, ved.data
+    mass = _create_mass_matrix(mass, emodes.shape[0])
+    _check_n_verts(emodes=emodes, activity=activity, mass=mass)
 
     if np.isnan(activity).any():
         raise ValueError("activity contains NaN values, which are not allowed.")
@@ -301,7 +320,7 @@ def balloon_model(
     bold_coeffs = _model_balloon(activity_coeffs, dt, **params)
 
     # Transform timeseries from modal coefficients back to vertex space
-    return emodes @ bold_coeffs
+    return _multiply_nd(emodes, bold_coeffs)
 
 def calc_wave_speed(
     r: float,
@@ -781,8 +800,8 @@ def _analytical_fc(
     np.ndarray
         Analytical FC matrix of shape ``(n_verts, n_verts)``.
     """
-    ved = EigenData(emodes=emodes, evals=evals, checks=False)
-    emodes, evals = ved.emodes, ved.evals
+    # ved = EigenData(emodes=emodes, evals=evals, checks=False)
+    # emodes, evals = ved.emodes, ved.evals
     mode_vars = 1.0 / (1 + r**2 * evals)
     cov = emodes @ (mode_vars[:, np.newaxis] * emodes.T)
     diag = np.sqrt(np.diag(cov))

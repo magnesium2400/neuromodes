@@ -136,7 +136,7 @@ def test_sim_nft_waves_reproducibility_fourier(solver):
 
 def test_sim_nft_waves_invalid_input_shape(solver):
 
-    with pytest.raises(ValueError, match=r"data.*first dimension.*3619"):
+    with pytest.raises(ValueError, match=r"dimension mismatch"):
         solver.sim_nft_waves(ext_input=np.ones((4002, 1000)))
 
 def test_sim_nft_waves_invalid_method(solver):

@@ -12,13 +12,15 @@ from lapy import TetMesh, TriaMesh
 from nibabel.gifti.gifti import GiftiImage
 
 from neuromodes.io import fs_extensions
+from neuromodes.validation import _check_n_verts
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
+    from typing import TypeGuard, Any, TypeVar
 
 def is_vol(
     geometry: TetMesh | TriaMesh | GiftiImage | str | Path | dict
-) -> bool:
+) -> TypeGuard[TetMesh]:
     """
     Determine whether the given geometry represents a volume or surface mesh.
 
@@ -30,7 +32,7 @@ def is_vol(
 
     Returns
     -------
-    bool
+    TypeGuard[TetMesh]
         True if the geometry is a volume mesh, False if it is a surface mesh.
 
     Raises
@@ -76,10 +78,39 @@ def is_vol(
             return False
         raise ValueError(err_str)
 
-def mask_mesh(
-    geometry: TriaMesh,
-    mask: NDArray[np.bool_]
-) -> TriaMesh:
+# TODO P5: currently required until at least python 3.13+ (which adds TypeIs)
+def is_surf(
+    geometry: TetMesh | TriaMesh | GiftiImage | str | Path | dict
+) -> TypeGuard[TriaMesh]:
+    """
+    Determine whether the given geometry represents a volume or surface mesh.
+
+    Parameters
+    ----------
+    geometry : lapy.TetMesh, lapy.TriaMesh, nibabel.gifti.GiftiImage, str, Path, or dict
+        The geometry to check. Can be an instance of `lapy.TetMesh`, `lapy.TriaMesh`,
+        `nibabel.gifti.GiftiImage`, a path-like string, or a dictionary with mesh data.
+
+    Returns
+    -------
+    TypeGuard[TriaMesh]
+        True if the geometry is a surface mesh, False otherwise.
+
+    Raises
+    ------
+    ValueError
+        If the geometry is a path-like string with an unrecognized file extension.
+    ValueError
+        If the geometry is a dictionary that does not have keys 'vertices' and 'cells', or if
+        'cells' does not reference an array with shape (n_tetras, 4) for volumes or (n_trias, 3) for
+        surfaces.
+    """
+    return not is_vol(geometry)
+
+def mask_geometry(
+    geometry: TriaMesh | TetMesh,
+    mask: NDArray[np.bool_] | None = None
+) -> TriaMesh | TetMesh:
     """
     Remove specified vertices and corresponding cells from a triangular surface mesh. Note that this
     may produce a non-contiguous mesh with unreferenced vertices--use :func:`check_surf` to validate
@@ -87,26 +118,25 @@ def mask_mesh(
 
     Parameters
     ----------
-    geometry : lapy.TriaMesh
-        The input surface mesh.
+    geometry : lapy.TriaMesh or lapy.TetMesh
+        The input surface or volume mesh.
     mask : array-like
         A boolean array indicating which vertices to keep (``True``) or remove (``False``).
 
     Returns
     -------
-    lapy.TriaMesh
-        The masked surface mesh.
+    lapy.TriaMesh or lapy.TetMesh
+        The masked surface or volume mesh, with only the vertices and cells corresponding to 
+        the ``True`` values in ``mask`` retained.
 
     Raises
     ------
     ValueError
         If ``mask`` does not have a length matching the number of vertices in ``geometry``.
     """
-    # Format / validate arguments
-    mask = np.asarray_chkfinite(mask, dtype=bool)
-    if mask.shape != (geometry.v.shape[0],):
-        raise ValueError(f"mask must have shape ({geometry.v.shape[0]},), matching the number of "
-                         "vertices in geometry.")
+    if mask is None:
+        return geometry
+    _check_n_verts(vertices=geometry.v, mask=mask)
 
     # Remove vertices not in mask
     v_masked = geometry.v[mask] # inherit original type
@@ -123,10 +153,10 @@ def mask_mesh(
     return geometry.__class__(v=v_masked, t=t_masked)
 
 def unmask_data(
-    data: NDArray[np.floating],
+    data: NDArray[Any],
     mask: NDArray[np.bool_],
-    fill_value: float = np.nan
-) -> NDArray[np.floating]:
+    fill_value: Any = np.nan
+) -> NDArray[Any]:
     """
     Unmasks data by inserting it into a full array with the same length as the medial wall mask.
 
@@ -159,11 +189,8 @@ def unmask_data(
     mask = np.asarray_chkfinite(mask, dtype=bool)
     if mask.ndim != 1:
         raise ValueError("`mask` must be a 1D boolean array.")
-    
-    data = np.asarray(data)
-    if data.shape[0] != np.sum(mask):
-        raise ValueError("`data` must have shape (n_verts,...), where n_verts "
-                         f"matches the number of True values in `mask` ({np.sum(mask)}).")
+
+    _check_n_verts(n_verts = int(np.sum(mask)), data=data)
     
     # out_size
     out_size = (len(mask),) + data.shape[1:]
@@ -226,6 +253,31 @@ def normalize_vol(
 
     return geometry
 
+def check_geometry(
+    geometry: TetMesh | TriaMesh
+) -> None:
+    """
+    Check if the mesh is valid, i.e., has no unreferenced vertices and is manifold.
+
+    Parameters
+    ----------
+    geometry : lapy.TetMesh or lapy.TriaMesh
+        The mesh to check.
+
+    Raises
+    ------
+    ValueError
+        If the mesh contains unreferenced vertices.
+    ValueError
+        If the mesh is not manifold (i.e., contains triangles shared by more than two tetrahedra).
+    """
+    if is_vol(geometry):
+        check_vol(geometry)
+    elif is_surf(geometry):
+        check_surf(geometry)
+    else:
+        raise ValueError("geometry must be a valid surface or volume mesh.")
+
 def check_vol(
     vol: TetMesh
 ) -> None:
@@ -281,7 +333,7 @@ def _is_vol_manifold(vol) -> bool:
 
     # Manifold if no triangle occurs more than twice
     tria_counts = np.unique(trias, axis=0, return_counts=True)[1]
-    return np.all(tria_counts <= 2)
+    return bool((tria_counts <= 2).all())
 
 def check_surf(
     surf: TriaMesh

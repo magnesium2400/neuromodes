@@ -127,13 +127,14 @@ def read_surf(
         
     return TriaMesh(v=vertices, t=cells)
 
+# TODO P2 replace try-except with explicit checks to see if file exists
 def fetch_example_surf(
     structure: Literal['midthickness'] = 'midthickness',
     species: Literal['human', 'macaque', 'marmoset'] = 'human',
     res: Literal['32k', '4k'] = '32k',
     hemi: Literal['L', 'R'] = 'L',
     template: Literal['fsLR'] = 'fsLR'
-) -> tuple[TriaMesh, NDArray[np.floating]]:
+) -> tuple[TriaMesh, NDArray[np.bool_]]:
     """
     Load a cortical triangular surface mesh and medial wall mask from the included package data. For
     a list of available surfaces, see ``neuromodes/data/included_data.csv`` or

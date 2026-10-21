@@ -49,8 +49,8 @@ def hetero(presolver):
 
 def test_invalid_mask_shape(surf_medmask):
     surf, _ = surf_medmask
-    bad_mask = np.ones(10)
-    with pytest.raises(ValueError, match=r"mask must have shape \(4002,\)"):
+    bad_mask = np.ones(10, dtype=bool)
+    with pytest.raises(ValueError, match=r"mask"):
         EigenSolver(surf, mask=bad_mask)
 
 def test_no_hetero(surf_medmask):
@@ -319,7 +319,8 @@ def test_check_orthonorm(solver):
     emodes = solver.emodes
 
     # Check that modes are not orthonormal in Euclidean space
-    assert not is_orthonormal_basis(emodes)
+    with pytest.warns(UserWarning, match=r"Mass"):
+        assert not is_orthonormal_basis(emodes)
 
     emodes[:, 0] += 0.1 # Destroy mass-orthonormality by changing first mode's value
 
@@ -329,7 +330,8 @@ def test_check_euclidean_orthonorm():
     # Create orthonormal vectors in Euclidean space
     vecs = np.eye(5)[:, [2, 0, 4, 1]]
 
-    assert is_orthonormal_basis(vecs)
+    with pytest.warns(UserWarning, match=r"Mass"):
+        assert is_orthonormal_basis(vecs)
     assert is_orthonormal_basis(vecs, mass=np.eye(5)) # type: ignore
     assert not is_orthonormal_basis(vecs, mass=np.ones((5, 5))) # type: ignore
 

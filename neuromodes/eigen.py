@@ -9,11 +9,12 @@ from typing import TYPE_CHECKING, overload
 from warnings import warn
 
 import numpy as np
-from lapy import Solver
+from lapy import Solver, TetMesh, TriaMesh
 from scipy.sparse import csc_matrix
 
-from neuromodes.io import read_surf, read_vol
-from neuromodes.mesh import check_surf, check_vol, is_vol, mask_mesh
+from neuromodes.io import read_vol, read_surf
+from neuromodes.mesh import check_geometry, mask_geometry, is_vol, is_surf
+from neuromodes.validation import _create_mass_matrix, _check_n_verts
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -76,18 +77,15 @@ class EigenSolver(Solver):
         mask: NDArray[np.bool_] | None = None
     ):
         # Read in surface or volume mesh
-        geometry = read_vol(geometry) if is_vol(geometry) else read_surf(geometry)
-
-        # Optionally mask
-        if mask is not None:
-            mask = np.asarray(mask, dtype=bool)  # chkfinite in mask_mesh
-            geometry = mask_mesh(geometry, mask)
-        
-        # Validate mesh
-        if is_vol(geometry):
-            check_vol(geometry)
-        else:
-            check_surf(geometry)
+        if is_vol(geometry): 
+            geometry = read_vol(geometry)
+        elif is_surf(geometry):
+            geometry = read_surf(geometry)
+        else: 
+            raise ValueError("geometry must be a surface or volume mesh, or a path to a valid mesh file.")
+        # geometry = read_geometry(geometry)
+        geometry = mask_geometry(geometry, mask)
+        check_geometry(geometry)
 
         # Assign attributes
         self.geometry = geometry
@@ -119,7 +117,9 @@ class EigenSolver(Solver):
         The spatial heterogeneity map used to modify the stiffness matrix, or ``None`` if not used.
         """
         return self._hetero
-    
+
+    # TODO P2: review usage of is_vol here and replace with isinstance(self.geometry, TetMesh) 
+    # is_vol returns for paths but can't call _fem_tera on them! and same for TriaMesh
     @property
     def mass(self) -> csc_matrix:
         """
@@ -127,10 +127,13 @@ class EigenSolver(Solver):
         """
         if self._mass is None:
             # Compute mass (consistent or lumped) for surface or volume mesh
-            self._mass = (
-                self._fem_tetra(self.geometry, self._lump)[1] if is_vol(self.geometry)
-                else self.fem_tria_mass(self.geometry, self._lump)
-                )
+            if isinstance(self.geometry, TetMesh):
+                self._mass = self._fem_tetra(self.geometry, self._lump)[1]
+            elif isinstance(self.geometry, TriaMesh):
+                self._mass = self.fem_tria_mass(self.geometry, self._lump)
+            else: 
+                raise ValueError("geometry must be a surface or volume mesh.")
+        assert self._mass is not None, "Mass matrix could not be computed."
         return self._mass
 
     @property
@@ -140,6 +143,7 @@ class EigenSolver(Solver):
         """
         if self._stiffness is None:
             self.compute_lbo(lump=self._lump, hetero=self._hetero)
+        assert self._stiffness is not None, "Stiffness matrix could not be computed."
         return self._stiffness
 
     @property
@@ -175,9 +179,12 @@ class EigenSolver(Solver):
         if is_vol(self.geometry):
             geom_type = "Volume"
             elem_type = "tetrahedra"
-        else:
+        elif is_surf(self.geometry):
             geom_type = "Surface"
             elem_type = "triangles"
+        else: 
+            geom_type = "Unknown"
+            elem_type = "elements"
 
         # Construct base output string
         str_out = (
@@ -279,7 +286,7 @@ class EigenSolver(Solver):
                     self._stiffness, self._mass = _fem_tetra_hetero(
                         self.geometry, self.hetero, lump
                     )
-            else:  # surface
+            elif is_surf(self.geometry):
                 if self.hetero is None:
                     self._stiffness, self._mass = self._fem_tria(self.geometry, lump)
                 else:
@@ -298,6 +305,8 @@ class EigenSolver(Solver):
                     self._stiffness, self._mass = self._fem_tria_aniso(
                         self.geometry, u1, u2, hetero_mat, lump
                     )
+            else: 
+                raise ValueError("geometry must be a surface or volume mesh.")
         return self
 
     def solve(
@@ -467,7 +476,6 @@ class EigenSolver(Solver):
         return _reconstruct(
             coeffs=coeffs,
             emodes=self.emodes,
-            mass=self.mass,
             checks='maps',
             **kwargs
         )
@@ -613,7 +621,7 @@ def align_basis(
     numpy.ndarray
         The aligned basis vectors array of shape ``(n_verts, n_modes)``.
     """
-    emodes = EigenData(emodes=emodes, checks=checks).emodes
+    # emodes = EigenData(emodes=emodes, checks=checks).emodes
    
     # Flip modes where the first element is negative
     return emodes * np.copysign(1, np.sign(np.asarray(emodes)[0, :]))
@@ -660,8 +668,10 @@ def is_orthonormal_basis(
     any calculated or provided eigenmodes.
     """
     # Format / validate arguments
-    ved = EigenData(emodes=emodes, mass=mass, checks=checks)
-    emodes, mass = ved.emodes, ved.mass
+    # ved = EigenData(emodes=emodes, mass=mass, checks=checks)
+    # emodes, mass = ved.emodes, ved.mass
+    mass = _create_mass_matrix(mass, emodes.shape[0])
+    _check_n_verts(emodes=emodes, mass=mass)
 
     # Check Euclidean or mass-orthonormality
     prod = emodes.T @ emodes if mass is None else emodes.T @ (mass @ emodes)
@@ -834,148 +844,148 @@ def _fem_tetra_hetero(
         b = csc_matrix((local_b, (i, i)))
     return a, b
 
-_MISSING = object()  
-@dataclass(frozen=True, init=False)
-class EigenData:
-    emodes: NDArray[np.floating]
-    evals: NDArray[np.floating] 
-    mass: csc_matrix
-    stiffness: csc_matrix
-    hetero: NDArray[np.floating]
-    data: NDArray[np.floating]
+# _MISSING = object()  
+# @dataclass(frozen=True, init=False)
+# class EigenData:
+#     emodes: NDArray[np.floating]
+#     evals: NDArray[np.floating] 
+#     mass: csc_matrix
+#     stiffness: csc_matrix
+#     hetero: NDArray[np.floating]
+#     data: NDArray[np.floating]
 
-    def __init__(
-        self,
-        emodes: NDArray[np.floating] | None = _MISSING, # type: ignore[assignment]
-        evals: NDArray[np.floating] | None = _MISSING, # type: ignore[assignment] 
-        mass: csc_matrix | None = _MISSING, # type: ignore[assignment]
-        stiffness: csc_matrix | None = _MISSING, # type: ignore[assignment]
-        hetero: NDArray[np.floating] | None = _MISSING, # type: ignore[assignment]
-        data: NDArray[np.floating] | tuple[NDArray[np.floating]] | list[NDArray[np.floating]] | None = _MISSING, # type: ignore[assignment]
-        checks: _CheckKind = True
-    ):  # TODO: add mask?
-        # TODO: refactor to use helper functions
+#     def __init__(
+#         self,
+#         emodes: NDArray[np.floating] | None = _MISSING, # type: ignore[assignment]
+#         evals: NDArray[np.floating] | None = _MISSING, # type: ignore[assignment] 
+#         mass: csc_matrix | None = _MISSING, # type: ignore[assignment]
+#         stiffness: csc_matrix | None = _MISSING, # type: ignore[assignment]
+#         hetero: NDArray[np.floating] | None = _MISSING, # type: ignore[assignment]
+#         data: NDArray[np.floating] | tuple[NDArray[np.floating]] | list[NDArray[np.floating]] | None = _MISSING, # type: ignore[assignment]
+#         checks: _CheckKind = True
+#     ):  # TODO: add mask?
+#         # TODO: refactor to use helper functions
 
-        # Local helper to bypass 'frozen' restriction during initialization
-        def _set(name, val):
-            object.__setattr__(self, name, val)
+#         # Local helper to bypass 'frozen' restriction during initialization
+#         def _set(name, val):
+#             object.__setattr__(self, name, val)
 
-        check_shape = checks is True or checks == 'shape' or checks == 'maps' # need to get first dim when checking maps
-        check_maps = checks is True or checks == 'maps'
-        check_ortho = checks is True or checks == 'ortho'
-        check_evals = checks is True or checks == 'evals'
+#         check_shape = checks is True or checks == 'shape' or checks == 'maps' # need to get first dim when checking maps
+#         check_maps = checks is True or checks == 'maps'
+#         check_ortho = checks is True or checks == 'ortho'
+#         check_evals = checks is True or checks == 'evals'
 
-        all_inputs = []
+#         all_inputs = []
 
-        # Cast types and check shapes
-        if emodes is not _MISSING:
-            all_inputs.append('emodes')
-            if emodes is not None:
-                emodes = np.asarray_chkfinite(emodes)
-                if check_shape:
-                    if emodes.ndim != 2: 
-                        raise ValueError("emodes must be a 2D array.")
-                    if emodes.shape[0] <= emodes.shape[1]:
-                        raise ValueError("emodes must have shape (n_verts, n_modes), where n_verts "
-                                         "> n_modes.")
-            _set('emodes', emodes)
+#         # Cast types and check shapes
+#         if emodes is not _MISSING:
+#             all_inputs.append('emodes')
+#             if emodes is not None:
+#                 emodes = np.asarray_chkfinite(emodes)
+#                 if check_shape:
+#                     if emodes.ndim != 2: 
+#                         raise ValueError("emodes must be a 2D array.")
+#                     if emodes.shape[0] <= emodes.shape[1]:
+#                         raise ValueError("emodes must have shape (n_verts, n_modes), where n_verts "
+#                                          "> n_modes.")
+#             _set('emodes', emodes)
 
-        if evals is not _MISSING:
-            if evals is not None:
-                evals = np.asarray_chkfinite(evals)
-                if check_shape and emodes is not None and evals.shape != (emodes.shape[1],):
-                    raise ValueError(f"evals must have shape (n_modes,) = ({emodes.shape[1]},).")
-                if check_evals:
-                    if (evals[1:] <= 0).any():
-                        warn("Non-positive eigenvalues detected (beyond first eigenvalue). This "
-                             "may indicate an issue with the computation.")
-                    # Allow first eval to be slightly negative due to precision error
-                    if np.abs(evals[0]) > 1e-6:
-                        warn("The first eigenvalue is expected to be close to zero, received "
-                             f"{evals[0]}.")
-            _set('evals', evals)
+#         if evals is not _MISSING:
+#             if evals is not None:
+#                 evals = np.asarray_chkfinite(evals)
+#                 if check_shape and emodes is not None and evals.shape != (emodes.shape[1],):
+#                     raise ValueError(f"evals must have shape (n_modes,) = ({emodes.shape[1]},).")
+#                 if check_evals:
+#                     if (evals[1:] <= 0).any():
+#                         warn("Non-positive eigenvalues detected (beyond first eigenvalue). This "
+#                              "may indicate an issue with the computation.")
+#                     # Allow first eval to be slightly negative due to precision error
+#                     if np.abs(evals[0]) > 1e-6:
+#                         warn("The first eigenvalue is expected to be close to zero, received "
+#                              f"{evals[0]}.")
+#             _set('evals', evals)
 
-        # TODO : add lump input and parameter (confirm that mass is diagonal if lump=True)
-        if mass is not _MISSING:
-            all_inputs.append('mass')
-            if mass is not None and check_shape and (mass.ndim != 2 or mass.shape[0] != mass.shape[1]):
-                raise ValueError("mass must be a square matrix.")
-            _set('mass', mass)
+#         # TODO : add lump input and parameter (confirm that mass is diagonal if lump=True)
+#         if mass is not _MISSING:
+#             all_inputs.append('mass')
+#             if mass is not None and check_shape and (mass.ndim != 2 or mass.shape[0] != mass.shape[1]):
+#                 raise ValueError("mass must be a square matrix.")
+#             _set('mass', mass)
 
-        if stiffness is not _MISSING:
-            all_inputs.append('stiffness')
-            if stiffness is not None and check_shape and (stiffness.ndim != 2 or stiffness.shape[0] != stiffness.shape[1]):
-                raise ValueError("stiffness must be a square matrix.")
-            _set('stiffness', stiffness)
+#         if stiffness is not _MISSING:
+#             all_inputs.append('stiffness')
+#             if stiffness is not None and check_shape and (stiffness.ndim != 2 or stiffness.shape[0] != stiffness.shape[1]):
+#                 raise ValueError("stiffness must be a square matrix.")
+#             _set('stiffness', stiffness)
 
-        # TODO: consider removing, data can just accept a list of arrays instead
-        if hetero is not _MISSING:
-            all_inputs.append('hetero')
-            if hetero is not None:
-                hetero = np.asarray_chkfinite(hetero)
-                if check_shape and hetero.ndim != 1:
-                    raise ValueError("hetero must have shape (n_verts,).")
-            _set('hetero', hetero)
+#         # TODO: consider removing, data can just accept a list of arrays instead
+#         if hetero is not _MISSING:
+#             all_inputs.append('hetero')
+#             if hetero is not None:
+#                 hetero = np.asarray_chkfinite(hetero)
+#                 if check_shape and hetero.ndim != 1:
+#                     raise ValueError("hetero must have shape (n_verts,).")
+#             _set('hetero', hetero)
 
-        n_verts = None
-        # Check first dimension of each map at the same time (after self.name is set)
-        if check_shape:
-            for name in all_inputs:
-                val = getattr(self, name)
-                if val is None or val is _MISSING:
-                    continue
+#         n_verts = None
+#         # Check first dimension of each map at the same time (after self.name is set)
+#         if check_shape:
+#             for name in all_inputs:
+#                 val = getattr(self, name)
+#                 if val is None or val is _MISSING:
+#                     continue
                 
-                first_dim = val.shape[0] # Sparse matrices and NDArrays both have .shape
+#                 first_dim = val.shape[0] # Sparse matrices and NDArrays both have .shape
 
-                if n_verts is None:
-                    # Establish the ground truth from the first available data source
-                    n_verts = first_dim
-                elif first_dim != n_verts:
-                    raise ValueError(
-                        f"Dimension mismatch in '{name}': "
-                        f"expected first dimension {n_verts}, but got {first_dim}."
-                    )
+#                 if n_verts is None:
+#                     # Establish the ground truth from the first available data source
+#                     n_verts = first_dim
+#                 elif first_dim != n_verts:
+#                     raise ValueError(
+#                         f"Dimension mismatch in '{name}': "
+#                         f"expected first dimension {n_verts}, but got {first_dim}."
+#                     )
             
-        if data is not _MISSING:
-            if check_maps: # if check_maps is True, always check the shape
-                # Convert single data array to iterable for consistent processing
-                if not isinstance(data, (tuple, list)):
-                    data = [data]
+#         if data is not _MISSING:
+#             if check_maps: # if check_maps is True, always check the shape
+#                 # Convert single data array to iterable for consistent processing
+#                 if not isinstance(data, (tuple, list)):
+#                     data = [data]
                 
-                # check shape and for NaN/Inf values in each data array
-                data_proc = []
-                for d in data:
-                    if d is not None:
-                        d = np.asarray(d)
-                        if np.isnan(d).any(): 
-                            warn("NaN values detected in data, which may cause issues with computations.")
-                        if np.isinf(d).any():
-                            warn("Inf values detected in data, which may cause issues with computations.")
-                        if n_verts is None:
-                            n_verts = d.shape[0]  # Establish the ground truth if not set
-                        elif n_verts != d.shape[0]:
-                            raise ValueError(f"data must have first dimension n_verts = {n_verts} to "
-                                            "match the other arguments.")
-                    data_proc.append(d)
+#                 # check shape and for NaN/Inf values in each data array
+#                 data_proc = []
+#                 for d in data:
+#                     if d is not None:
+#                         d = np.asarray(d)
+#                         if np.isnan(d).any(): 
+#                             warn("NaN values detected in data, which may cause issues with computations.")
+#                         if np.isinf(d).any():
+#                             warn("Inf values detected in data, which may cause issues with computations.")
+#                         if n_verts is None:
+#                             n_verts = d.shape[0]  # Establish the ground truth if not set
+#                         elif n_verts != d.shape[0]:
+#                             raise ValueError(f"data must have first dimension n_verts = {n_verts} to "
+#                                             "match the other arguments.")
+#                     data_proc.append(d)
                 
-                # Convert to tuple if needed
-                data = tuple(data_proc) if len(data_proc) > 1 else data_proc[0]
+#                 # Convert to tuple if needed
+#                 data = tuple(data_proc) if len(data_proc) > 1 else data_proc[0]
                     
-            _set('data', data)
+#             _set('data', data)
 
-        # Check mass-orthonormality
-        if check_ortho and emodes is not _MISSING and emodes is not None:
-            m = mass if mass is not _MISSING else None
-            if not is_orthonormal_basis(emodes, m, checks=False):
-                err_str = "in Euclidean space" if m is None else "with the provided mass matrix"
-                raise ValueError(
-                    f"The columns of emodes do not form an orthonormal basis set {err_str}. Either "
-                    "provide a suitable mass matrix such that emodes.T @ mass @ emodes = I, use "
-                    "the 'regress' method for decomposition, or set checks=False."
-                )
+#         # Check mass-orthonormality
+#         if check_ortho and emodes is not _MISSING and emodes is not None:
+#             m = mass if mass is not _MISSING else None
+#             if not is_orthonormal_basis(emodes, m, checks=False):
+#                 err_str = "in Euclidean space" if m is None else "with the provided mass matrix"
+#                 raise ValueError(
+#                     f"The columns of emodes do not form an orthonormal basis set {err_str}. Either "
+#                     "provide a suitable mass matrix such that emodes.T @ mass @ emodes = I, use "
+#                     "the 'regress' method for decomposition, or set checks=False."
+#                 )
 
-    def __getattribute__(self, name: str) -> Any:
-        val = super().__getattribute__(name)
-        if val is _MISSING:
-            raise AttributeError(f"'{name}' was not provided to this EigenData instance.")
-        return val
+#     def __getattribute__(self, name: str) -> Any:
+#         val = super().__getattribute__(name)
+#         if val is _MISSING:
+#             raise AttributeError(f"'{name}' was not provided to this EigenData instance.")
+#         return val

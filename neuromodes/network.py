@@ -8,18 +8,25 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from neuromodes.eigen import EigenData
+# from neuromodes.eigen import EigenData
+from neuromodes.basis import decompose, reconstruct, spectralfilter, _process_mode_ids
+from neuromodes.stats import _create_mass_matrix, _dot_nd, _multiply_nd
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
+    from scipy.sparse import csc_matrix
 
     from neuromodes.eigen import _CheckKind
+    from neuromodes.basis import _IntSequenceKind, _SeqSequenceKind
 
 def compute_gem(
     emodes: NDArray[np.floating],
     evals: NDArray[np.floating],
     r: float = 9.53,
-    k: int = 108,
+    mass: csc_matrix | None = None,
+    mode_counts: _IntSequenceKind | int | np.integer | None = None,
+    mode_ids: _SeqSequenceKind | None = None,
+    weighted_pinv: bool = True,
     checks: _CheckKind = 'shape'
 ) -> NDArray[np.floating]:
     """
@@ -35,7 +42,8 @@ def compute_gem(
     r : float, optional
         Spatial scale parameter for the Green's function, in millimeters. Default is ``9.53``.
     k : int, optional
-        Number of eigenmodes to use. Default is ``108``.
+        Number of eigenmodes to use. Default is ``None``. To use the optimal results as derived in 
+        [1]_, set ``mode_counts=108``.
     checks : bool, optional
         Whether to validate types and shapes of ``emodes`` and ``evals`` before computation. Default
         is ``True``.
@@ -71,16 +79,44 @@ def compute_gem(
         cortical connectomes. BioRxiv. https://doi.org/10.1101/2025.09.17.676944
     """
     # Format / validate arguments
-    if checks is not False:
-        ved = EigenData(emodes=emodes, evals=evals, checks=checks)
-        emodes, evals = ved.emodes, ved.evals
+    # if checks is not False:
+    #     ved = EigenData(emodes=emodes, evals=evals, checks=checks)
+    #     emodes, evals = ved.emodes, ved.evals
 
     r = float(r)
-    n_modes = emodes.shape[1]
+    n_verts, n_modes = emodes.shape
     if r <= 0:
         raise ValueError("Parameter r must be a positive number.")
-    if k != int(k) or k <= 0 or k > n_modes:
-        raise ValueError(f"Parameter k must be an integer in the range [1, n_modes = {n_modes}].")
+
+    mode_ids, squeeze_output = _process_mode_ids(mode_counts, mode_ids, n_modes)
+
+    mass = _create_mass_matrix(mass, n_verts)
+    output_dtype = np.result_type(emodes, evals, mass.dtype)
+    out = np.empty((n_verts, n_verts, len(mode_ids)), dtype=output_dtype)
+
+    # denom = 1/(1 + evals * r**2)
+    # first_term = emodes * denom
+
+    first_term = emodes / (1 + evals * r**2)
+
+    for j, mids in enumerate(mode_ids): 
+        # a = emodes[:, mids]
+        # b = 1/(1 + evals[mids] * r**2)
+
+        if weighted_pinv:
+            c = _dot_nd(emodes[:, mids], mass)
+        else: 
+            c = np.linalg.pinv(emodes[:, mids])
+
+        curr = _multiply_nd(first_term[:, mids], c)
+        np.fill_diagonal(curr, 0)
+        curr = np.maximum(curr, 0)
+        curr = (curr + curr.T) / 2
+
+        out[:, :, j] = curr / np.max(curr)
+
+    return out.squeeze(axis=2) if squeeze_output else out
+
 
     # Compute the Geometric Eigenmode Model
     denom = 1/(1 + evals[:k] * r**2)

@@ -7,12 +7,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, overload
 from warnings import warn
+from collections.abc import Iterable
 
 import numpy as np
 from scipy.sparse import diags, issparse
 
-from neuromodes.eigen import EigenData
-from neuromodes.stats import _create_mass_matrix, cdistw, lstsqw, _multiply_nd
+# from neuromodes.eigen import EigenData
+from neuromodes.stats import cdistw, lstsqw, _multiply_nd
+from neuromodes.validation import _create_mass_matrix, _process_mode_ids, _check_n_verts
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -68,6 +70,7 @@ def decompose(
 
 # TODO P3: add `integrate` option like LaPy for when data are already mass-corrected
 # TODO P4? add support for data=None which is equivalent to data=speye(n_verts)
+# TODO P4: add type hints for data to be csc
 def decompose(
     data: NDArray[np.floating],
     emodes: NDArray[np.floating],
@@ -136,14 +139,14 @@ def decompose(
     if method not in ['project', 'regress']:
         raise ValueError(f"Invalid method '{method}'; must be 'project' or 'regress'.")
     
-    if checks is None:
-        checks = True if method == 'project' else 'maps'
-    if checks is not False: 
-        ved = EigenData(emodes=emodes, mass=mass, data=data, checks=checks)
-        emodes, mass, data = ved.emodes, ved.mass, ved.data
+    # if checks is None:
+    #     checks = True if method == 'project' else 'maps'
+    # if checks is not False: 
+    #     ved = EigenData(emodes=emodes, mass=mass, data=data, checks=checks)
+    #     emodes, mass, data = ved.emodes, ved.mass, ved.data
 
     mass = _create_mass_matrix(mass, data.shape[0])
-
+    _check_n_verts(data=data, emodes=emodes, mass=mass)
     mode_ids, squeeze_output = _process_mode_ids(mode_counts, mode_ids, emodes.shape[1])
 
     # Manipulate input/output shapes
@@ -199,8 +202,6 @@ def decompose(
 def reconstruct(
     coeffs: list[NDArray[np.floating]] | NDArray[np.floating],
     emodes: NDArray[np.floating],
-    method: _DecompositionKind = 'project',
-    mass: csc_matrix | None = None,
     mode_counts: _IntSequenceKind | int | None = None,
     mode_ids: _SeqSequenceKind | None = None,
     checks: _CheckKind | None = None
@@ -211,26 +212,13 @@ def reconstruct(
 
     Parameters
     ----------
-    emodes : array-like
-        The basis vectors array of shape ``(n_verts, n_modes)``, where ``n_modes`` is the number of
-        vectors.
-    data : array-like
-        The empirical data array of shape ``(n_verts, ...)``, where ``n_verts`` is the number of
-        vertices and additional axes represent maps to be decomposed independently. If ``None``,
-        ``coeffs`` must be provided. Default is ``None``.
     coeffs : array-like, optional
         The modal coefficients array of shape ``(n_modes, ...)`` or ``list of (n_modes, ...)``
         arrays, obtained from the decomposition. If ``None``, ``data`` must be provided. Default is
         ``None``.
-    method : str, optional
-        The method used for the decomposition, either ``'project'`` or ``'regress'``. Note that
-        ``'project'`` is faster and more accurate, while ``'regress'`` should only be used when
-        ``data`` contains missing values (NaNs; see Notes). The methods are otherwise equivalent.
-        Default is ``'project'``.
-    mass : array-like, optional
-        The mass matrix of shape ``(n_verts, n_verts)``. If vectors are orthonormal in Euclidean
-        space, leave as ``None``. See :func:`eigen.is_orthonormal_basis` for more details. Default
-        is ``None``.
+    emodes : array-like
+        The basis vectors array of shape ``(n_verts, n_modes)``, where ``n_modes`` is the number of
+        vectors.
     mode_counts : array-like, optional
         The sequence of vectors to be used for reconstruction, of shape ``(n_recons,)``. For
         example, ``mode_counts=np.array([10,20,30])`` will run three analyses: with the first 10
@@ -265,21 +253,23 @@ def reconstruct(
     provides no constraint. Consider instead interpolating missing data prior to decomposition.
     """
     # Format / validate inputs
-    if checks is None:
-        if method == 'regress':
-            checks = 'maps'
-        else:
-            checks = True
-    if checks is not False:
-        ved = EigenData(emodes=emodes, mass=mass, checks=checks)
-        emodes, mass = ved.emodes, ved.mass
+    # if checks is None:
+    #     if method == 'regress':
+    #         checks = 'maps'
+    #     else:
+    #         checks = True
+    # if checks is not False:
+    #     ved = EigenData(emodes=emodes, mass=mass, checks=checks)
+    #     emodes, mass = ved.emodes, ved.mass
 
     mode_ids, squeeze_output = _process_mode_ids(mode_counts, mode_ids, emodes.shape[1])
     coeffs_same_shape = all(c.shape[1:] == coeffs[0].shape[1:] for c in coeffs)
     output_dtype = np.result_type(*[c.dtype for c in coeffs], emodes.dtype)
 
-    if squeeze_output: # mode_counts is None or scalar, so coeffs is a single array
-        recon_nd: np.ndarray = _multiply_nd(emodes, coeffs)
+    if squeeze_output and isinstance(coeffs, np.ndarray): # mode_counts is None or scalar, so coeffs is a single array
+        recon_nd = _multiply_nd(emodes, coeffs)
+    elif squeeze_output: 
+        raise ValueError("If mode_counts is None or scalar, coeffs must be a single array, not a list.")
     elif isinstance(coeffs, np.ndarray):
         recon_nd = np.empty((emodes.shape[0], *coeffs.shape[1:]), dtype=output_dtype)
         for j, mids in enumerate(mode_ids):
@@ -386,11 +376,8 @@ def calc_recon_error(
         If ``data`` and ``recon`` have incompatible shapes.
     """
 
-    # Format / validate checks
-    if checks is not False: 
-        ved = EigenData(mass=mass, data=(data, recon), checks=checks)
-        mass = ved.mass
-        data, recon = ved.data
+    mass = _create_mass_matrix(mass, data.shape[0])
+    _check_n_verts(data=data, emodes=recon, mass=mass)
 
     # Get and check data/recon shapes
     data_shape = data.shape
@@ -420,29 +407,3 @@ def calc_recon_error(
 
     recon_error = recon_error_2d.reshape(recon.shape[1:])
     return recon_error
-
-def _process_mode_ids(
-    mode_counts: _IntSequenceKind | int | None,
-    mode_ids: _SeqSequenceKind | None,
-    n_modes: int
-) -> tuple[_SeqSequenceKind, bool]:
-    """
-    Process mode_counts and mode_ids into a consistent format for use in decompose/reconstruct.
-    """
-    # mode_counts is just shorthand for mode_ids
-    # If mode_counts is provided, reformat into mode_ids
-    if mode_counts is not None and mode_ids is not None:
-        raise UserWarning("Both mode_counts and mode_ids provided; mode_counts will be ignored.")
-    
-    if mode_ids is not None: # TODO add type checking here to ensure it is sensible
-        output = mode_ids
-    elif mode_counts is None:
-        output = [range(n_modes),]
-    elif isinstance(mode_counts, int):
-        output = [range(mode_counts),]
-    else:
-        output = [range(mc) for mc in mode_counts]
-    
-    squeeze_output = (mode_ids is None) and (mode_counts is None or isinstance(mode_counts, int))
-
-    return output, squeeze_output
