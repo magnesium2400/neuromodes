@@ -183,7 +183,7 @@ def _create_mass_matrix(
         raise ValueError("Either mass or n_verts must be provided.")
     
     elif mass is None and n_verts is not None: # appease: pyright
-        warn("Mass matrix not provided; assuming that area at each vertex is 1")
+        warn("Mass matrix not provided; assuming that area at each vertex is 1", UserWarning)
         output = diags(np.ones(n_verts), format='csc')
 
     elif isinstance(mass, spmatrix) and mass.shape is not None: # appease: pyright

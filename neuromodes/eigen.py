@@ -513,7 +513,7 @@ class EigenSolver(Solver):
         return _compute_gem(
             emodes=self.emodes,
             evals=self.evals,
-            checks=False,
+            mass=self.mass,
             **kwargs
         )
     

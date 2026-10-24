@@ -10,7 +10,8 @@ import numpy as np
 
 # from neuromodes.eigen import EigenData
 from neuromodes.basis import decompose, reconstruct, spectralfilter, _process_mode_ids
-from neuromodes.stats import _create_mass_matrix, _dot_nd, _multiply_nd
+from neuromodes.stats import  _dot_nd, _multiply_nd
+from neuromodes.validation import _create_mass_matrix, _check_n_verts, _check_n_modes
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -85,12 +86,14 @@ def compute_gem(
 
     r = float(r)
     n_verts, n_modes = emodes.shape
-    if r <= 0:
-        raise ValueError("Parameter r must be a positive number.")
+    if r < 0:
+        raise ValueError("Parameter r must be a non-negative number.")
 
     mode_ids, squeeze_output = _process_mode_ids(mode_counts, mode_ids, n_modes)
 
+    _check_n_modes(emodes=emodes, evals=evals)
     mass = _create_mass_matrix(mass, n_verts)
+    _check_n_verts(emodes=emodes, mass=mass)
     output_dtype = np.result_type(emodes, evals, mass.dtype)
     out = np.empty((n_verts, n_verts, len(mode_ids)), dtype=output_dtype)
 
