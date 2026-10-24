@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, overload
 from warnings import warn
-from collections.abc import Iterable
+from collections.abc import Sequence
 
 import numpy as np
 from scipy.sparse import diags, issparse

@@ -15,7 +15,7 @@ from scipy.stats import special_ortho_group
 from neuromodes.basis import decompose
 from neuromodes.eigen import get_eigengroup_inds
 from neuromodes.stats import meanw, stdw
-from neuromodes.validation import _check_n_verts, _create_mass_matrix
+from neuromodes.validation import _check_n_verts, _create_mass_matrix, _check_n_modes
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -277,6 +277,7 @@ def eigenstrap(
     #     emodes, evals, mass = ved.emodes, ved.evals, ved.mass
     mass = _create_mass_matrix(mass, data.shape[0])
     _check_n_verts(emodes=emodes, data=data, mass=mass)
+    _check_n_modes(evals=evals, emodes=emodes)
 
     data = np.asarray(data)
     if (is_vector_data := data.ndim == 1):

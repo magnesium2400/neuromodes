@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 from warnings import warn
+from collections.abc import Sequence
 
 import numpy as np
 from scipy.sparse import diags, spmatrix, csc_matrix
@@ -10,7 +11,6 @@ from scipy.sparse import diags, spmatrix, csc_matrix
 
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
     from typing import Any, Literal, TypeAlias, TypeGuard
 
     from numpy.typing import NDArray
@@ -84,7 +84,7 @@ def _check_n_verts(
 
     return int(target_nverts) if target_nverts is not None else None
 
-
+# TODO P1 this function!
 def _check_n_modes(
         n_modes_max = None, 
         mode_counts = None, 
@@ -92,7 +92,11 @@ def _check_n_modes(
         emodes = None, 
         evals = None,
 ):
-    raise NotImplementedError("This function is not yet implemented. It will validate that the number of modes specified by mode_counts or mode_ids is consistent with the number of modes in emodes and evals.")
+    if emodes is not None and evals is not None:
+        if emodes.shape[1] != evals.shape[0]: # TODO P1 change wording of this error and above (and tests)
+            raise ValueError(f"must have shape Number of modes in emodes ({emodes.shape[1]}) does not match number of evals ({evals.shape[0]}).")
+        n_modes_max = emodes.shape[1]
+    # raise NotImplementedError("This function is not yet implemented. It will validate that the number of modes specified by mode_counts or mode_ids is consistent with the number of modes in emodes and evals.")
 
 
 # check square
@@ -226,7 +230,7 @@ def _process_mode_ids(
         raise UserWarning("Both mode_counts and mode_ids provided; mode_counts will be ignored.")
     
     if mode_ids is not None: # TODO add type checking here to ensure it is sensible
-        if not _is_integer_iterable_of_iterables(mode_ids):
+        if not _is_integer_sequence_of_sequences(mode_ids):
             raise TypeError(f"mode_ids must be an iterable of iterables of integers; got {type(mode_ids)}.")
         output = mode_ids
         squeeze_output = False
@@ -241,7 +245,7 @@ def _process_mode_ids(
                              f"got {mode_counts}.")
         output = [range(mode_counts),]
         squeeze_output = True
-    elif _is_integer_iterable(mode_counts):
+    elif _is_integer_sequence(mode_counts):
         output = [range(mc) for mc in mode_counts]
         squeeze_output = False
     else: 
@@ -262,7 +266,7 @@ def _process_mode_ids(
 
 # TODO consider raising an error in these functions
 # TODO consider returning the cleaned data of a specific type 
-def _is_nonstring_iterable(x) -> TypeGuard[Sequence[Any]]:
+def _is_nonstring_sequence(x) -> TypeGuard[Sequence[Any]]:
     """
     Check if x is an iterable of numeric types (int or float).
     """
@@ -274,14 +278,14 @@ def _is_integer(x) -> TypeGuard[int | np.integer]:
     """
     return isinstance(x, (int, np.integer)) and not isinstance(x, bool) 
 
-def _is_integer_iterable(x) -> TypeGuard[Sequence[int | np.integer]]:
+def _is_integer_sequence(x) -> TypeGuard[Sequence[int | np.integer]]:
     """
     Check if x is an iterable of integers.
     """
-    return _is_nonstring_iterable(x) and all(_is_integer(i) for i in x)
+    return _is_nonstring_sequence(x) and all(_is_integer(i) for i in x)
 
-def _is_integer_iterable_of_iterables(x) -> TypeGuard[Sequence[Sequence[int]] | Sequence[Sequence[np.integer]]]:
+def _is_integer_sequence_of_sequences(x) -> TypeGuard[Sequence[Sequence[int]] | Sequence[Sequence[np.integer]]]:
     """
     Check if x is an iterable of iterables of integers.
     """
-    return _is_nonstring_iterable(x) and all(_is_integer_iterable(i) for i in x)
+    return _is_nonstring_sequence(x) and all(_is_integer_sequence(i) for i in x)
