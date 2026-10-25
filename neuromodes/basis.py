@@ -209,9 +209,6 @@ def decompose(
 
 # TODO P1? add checks to ensure that coeffs and mode_ids/mode_counts are compatible 
 # (namely that len(mode_ids) == len(coeffs) and coeffs[j].shape[0] == len(mode_ids[j]) for all j)
-# TODO P5: add 'force_list_output' option st. even if coeffs are eg. [(10,),(20,),(30,)], 
-# return a list of 3 arrays instead of a single array of shape (n_verts, ..., 3)
-# or force_same_output. or perhaps default to that and have force_array_output option?
 
 @overload
 def reconstruct(

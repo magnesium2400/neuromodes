@@ -145,41 +145,14 @@ def sim_nft_waves(
     ..  [3] Robinson, P. A., et al. (1997). Propagation and stability of waves of electrical
         activity in the cerebral cortex. Physical Review E. https://doi.org/10.1103/physreve.56.826
     """
-    # Format / validate arguments
-    # if checks is not False:
-    #     ved = EigenData(
-    #         emodes=emodes, evals=evals, mass=mass, stiffness=stiffness, 
-    #         hetero=hetero, data=ext_input, checks=checks
-    #         )
-    #     emodes, evals, mass, stiffness, ext_input, hetero = \
-    #         ved.emodes, ved.evals, ved.mass, ved.stiffness, ved.data, ved.hetero
 
-    if method == 'fem':
-        if mass is None or stiffness is None or mass.shape is None: # make pyright happy
-            raise ValueError("Mass and stiffness matrices must be provided for FEM method.")
-        n_verts = mass.shape[0]
-    elif method in ['fourier', 'ode']:
-        if emodes is None or evals is None:
-            raise ValueError(f"emodes and evals must be provided for {method} method.")
-        if method == 'fourier':
-            mass = _create_mass_matrix(mass, emodes.shape[0])
-        n_verts = emodes.shape[0]
-    else: 
+    n_verts = _check_n_verts(emodes=emodes, mass=mass, stiffness=stiffness, hetero=hetero, ext_input=ext_input)
+    if method not in ['fourier', 'ode', 'fem']:
         raise ValueError(f"Invalid PDE method '{method}'; must be 'fourier', 'ode', or 'fem'.")
+    if n_verts is None: 
+        raise ValueError("Mass and stiffness matrices must be provided for fem method, "
+                         "or emodes and evals must be provided for fourier/ode methods.")
 
-    _check_n_verts(n_verts, emodes=emodes, ext_input=ext_input, mass=mass, stiffness=stiffness, hetero=hetero)
-        
-    # if emodes is not None: 
-    #     n_verts = emodes.shape[0]
-    # elif stiffness is not None:
-    #     n_verts = stiffness.shape[0]
-    # elif method == 'fem':
-    #     raise ValueError(f"mass and stiffness matrices must be provided for {method} method.")
-    # else: 
-    #     raise ValueError(f"emodes must be provided for {method} method.")
-        
-    r = float(r)
-    gamma = float(gamma)
     if r <= 0:
         raise ValueError("Parameter r must be positive.")
     if gamma <= 0:
@@ -201,8 +174,6 @@ def sim_nft_waves(
                  f"outside the range of {speed_limits[0]}-{speed_limits[1]} m/s (calculated "
                  f"{calc_str} m/s). Consider changing these parameters to ensure physiologically "
                  "plausible wave speeds, or adjust speed_limits.")
-    # if method not in ['fourier', 'ode', 'fem']:
-    #     raise ValueError(f"Invalid PDE method '{method}'; must be 'fourier', 'ode', or 'fem'.")
 
     if ext_input is not None:
         if nt is not None:
@@ -225,24 +196,27 @@ def sim_nft_waves(
         ext_input = np.asarray(noise_func(n_verts, nt, seed=seed))
     else: # not the nicest, but it makes pyright the happiest
         raise ValueError("Either nt or ext_input must be provided.")
-
-    # Non-modal FEM implementation
+    
     if method == 'fem':
-        if mass is None or stiffness is None:
-            raise ValueError("Mass and stiffness matrices must be provided for {method} method.")
+        if mass is None or stiffness is None: # TODO P5 use _create_mass_matrix to make it optional
+            raise ValueError(f"Mass and stiffness matrices must be provided for {method} method.")
         return _model_wave_fem(ext_input, dt=dt, r=r, gamma=gamma, mass=mass, stiffness=stiffness,
                                n_jobs=n_jobs, verbose=verbose)
-    elif emodes is None or evals is None:
-        raise ValueError(f"emodes and evals must be provided for {method} method.")
     
-    # Standard modal implementation: decompose input and reconstruct output
+    elif method in ['fourier', 'ode']:
+        if emodes is None or evals is None:
+            raise ValueError(f"emodes and evals must be provided for {method} method.")
+        input_coeffs = decompose(ext_input, emodes, mass=mass)
+        _model_wave = _model_wave_fourier if method == 'fourier' else _model_wave_ode
+        activity_coeffs = _model_wave(input_coeffs, dt, r, gamma, evals)
+        return _multiply_nd(emodes, activity_coeffs)
+    
+    else: 
+        raise ValueError(f"Invalid PDE method '{method}'; must be 'fourier', 'ode', or 'fem'.")
+
     # TODO: move decompose to `ext_input is not None` branch above, as white noise should be
     # generated directly in modal space. In this case, `mass` would be optional.
-    input_coeffs = decompose(ext_input, emodes, mass=mass)
-    _model_wave = _model_wave_fourier if method == 'fourier' else _model_wave_ode
-    activity_coeffs = _model_wave(input_coeffs, dt, r, gamma, evals)
-
-    return _multiply_nd(emodes, activity_coeffs)
+    
 
 def balloon_model(
     activity: NDArray[np.floating],

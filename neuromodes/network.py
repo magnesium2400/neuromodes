@@ -5,6 +5,7 @@ Module for generating models of cortical structural connectomes.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from warnings import warn
 
 import numpy as np
 
@@ -94,6 +95,8 @@ def compute_gem(
 
     if weighted_pinv: 
         mass = _create_mass_matrix(mass, n_verts, dtype=output_dtype)
+    elif mass is not None:
+        warn("Mass matrix provided but weighted_pinv is False; mass will be ignored.", UserWarning)
     
     out = np.empty((n_verts, n_verts, len(mode_ids)), dtype=output_dtype)
 
