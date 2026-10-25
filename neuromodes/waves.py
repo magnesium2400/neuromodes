@@ -26,6 +26,7 @@ if TYPE_CHECKING:
     from neuromodes.eigen import _CheckKind
     _PDEKind = Literal["fourier", "ode", "fem"]
 
+# TODO P3: add mode_counts
 def sim_nft_waves(
     emodes: NDArray[np.floating] | None,
     evals: NDArray[np.floating] | None,
@@ -228,14 +229,16 @@ def sim_nft_waves(
     # Non-modal FEM implementation
     if method == 'fem':
         if mass is None or stiffness is None:
-            raise ValueError("Mass and stiffness matrices must be provided for FEM method.")
+            raise ValueError("Mass and stiffness matrices must be provided for {method} method.")
         return _model_wave_fem(ext_input, dt=dt, r=r, gamma=gamma, mass=mass, stiffness=stiffness,
                                n_jobs=n_jobs, verbose=verbose)
+    elif emodes is None or evals is None:
+        raise ValueError(f"emodes and evals must be provided for {method} method.")
     
     # Standard modal implementation: decompose input and reconstruct output
     # TODO: move decompose to `ext_input is not None` branch above, as white noise should be
     # generated directly in modal space. In this case, `mass` would be optional.
-    input_coeffs = decompose(ext_input, emodes, mass=mass, checks=False)
+    input_coeffs = decompose(ext_input, emodes, mass=mass)
     _model_wave = _model_wave_fourier if method == 'fourier' else _model_wave_ode
     activity_coeffs = _model_wave(input_coeffs, dt, r, gamma, evals)
 

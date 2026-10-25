@@ -5,7 +5,7 @@ from warnings import warn
 from collections.abc import Sequence
 
 import numpy as np
-from scipy.sparse import diags, spmatrix, csc_matrix
+from scipy.sparse import diags, spmatrix, csc_matrix, issparse
 
 # from neuromodes.eigen import EigenData
 
@@ -16,8 +16,15 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
     from scipy.sparse import csc_matrix
 
-    # _IntSequenceKind: TypeAlias = Sequence[int] | Sequence[np.integer]
-    # _SeqSequenceKind: TypeAlias = Sequence[_IntSequenceKind] | NDArray[Any]
+    # _IntSequenceKind: TypeAlias = Sequence[int | np.integer]
+    # _SeqSequenceKind: TypeAlias = Sequence[_IntSequenceKind]
+
+    # Flexible Input Type Aliases (Accepts lists, tuples, ranges, ndarrays)
+    ModeCountInput: TypeAlias = Sequence[int] | int
+    ModeIdInput: TypeAlias = Sequence[Sequence[int]] | Sequence[int]
+
+    # Concrete Output Type Alias (Guarantees NumPy-compatible indexing)
+    # ModeIdOutput: TypeAlias = list[NDArray[np.integer]]
 
 def _check_n_verts(
     n_verts: int | np.integer | None = None,
@@ -145,17 +152,21 @@ def _create_parcellation_matrix(
     ValueError
         If ``parcellation`` is not 1D.
     """
-    n_verts = parcellation.shape[0] # type: ignore
+    _check_n_verts(mask=mask, parcellation=parcellation)
+
+    if parcellation.shape is None: 
+        raise ValueError("Parcellation map has undefined shape.")
+    n_verts = int(parcellation.shape[0])
     mask = mask if mask is not None else np.ones(n_verts, dtype=bool)
 
-    if parcellation.ndim == 1: # will be dense
-        parc_mat = csc_matrix(
-            (np.ones(np.sum(mask)),
-            (np.arange(n_verts)[mask], parcellation[mask])),
-            shape=(n_verts, np.max(parcellation)+1) # type: ignore
-            )
-    elif parcellation.ndim == 2:
+    if parcellation.ndim == 2:
         parc_mat = csc_matrix(parcellation[mask])
+    elif parcellation.ndim == 1: # will be dense
+        parc_mat = csc_matrix(
+            (np.ones(mask.sum()),
+            (np.arange(n_verts)[mask], parcellation[mask])),
+            shape=(n_verts, (parcellation.max())+1)
+            )
     else: 
         raise ValueError(f"Parcellation map must be 1D or 2D; got {parcellation.ndim}D.")
 
@@ -184,24 +195,22 @@ def _create_mass_matrix(
     
     elif mass is None and n_verts is not None: # appease: pyright
         warn("Mass matrix not provided; assuming that area at each vertex is 1", UserWarning)
-        output = diags(np.ones(n_verts), format='csc')
+        output = diags(np.ones(n_verts)).tocsc()
 
     elif isinstance(mass, spmatrix) and mass.shape is not None: # appease: pyright
         if mass.shape[0] == mass.shape[1]: 
-            output = mass
+            output = mass.tocsc()
         else: 
             raise ValueError(f"Sparse mass matrix has invalid shape: {mass.shape} (should be square).")
 
     elif isinstance(mass, np.ndarray) and mass.ndim == 2:
         if mass.shape[0] == mass.shape[1]:
-            output = mass
+            output = csc_matrix(mass)
         else: 
             raise ValueError(f"Dense mass matrix has invalid shape: {mass.shape} (should be square).")
 
     else: # 1D array, list, tuple, etc. 
-        output = diags(np.ravel(np.asarray(mass)), format='csc')
-
-    output = csc_matrix(output)
+        output = diags(np.ravel(np.asarray(mass))).tocsc()
     
     if output.shape is None: 
         raise ValueError("Mass matrix has undefined shape.")
@@ -217,10 +226,10 @@ def _create_mass_matrix(
 
 
 def _process_mode_ids(
-    mode_counts: Sequence[int] | Sequence[np.integer] | int | np.integer | None,
-    mode_ids: Sequence[Sequence[int]] | Sequence[Sequence[np.integer]] | None,
+    mode_counts: ModeCountInput | None,
+    mode_ids: ModeIdInput | None,
     n_modes_max: int | np.integer
-) -> tuple[Sequence[Sequence[int] | Sequence[np.integer]], bool]:
+) -> tuple[list[list[int]], bool]:
     """
     Process mode_counts and mode_ids into a consistent format for use in decompose/reconstruct.
     """
@@ -228,35 +237,40 @@ def _process_mode_ids(
     # If mode_counts is provided, reformat into mode_ids
     if mode_counts is not None and mode_ids is not None:
         raise UserWarning("Both mode_counts and mode_ids provided; mode_counts will be ignored.")
-    
-    if mode_ids is not None: # TODO add type checking here to ensure it is sensible
-        if not _is_integer_sequence_of_sequences(mode_ids):
-            raise TypeError(f"mode_ids must be an iterable of iterables of integers; got {type(mode_ids)}.")
-        output = mode_ids
+
+    if _is_integer_sequence(mode_ids):
+        output = [list(mode_ids),]
+        squeeze_output = True
+    elif _is_integer_sequence_of_sequences(mode_ids):
+        # if not _is_integer_sequence_of_sequences(mode_ids):
+        #     raise TypeError(f"mode_ids must be an sequence of sequences of integers; got {type(mode_ids)}.")
+        output = [list(mids) for mids in mode_ids]
         squeeze_output = False
     elif mode_counts is None:
-        output = [range(n_modes_max),]
+        output = [list(range(n_modes_max)),]
         squeeze_output = True
     elif _is_integer(mode_counts):
-        if mode_counts <= 0:
-            raise ValueError(f"mode_counts must be a positive integer; got {mode_counts}.")
-        if mode_counts > n_modes_max:
-            raise ValueError(f"mode_counts must be in the range [1, n_modes = {n_modes_max}]; "
-                             f"got {mode_counts}.")
-        output = [range(mode_counts),]
+        # if mode_counts <= 0:
+        #     raise ValueError(f"mode_counts must be a positive integer; got {mode_counts}.")
+        # if mode_counts > n_modes_max:
+        #     raise ValueError(f"mode_counts must be in the range [1, n_modes = {n_modes_max}]; "
+        #                      f"got {mode_counts}.")
+        output = [list(range(mode_counts)),]
         squeeze_output = True
     elif _is_integer_sequence(mode_counts):
-        output = [range(mc) for mc in mode_counts]
+        output = [list(range(mc)) for mc in mode_counts]
         squeeze_output = False
     else: 
-        raise TypeError(f"mode_counts must be a positive integer or an iterable of positive "
+        raise TypeError(f"mode_counts must be a positive integer or an sequence of positive "
                         f"integers; got {type(mode_counts)}.")
+
+    # We don't do squeeze_output = len(output) == 1 to have stronger type checking
 
     for i in output:
         if len(i) == 0:
             raise ValueError("mode_counts/mode_ids must not be empty. mode_counts must be a positive integer or sequence of positive integers.")
         for j in i: 
-            if not isinstance(j, (int, np.integer)):
+            if not _is_integer(j):
                 raise TypeError(f"mode_counts/mode_ids must be integers; got {j} of type {type(j)}.")
             if j < 0 or j >= n_modes_max:
                 raise ValueError(f"mode_counts/mode_ids must be in the range [0, n_modes = {n_modes_max}).")
@@ -268,24 +282,24 @@ def _process_mode_ids(
 # TODO consider returning the cleaned data of a specific type 
 def _is_nonstring_sequence(x) -> TypeGuard[Sequence[Any]]:
     """
-    Check if x is an iterable of numeric types (int or float).
+    Check if x is an sequence of numeric types (int or float).
     """
     return isinstance(x, Sequence) and not isinstance(x, (str, bytes))
 
-def _is_integer(x) -> TypeGuard[int | np.integer]:
+def _is_integer(x) -> TypeGuard[int]:
     """
-    Check if x is an integer or an iterable of integers.
+    Check if x is an integer or an sequence of integers.
     """
-    return isinstance(x, (int, np.integer)) and not isinstance(x, bool) 
+    return isinstance(x, (int, )) and not isinstance(x, bool) 
 
-def _is_integer_sequence(x) -> TypeGuard[Sequence[int | np.integer]]:
+def _is_integer_sequence(x) -> TypeGuard[Sequence[int]]:
     """
-    Check if x is an iterable of integers.
+    Check if x is an sequence of integers.
     """
     return _is_nonstring_sequence(x) and all(_is_integer(i) for i in x)
 
-def _is_integer_sequence_of_sequences(x) -> TypeGuard[Sequence[Sequence[int]] | Sequence[Sequence[np.integer]]]:
+def _is_integer_sequence_of_sequences(x) -> TypeGuard[Sequence[Sequence[int]]]:
     """
-    Check if x is an iterable of iterables of integers.
+    Check if x is an sequence of sequences of integers.
     """
     return _is_nonstring_sequence(x) and all(_is_integer_sequence(i) for i in x)

@@ -139,8 +139,10 @@ def _dot_diagonal_nd(
             out = np.expand_dims(out, axis=0)
         return out
     
-    # Case 2: Both Sparse
-    if issparse(a) and issparse(b):
+    # Case 2: Both Sparse, with extra checks for making pyright happy
+    if issparse(a) and issparse(b) and not isinstance(a, np.ndarray) and not isinstance(b, np.ndarray):
+        if a.shape is None or b.shape is None:
+            raise ValueError("Input arrays must have defined shapes.")
         if a.shape[1] == 1:
             out = (a.T @ b).toarray()
         elif b.shape[1] == 1:
@@ -151,8 +153,16 @@ def _dot_diagonal_nd(
             out = out.squeeze(axis=0)
         return out
 
-    # Case 3: One Sparse, One Dense
-    sparse_mat, dense_arr = (a, b) if issparse(a) else (b, a)
+    # Case 3: One Sparse, One Dense, with explicit checks for making pyright happy
+    if issparse(a) and not isinstance(a, np.ndarray) and isinstance(b, np.ndarray):
+        sparse_mat, dense_arr = a, b
+    elif issparse(b) and not isinstance(b, np.ndarray) and isinstance(a, np.ndarray):
+        sparse_mat, dense_arr = b, a
+    else:
+        raise TypeError(f"Unsupported types for _dot_diagonal_nd: {type(a)} and {type(b)}")
+    if sparse_mat.shape is None or dense_arr.shape is None:
+        raise ValueError("Input arrays must have defined shapes.")
+    
     b_s = sparse_mat.shape[1] # csc_matrix is always exactly 2D
     b_d = dense_arr.shape[1] if dense_arr.ndim > 1 else 0
 
@@ -609,7 +619,7 @@ def cdistw(
         
     else:
         areas = _mass_to_areas(mass, a.shape[0])
-        D = scipy_cdist(a, b, metric=metric, mass=areas)
+        D = scipy_cdist(a, b, metric=metric, w=areas)
 
     return np.maximum(D, 0)
 

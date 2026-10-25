@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     _CheckKind: TypeAlias = bool | Literal['maps', 'ortho', 'shape', 'evals']
-    from neuromodes.basis import _IntSequenceKind, _SeqSequenceKind
+    from neuromodes.validation import ModeCountInput, ModeIdInput
 
 class EigenSolver(Solver):
     """
@@ -256,6 +256,7 @@ class EigenSolver(Solver):
                  "neuromodes.stats.sigmoid_rescale) to be non-negative.")
 
         # Cache validation
+        # TODO P1 move into new setters for hetero and lump
         if not np.array_equal(hetero, self._hetero):
             self._stiffness = None  # hetero affects stiffness only
             self._emodes = None
@@ -419,7 +420,7 @@ class EigenSolver(Solver):
         self,
         data: NDArray[np.floating],
         *,
-        mode_counts: int | None = ...,
+        mode_counts: int | np.integer | None = ...,
         mode_ids: None = ...
     ) -> NDArray[np.floating]: ...
 
@@ -429,7 +430,7 @@ class EigenSolver(Solver):
         self,
         data: NDArray[np.floating],
         *,
-        mode_counts: _IntSequenceKind,
+        mode_counts: ModeCountInput,
         mode_ids: None = ...
     ) -> list[NDArray[np.floating]]: ...
 
@@ -440,7 +441,7 @@ class EigenSolver(Solver):
         data: NDArray[np.floating],
         *,
         mode_counts: None = ...,
-        mode_ids: _SeqSequenceKind
+        mode_ids: ModeIdInput
     ) -> list[NDArray[np.floating]]: ...
 
     def decompose(
@@ -476,7 +477,6 @@ class EigenSolver(Solver):
         return _reconstruct(
             coeffs=coeffs,
             emodes=self.emodes,
-            checks='maps',
             **kwargs
         )
     

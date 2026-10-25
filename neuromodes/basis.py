@@ -7,28 +7,28 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, overload
 from warnings import warn
-from collections.abc import Sequence
+from collections.abc import Sequence, Callable
 
 import numpy as np
 from scipy.sparse import diags, issparse
 
-# from neuromodes.eigen import EigenData
 from neuromodes.stats import cdistw, lstsqw, _multiply_nd
 from neuromodes.validation import _create_mass_matrix, _process_mode_ids, _check_n_verts
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from typing import Any, Literal, TypeAlias
+    from typing import Any, Literal, TypeAlias, TypeVar
 
     from numpy.typing import NDArray
     from scipy.sparse import csc_matrix
     from scipy.spatial.distance import _MetricCallback, _MetricKind
 
     from neuromodes.eigen import _CheckKind
+    # from neuromodes.validation import _IntSequenceKind, _SeqSequenceKind
+    from neuromodes.validation import ModeCountInput, ModeIdInput
 
-    _IntSequenceKind: TypeAlias = Sequence[int] | NDArray[np.integer]
-    _SeqSequenceKind: TypeAlias = Sequence[_IntSequenceKind] | NDArray[Any]
     _DecompositionKind: TypeAlias = Literal['project', 'regress']
+    CoeffsT = TypeVar("CoeffsT", NDArray[np.floating], list[NDArray[np.floating]])
 
 @overload
 def decompose(
@@ -50,12 +50,12 @@ def decompose(
 	method: _DecompositionKind = ...,
 	*,
     mass: csc_matrix | None = ...,
-	mode_counts: _IntSequenceKind,
+	mode_counts: Sequence[int],
 	mode_ids: None = ...,
 	checks: _CheckKind | None = ...
 ) -> list[NDArray[np.floating]]: ...
 
-# 3. mode_ids is Sequence -> List of Arrays
+# 3. mode_ids is Sequence -> Arrays
 @overload
 def decompose(
     data: NDArray[np.floating],
@@ -64,7 +64,20 @@ def decompose(
 	*,
     mass: csc_matrix | None = ...,
 	mode_counts: None = ...,
-	mode_ids: _SeqSequenceKind,
+	mode_ids: Sequence[int],
+	checks: _CheckKind | None = ...
+) -> NDArray[np.floating]: ...
+
+# 3. mode_ids is Sequence[Sequence] -> List of Arrays
+@overload
+def decompose(
+    data: NDArray[np.floating],
+	emodes: NDArray[np.floating],
+	method: _DecompositionKind = ...,
+	*,
+    mass: csc_matrix | None = ...,
+	mode_counts: None = ...,
+	mode_ids: Sequence[Sequence[int]],
 	checks: _CheckKind | None = ...
 ) -> list[NDArray[np.floating]]: ...
 
@@ -77,8 +90,8 @@ def decompose(
     method: _DecompositionKind = 'project',
     *,
     mass: csc_matrix | None = None,
-    mode_counts: _IntSequenceKind | int | None = None,
-    mode_ids: _SeqSequenceKind | None = None,
+    mode_counts: ModeCountInput | None = None,
+    mode_ids: ModeIdInput | None = None,
     checks: _CheckKind | None = None,  
 ) -> NDArray[np.floating] | list[NDArray[np.floating]]:
     """
@@ -199,12 +212,28 @@ def decompose(
 # TODO P5: add 'force_list_output' option st. even if coeffs are eg. [(10,),(20,),(30,)], 
 # return a list of 3 arrays instead of a single array of shape (n_verts, ..., 3)
 # or force_same_output. or perhaps default to that and have force_array_output option?
+
+@overload
 def reconstruct(
-    coeffs: list[NDArray[np.floating]] | NDArray[np.floating],
+    coeffs: NDArray[np.floating],
     emodes: NDArray[np.floating],
-    mode_counts: _IntSequenceKind | int | None = None,
-    mode_ids: _SeqSequenceKind | None = None,
-    checks: _CheckKind | None = None
+    mode_counts: ModeCountInput | None = ...,
+    mode_ids: ModeIdInput | None = ...,
+) -> NDArray[np.floating]: ...
+
+@overload
+def reconstruct(
+    coeffs: list[NDArray[np.floating]],
+    emodes: NDArray[np.floating],
+    mode_counts: ModeCountInput | None = ...,
+    mode_ids: ModeIdInput | None = ...,
+) -> list[NDArray[np.floating]]: ...
+
+def reconstruct(
+    coeffs: NDArray[np.floating] | list[NDArray[np.floating]],
+    emodes: NDArray[np.floating],
+    mode_counts: ModeCountInput | None = None,
+    mode_ids: ModeIdInput | None = None,
 ) -> NDArray[np.floating] | list[NDArray[np.floating]]:
     """
     Calculate the reconstruction of the given independent data using the provided orthonormal
@@ -263,68 +292,84 @@ def reconstruct(
     #     emodes, mass = ved.emodes, ved.mass
 
     mode_ids, squeeze_output = _process_mode_ids(mode_counts, mode_ids, emodes.shape[1])
-    coeffs_same_shape = all(c.shape[1:] == coeffs[0].shape[1:] for c in coeffs)
-    output_dtype = np.result_type(*[c.dtype for c in coeffs], emodes.dtype)
+    # coeffs_same_shape = all(c.shape[1:] == coeffs[0].shape[1:] for c in coeffs)
+    # output_dtype = np.result_type(*[c.dtype for c in coeffs], emodes.dtype)
 
     if squeeze_output and isinstance(coeffs, np.ndarray): # mode_counts is None or scalar, so coeffs is a single array
-        recon_nd = _multiply_nd(emodes, coeffs)
+        recon_nd = _multiply_nd(emodes[:, mode_ids[0]], coeffs)
     elif squeeze_output: 
         raise ValueError("If mode_counts is None or scalar, coeffs must be a single array, not a list.")
-    elif isinstance(coeffs, np.ndarray):
-        recon_nd = np.empty((emodes.shape[0], *coeffs.shape[1:]), dtype=output_dtype)
-        for j, mids in enumerate(mode_ids):
-            recon_nd[..., j] = _multiply_nd(emodes[:, mids], coeffs[...,j])
-    elif coeffs_same_shape:
-        recon_nd = np.empty((emodes.shape[0], *coeffs[0].shape[1:], len(coeffs)), dtype=output_dtype)
-        for j, mids in enumerate(mode_ids):
-            recon_nd[..., j] = _multiply_nd(emodes[:, mids], coeffs[j])
+    # elif isinstance(coeffs, np.ndarray):
+    #     output_dtype = np.result_type(coeffs.dtype, emodes.dtype)
+    #     recon_nd = np.empty((emodes.shape[0], *coeffs.shape[1:]), dtype=output_dtype)
+    #     for j, mids in enumerate(mode_ids):
+    #         recon_nd[..., j] = _multiply_nd(emodes[:, mids], coeffs[...,j])
+    # elif coeffs_same_shape:
+    #     recon_nd = np.empty((emodes.shape[0], *coeffs[0].shape[1:], len(coeffs)), dtype=output_dtype)
+    #     for j, mids in enumerate(mode_ids):
+    #         recon_nd[..., j] = _multiply_nd(emodes[:, mids], coeffs[j])
     else:
         recon_nd = [_multiply_nd(emodes[:, mids], coeffs[j]) for j, mids in enumerate(mode_ids)]
     return recon_nd
 
-
+# TODO P1: add to EigenSolver
 # TODO P2: add support for data=None which is equivalent to data=speye(n_verts)
 # TODO P3: add `integrate` option like LaPy for when data are already mass-corrected
-def spectralfilter(
-        data, 
-        emodes, 
-        evals, 
-        filter = lambda evals: np.ones_like(evals), 
-        mass = None, 
-        mode_ids = None, 
-        mode_counts = None,
-        checks = True
-):
+def filter_spectrum(
+        data: NDArray[np.floating], 
+        emodes: NDArray[np.floating], 
+        evals: NDArray[np.floating], 
+        transfer_function: Callable[[NDArray[np.floating]], NDArray[np.floating] | csc_matrix] = lambda evals: np.ones_like(evals), 
+        mass: csc_matrix | None = None, 
+        method: _DecompositionKind = 'project',
+        mode_ids: ModeIdInput | None = None, 
+        mode_counts: ModeCountInput | None = None,
+) -> NDArray[np.floating]:
     """
     filter should be a function that takes in the vector of eigenvalues and returns either
     (i) a vector of the same length (which will be converted to a diagonal matrix), or 
-    (ii) a numpy or scipy.sparse matrix of shape (n_modes, n_modes).
+    (ii) a numpy or scipy.sparse square matrix of shape of the same length.
     Note that only the corresponding modes in mode_ids/mode_counts will be used for each iteration.
+
+    if mode_counts is used, or if mode_ids is used to request multiple sets of modes,
+    output will be of shape (n_verts, ..., n_recons), where n_recons is the number of reconstructions
+    otherwise, output will be of shape (n_verts, ...), where ... is the shape of data after the first axis.
     """
 
     mode_ids, squeeze_output = _process_mode_ids(mode_counts, mode_ids, emodes.shape[1])
 
-    coeffs = decompose(data, emodes, method='project', mass=mass, mode_ids=mode_ids, checks=checks)
+    # check n_verts and check_mass are inside decompose, so we don't need to do them here
+    coeffs = decompose(data, emodes, method=method, mass=mass, mode_ids=mode_ids)
 
-    fe = filter(evals)
-    if fe.ndim == 1:
-        fe = diags(fe, dtype=evals.dtype)
+    # TODO add check_n_modes 
 
-    filtered_coeffs = [_multiply_nd(_extract_submatrix(fe, m, m), c) for m,c in zip(mode_ids, coeffs)]
+    filtered_evals = transfer_function(evals)
+    if filtered_evals.ndim == 1:
+        filtered_evals = diags(filtered_evals, dtype=evals.dtype).tocsc()
+    if (filtered_evals.shape is None 
+        or filtered_evals.shape[0] != filtered_evals.shape[1] 
+        or filtered_evals.shape[0] != emodes.shape[1]): 
+        raise ValueError(f"Transfer function output must be a square matrix of shape (n_modes, n_modes); got {filtered_evals.shape}.")
+    filtered_emodes = _multiply_nd(emodes, filtered_evals)
 
-    out = reconstruct(filtered_coeffs, emodes, mode_ids=mode_ids, checks=False)
+    output = np.empty((*data.shape, len(mode_ids)), 
+                      dtype=np.result_type(data, emodes, filtered_evals))
+
+    for j, mids in enumerate(mode_ids):
+        output[..., j] = _multiply_nd(filtered_emodes[:, mids], coeffs[j])
 
     if squeeze_output:
-        out = np.squeeze(out, axis=-1)
+        output = np.squeeze(output, axis=-1)
 
-    return out
+    return output
 
-def _extract_submatrix(A, rows, cols) -> NDArray[np.floating] | csc_matrix:
-    if issparse(A):
-        return A.tocsr()[rows, :].tocsc()[:, cols]
-    return A[np.ix_(rows, cols)]
+# def _extract_submatrix(A, rows, cols) -> NDArray[np.floating] | csc_matrix:
+#     if issparse(A):
+#         return A.tocsr()[rows, :].tocsc()[:, cols]
+#     return A[np.ix_(rows, cols)]
 
-
+# TODO P5: support list input for recon (the output of reconstruct)
+# TODO P5: add keepdims
 # TODO P5: see if this can be rewritten with some kind of 'cdistw_diagonal' function
 # which finds the diagonal of the distance matrix without calculating the full matrix
 def calc_recon_error(
@@ -377,7 +422,7 @@ def calc_recon_error(
     """
 
     mass = _create_mass_matrix(mass, data.shape[0])
-    _check_n_verts(data=data, emodes=recon, mass=mass)
+    _check_n_verts(data=data, recon=recon, mass=mass)
 
     # Get and check data/recon shapes
     data_shape = data.shape

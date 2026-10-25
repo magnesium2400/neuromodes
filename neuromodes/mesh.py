@@ -249,7 +249,8 @@ def normalize_vol(
     geometry.v -= centroid
 
     # Rescale to unit volume
-    geometry.v /= geometry.boundary_tria().volume() ** (1/3)
+    boundary: TriaMesh = geometry.boundary_tria() # type: ignore
+    geometry.v /= boundary.volume() ** (1/3)
 
     return geometry
 
@@ -307,7 +308,7 @@ def check_vol(
                          'tetrahedra.')
 
     # Validate surface boundary
-    vol_boundary = vol.boundary_tria()
+    vol_boundary: TriaMesh = vol.boundary_tria() # type: ignore
     vol_boundary.rm_free_vertices_()
     vol_boundary.orient_()
     check_surf(vol_boundary)

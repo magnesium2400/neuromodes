@@ -8,25 +8,23 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-# from neuromodes.eigen import EigenData
-from neuromodes.basis import decompose, reconstruct, spectralfilter, _process_mode_ids
-from neuromodes.stats import  _dot_nd, _multiply_nd
-from neuromodes.validation import _create_mass_matrix, _check_n_verts, _check_n_modes
+from neuromodes.stats import _dot_nd, _multiply_nd
+from neuromodes.validation import _create_mass_matrix, _check_n_verts, _check_n_modes, _process_mode_ids
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
     from scipy.sparse import csc_matrix
 
     from neuromodes.eigen import _CheckKind
-    from neuromodes.basis import _IntSequenceKind, _SeqSequenceKind
+    from neuromodes.validation import ModeCountInput, ModeIdInput
 
 def compute_gem(
     emodes: NDArray[np.floating],
     evals: NDArray[np.floating],
     r: float = 9.53,
     mass: csc_matrix | None = None,
-    mode_counts: _IntSequenceKind | int | np.integer | None = None,
-    mode_ids: _SeqSequenceKind | None = None,
+    mode_counts: ModeCountInput | None = None,
+    mode_ids: ModeIdInput | None = None,
     weighted_pinv: bool = True,
     checks: _CheckKind = 'shape'
 ) -> NDArray[np.floating]:
@@ -42,7 +40,7 @@ def compute_gem(
         The eigenvalues array of shape ``(n_modes,)``.
     r : float, optional
         Spatial scale parameter for the Green's function, in millimeters. Default is ``9.53``.
-    k : int, optional
+    k : int, optional # TODO P1 fix this to be mode_counts
         Number of eigenmodes to use. Default is ``None``. To use the optimal results as derived in 
         [1]_, set ``mode_counts=108``.
     checks : bool, optional
@@ -118,7 +116,7 @@ def compute_gem(
 
         out[:, :, j] = curr / np.max(curr)
 
-    return out.squeeze(axis=2) if squeeze_output else out
+    return out.squeeze(axis=-1) if squeeze_output else out
 
 
     # Compute the Geometric Eigenmode Model

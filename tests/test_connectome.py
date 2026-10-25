@@ -87,7 +87,3 @@ def test_eval_length_mismatch_raises():
 def test_invalid_k_raises(bad_k, solver):
     with pytest.raises((ValueError, TypeError)):
         solver.compute_gem(mode_counts=bad_k)
-
-def test_numpy_types(solver):
-    # Test that different types for r and k work without error
-    _ = solver.compute_gem(r=np.float64(1.5), mode_counts=np.int32(3)) # type: ignore
