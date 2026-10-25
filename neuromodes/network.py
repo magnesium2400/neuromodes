@@ -90,26 +90,22 @@ def compute_gem(
     mode_ids, squeeze_output = _process_mode_ids(mode_counts, mode_ids, n_modes)
 
     _check_n_modes(emodes=emodes, evals=evals)
-    mass = _create_mass_matrix(mass, n_verts)
-    _check_n_verts(emodes=emodes, mass=mass)
-    output_dtype = np.result_type(emodes, evals, mass.dtype)
+    output_dtype = np.result_type(emodes, evals)
+
+    if weighted_pinv: 
+        mass = _create_mass_matrix(mass, n_verts, dtype=output_dtype)
+    
     out = np.empty((n_verts, n_verts, len(mode_ids)), dtype=output_dtype)
 
-    # denom = 1/(1 + evals * r**2)
-    # first_term = emodes * denom
-
-    first_term = emodes / (1 + evals * r**2)
-
+    filtered_emodes = emodes / (1 + evals * r**2)
     for j, mids in enumerate(mode_ids): 
-        # a = emodes[:, mids]
-        # b = 1/(1 + evals[mids] * r**2)
-
         if weighted_pinv:
+            assert mass is not None
             c = _dot_nd(emodes[:, mids], mass)
         else: 
             c = np.linalg.pinv(emodes[:, mids])
 
-        curr = _multiply_nd(first_term[:, mids], c)
+        curr = _multiply_nd(filtered_emodes[:, mids], c)
         np.fill_diagonal(curr, 0)
         curr = np.maximum(curr, 0)
         curr = (curr + curr.T) / 2

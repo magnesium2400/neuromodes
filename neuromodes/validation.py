@@ -187,7 +187,8 @@ def _mass_to_areas(
 # TODO: consider moving to EigenData
 def _create_mass_matrix(
     mass: csc_matrix | NDArray[np.floating] | None = None,
-    n_verts: int | None = None
+    n_verts: int | None = None, 
+    dtype: np.dtype | None = None
 ) -> csc_matrix:
     
     if mass is None and n_verts is None:
@@ -195,7 +196,7 @@ def _create_mass_matrix(
     
     elif mass is None and n_verts is not None: # appease: pyright
         warn("Mass matrix not provided; assuming that area at each vertex is 1", UserWarning)
-        output = diags(np.ones(n_verts)).tocsc()
+        output = diags(np.ones(n_verts, dtype=dtype)).tocsc()
 
     elif isinstance(mass, spmatrix) and mass.shape is not None: # appease: pyright
         if mass.shape[0] == mass.shape[1]: 

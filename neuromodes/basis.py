@@ -12,7 +12,7 @@ from collections.abc import Sequence, Callable
 import numpy as np
 from scipy.sparse import diags, issparse
 
-from neuromodes.stats import cdistw, lstsqw, _multiply_nd
+from neuromodes.stats import cdistw, lstsqw, _multiply_nd, _dot_nd
 from neuromodes.validation import _create_mass_matrix, _process_mode_ids, _check_n_verts
 
 if TYPE_CHECKING:
@@ -173,7 +173,7 @@ def decompose(
         inv = np.split(inv, np.cumsum([len(m) for m in mode_ids[:-1]])) # back in the same list pattern as mode_ids
         
         # Get the coeffs for all the unique modes
-        coeffs_all = _multiply_nd(emodes[:, unique_mids].T @ mass, data)
+        coeffs_all = _multiply_nd(_dot_nd(emodes[:, unique_mids], mass), data)
         
         # Map the unique results back to the specific mode_ids requested
         for j, idxs in enumerate(inv):
