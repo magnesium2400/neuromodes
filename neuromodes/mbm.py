@@ -198,6 +198,7 @@ def mbm_generate_stat_maps(
 # TODO FUTURE look at ways of vectorising this across vertices ?Newton method for MLE ?method of moments
 # TODO consider returning the fit vals/threshold/ad test for each vertex as well
 # TODO FUTURE support observed_stat_map being 2D for alternative == two-sided ?recursion
+# TODO P1 allow returning of information about the fit success/quality
 def mbm_calc_p_vals(
         # TODO change names!
         observedStatMap, # (n_data,) or (n_data, n_obs) if alternative != 'two-sided'
