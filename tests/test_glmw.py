@@ -1,8 +1,8 @@
 import numpy as np
-import scipy.stats as sps
 import pytest
+import scipy.stats as sps
 
-from neuromodes.glmw import ttestw, ftestw
+from neuromodes.glmw import ftestw, ttestw
 
 # TODO add tests for ztestw
 # TODO add tests for multiple columns of data
