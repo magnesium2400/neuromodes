@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import scipy.stats as sps
@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
     from scipy.sparse import csc_matrix
 
-    from neuromodes.mbm import AlternativeLiteral
+AlternativeLiteral = Literal["two-sided", "greater", "less"]
 
 # TODO check performace on unequal variance data (Welch's t-test/ANOVA)
 
@@ -22,7 +22,7 @@ def _glmw(
     response: NDArray, # (n_vertices, n_data)
     contrast: NDArray, # (n_contrasts, n_predictors)
     mass: csc_matrix, # (n_vertices, n_vertices)
-):
+) -> tuple[NDArray, NDArray, int]:
     # 0. Input validation
     ved = EigenData(data=(design, response), mass=mass)
     design, response = ved.data
@@ -141,7 +141,7 @@ def ftestw(
     response: NDArray, 
     contrast: NDArray, 
     mass: csc_matrix
-) -> tuple:
+) -> tuple[NDArray, NDArray]:
     """Weighted F-test for one-way ANOVA and ANCOVA."""
     Q, _, df = _glmw(design, response, contrast, mass)
     

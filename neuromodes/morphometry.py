@@ -12,7 +12,7 @@ from scipy.interpolate import make_interp_spline
 from scipy.sparse import csc_matrix, csr_matrix, eye
 from scipy.stats import genpareto
 
-from neuromodes.glmw import ftestw, ttestw, ztestw
+from neuromodes.glmw import AlternativeLiteral, ftestw, ttestw, ztestw
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -20,7 +20,6 @@ if TYPE_CHECKING:
 SeedLike = np.random.SeedSequence | int | None
 StatLiteral = Literal['t', 'f', 'z']
 PermutationLiteral = Literal["flip", "shuffle", "flip_shuffle"]
-AlternativeLiteral = Literal['two-sided', 'greater', 'less']
 
 @dataclass(frozen=True, slots=True)
 class _TailFitResult:
@@ -185,25 +184,6 @@ def _iter_permute_design(
             perm_design[:, columns] = op @ target_design
             yield perm_design
     return _stream()
-
-def _permute_design(
-    design: NDArray,
-    columns: NDArray,
-    n_permutations: int,
-    method: PermutationLiteral = 'flip_shuffle',
-    seed: SeedLike = None,
-) -> NDArray:
-    """
-    Materializes a 3D array of permuted copies of `design` of shape
-    (n_subjects, n_predictors, n_permutations).
-
-    Only columns selected by `columns` are transformed; nuisance columns
-    remain untouched.
-
-    If `n_permutations` is None, all permutations are generated (if finite).
-    """
-    stream = _iter_permute_design(design, columns, method, seed)
-    return _stack_arrays(stream, n=n_permutations)
 
 def _iter_null_stat_maps(
     design: NDArray,

@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 from functools import partial
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
@@ -6,14 +9,41 @@ from scipy.stats import genpareto, kstest, lognorm
 
 from neuromodes.eigen import EigenSolver
 from neuromodes.io import fetch_example_surf
-from neuromodes.mbm import (
+from neuromodes.morphometry import (
     _fit_and_ad_exceedances,
-    _permute_design,
+    _iter_permute_design,
+    _stack_arrays,
     compute_p_values,
     compute_stat_map,
     generate_null_stat_maps,
 )
 
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
+
+    from neuromodes.morphometry import (
+        PermutationLiteral,
+        SeedLike,
+    )
+
+def _permute_design(
+    design: NDArray,
+    columns: NDArray,
+    n_permutations: int,
+    method: PermutationLiteral = 'flip_shuffle',
+    seed: SeedLike = None,
+) -> NDArray:
+    """
+    Materializes a 3D array of permuted copies of `design` of shape
+    (n_subjects, n_predictors, n_permutations).
+
+    Only columns selected by `columns` are transformed; nuisance columns
+    remain untouched.
+
+    If `n_permutations` is None, all permutations are generated (if finite).
+    """
+    stream = _iter_permute_design(design, columns, method, seed)
+    return _stack_arrays(stream, n=n_permutations)
 
 class TestPermutations:
     @pytest.mark.parametrize("method", ['flip', 'shuffle', 'flip_shuffle'])
