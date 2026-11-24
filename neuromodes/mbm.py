@@ -23,7 +23,7 @@ PermutationLiteral = Literal["flip", "shuffle", "flip_shuffle"]
 AlternativeLiteral = Literal['two-sided', 'greater', 'less']
 
 @dataclass(frozen=True, slots=True)
-class TailFitResult:
+class _TailFitResult:
     """Generalized Pareto distribution (GPD) tail-fit diagnostics aligned with the statistical map.
 
     Attributes
@@ -112,7 +112,7 @@ def _stack_arrays(
     return out
 
 # These could also use `def _stream(): for.... return _stream()` if desired
-def iter_flip(
+def _iter_flip(
     n: int,
     seed: SeedLike = None,
 ) -> Iterator[csr_matrix]:
@@ -124,7 +124,7 @@ def iter_flip(
         signs = rng.integers(0, 2, size=n, dtype=np.int8) * 2 - 1
         yield csr_matrix((signs, indices, indptr), shape=(n, n))
 
-def iter_shuffle(
+def _iter_shuffle(
     n: int,
     seed: SeedLike = None,
 ) -> Iterator[csr_matrix]:
@@ -136,7 +136,7 @@ def iter_shuffle(
         indices = rng.permutation(n)
         yield csr_matrix((signs, indices, indptr), shape=(n, n))
 
-def iter_flip_shuffle(
+def _iter_flip_shuffle(
     n: int,
     seed: SeedLike = None,
 ) -> Iterator[csr_matrix]:
@@ -148,7 +148,7 @@ def iter_flip_shuffle(
         indices = rng.permutation(n)
         yield csr_matrix((signs, indices, indptr), shape=(n, n))
 
-def iter_permute_design(
+def _iter_permute_design(
     design: NDArray,
     columns: NDArray,
     method: PermutationLiteral = 'flip_shuffle',
@@ -166,11 +166,11 @@ def iter_permute_design(
         raise ValueError(f"Design matrix must be 2D. Received shape: {design.shape}")
 
     if method == 'flip':
-        operators = iter_flip
+        operators = _iter_flip
     elif method == 'shuffle':
-        operators = iter_shuffle
+        operators = _iter_shuffle
     elif method == 'flip_shuffle':
-        operators = iter_flip_shuffle
+        operators = _iter_flip_shuffle
     else:
         raise ValueError(f"Unsupported permutation method: {method}")
 
@@ -186,7 +186,7 @@ def iter_permute_design(
             yield perm_design
     return _stream()
 
-def permute_design(
+def _permute_design(
     design: NDArray,
     columns: NDArray,
     n_permutations: int,
@@ -202,10 +202,10 @@ def permute_design(
 
     If `n_permutations` is None, all permutations are generated (if finite).
     """
-    stream = iter_permute_design(design, columns, method, seed)
+    stream = _iter_permute_design(design, columns, method, seed)
     return _stack_arrays(stream, n=n_permutations)
 
-def iter_null_stat_maps(
+def _iter_null_stat_maps(
     design: NDArray,
     response: NDArray,
     contrast: NDArray | np.number | float,
@@ -226,7 +226,7 @@ def iter_null_stat_maps(
 
     # Main
     def _stream() -> Iterator[NDArray]:
-        for perm_design in iter_permute_design(design, target_cols, method, seed):
+        for perm_design in _iter_permute_design(design, target_cols, method, seed):
             yield compute_stat_map(perm_design, response, contrast_arr, statistic)
     return _stream()
 
@@ -244,7 +244,7 @@ def generate_null_stat_maps(
 
     If `n_permutations` is None, all permutations are generated (if finite).
     """
-    stream = iter_null_stat_maps(design, response, contrast, statistic, method, seed)
+    stream = _iter_null_stat_maps(design, response, contrast, statistic, method, seed)
     return _stack_arrays(stream, n=n_permutations)
 
 @overload
@@ -284,7 +284,7 @@ def compute_p_values(
     *,
     return_tail: Literal[False] = False,
     return_fit: Literal[True],
-) -> tuple[NDArray[np.floating], TailFitResult]: ...
+) -> tuple[NDArray[np.floating], _TailFitResult]: ...
 
 @overload
 def compute_p_values(
@@ -297,7 +297,7 @@ def compute_p_values(
     *,
     return_tail: Literal[True],
     return_fit: Literal[True],
-) -> tuple[NDArray[np.floating], NDArray[np.bool_], TailFitResult]: ...
+) -> tuple[NDArray[np.floating], NDArray[np.bool_], _TailFitResult]: ...
 
 # TODO FUTURE look at ways of vectorising this across vertices ?Newton method for MLE ?method of moments
 # TODO FUTURE support observed_stat_map being 2D for alternative == two-sided ?recursion
@@ -315,8 +315,8 @@ def compute_p_values(
     return_fit: bool = False,
 ) -> NDArray[np.floating] \
     | tuple[NDArray[np.floating], NDArray[np.bool_]] \
-    | tuple[NDArray[np.floating], TailFitResult] \
-    | tuple[NDArray[np.floating], NDArray[np.bool_], TailFitResult]: 
+    | tuple[NDArray[np.floating], _TailFitResult] \
+    | tuple[NDArray[np.floating], NDArray[np.bool_], _TailFitResult]: 
 
     # Note that fit_candidate_sizes and fit_trigger should be specified as 
     # integers (like in Knijnenberg et al. 2009), NOT as fractions (like in PALM).
@@ -440,7 +440,7 @@ def compute_p_values(
         fit_params = sqz1(fit_params)
         fit_pvalue = sqz1(fit_pvalue)
 
-    fit_result = TailFitResult(n=fit_n, fit=fit_params, pvalue=fit_pvalue)
+    fit_result = _TailFitResult(n=fit_n, fit=fit_params, pvalue=fit_pvalue)
 
     if not return_tail and not return_fit:
         return p_values
@@ -481,15 +481,6 @@ def _counts_to_pvals(
     if alternative == 'two-sided':
         tail_counts = 2 * tail_counts
     return np.clip(tail_counts / n_permutations, 0.0, 1.0)
-
-# This function can be used (and perhaps formalised) to get p-values without any tail fitting
-def _naive_pvals(
-        obs_2d: NDArray[np.floating], 
-        nulls_2d: NDArray[np.floating], 
-        alternative: AlternativeLiteral
-) -> tuple[NDArray[np.floating], NDArray[np.bool_]]:
-    tail_counts, tail_dir = _count_tails(obs_2d, nulls_2d, alternative)
-    return _counts_to_pvals(tail_counts, nulls_2d.shape[1], alternative), tail_dir
 
 def _get_threshold_and_exceedances(
     nulls_nondesc: NDArray[np.floating], 
@@ -571,6 +562,15 @@ def _andersondarling(
     p = a2_to_p(a2)
     
     return np.clip(p, 0.0, 1.0), np.clip(a2, 0.0, np.inf)
+
+# # This function can be used (and perhaps formalised) to get p-values without any tail fitting
+# def _naive_pvals(
+#         obs_2d: NDArray[np.floating], 
+#         nulls_2d: NDArray[np.floating], 
+#         alternative: AlternativeLiteral
+# ) -> tuple[NDArray[np.floating], NDArray[np.bool_]]:
+#     tail_counts, tail_dir = _count_tails(obs_2d, nulls_2d, alternative)
+#     return _counts_to_pvals(tail_counts, nulls_2d.shape[1], alternative), tail_dir
 
 # # These functions may be useful if freedman-lane permutations are incorporated in the future, 
 # # or for regression testing (comparing with MATLAB using a known set of permutated designs)

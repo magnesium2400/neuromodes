@@ -8,10 +8,10 @@ from neuromodes.eigen import EigenSolver
 from neuromodes.io import fetch_example_surf
 from neuromodes.mbm import (
     _fit_and_ad_exceedances,
+    _permute_design,
     compute_p_values,
     compute_stat_map,
     generate_null_stat_maps,
-    permute_design,
 )
 
 
@@ -24,7 +24,7 @@ class TestPermutations:
     def test_permutation_shape(self, method, seed, n_subjects, n_observations, n_permutations):
         """Check that the permutation matrix has the correct shape."""
         design = np.ones((n_subjects, n_observations))  # Dummy design matrix
-        perm = permute_design(
+        perm = _permute_design(
             design=design, 
             columns=np.arange(n_observations),
             method=method,
@@ -41,7 +41,7 @@ class TestPermutations:
     def test_shuffle_contents(self, seed, n_subjects, n_observations, n_permutations):
         """Check that the permutation matrix has the correct contents."""
         design = np.repeat(np.arange(n_subjects)[:, None], n_observations, axis=1)
-        perm = permute_design(
+        perm = _permute_design(
             design=design,
             columns=np.arange(n_observations),
             n_permutations=n_permutations,
@@ -60,7 +60,7 @@ class TestPermutations:
     def test_flip_contents(self, seed, n_subjects, n_observations, n_permutations):
         """Check that the permutation matrix has the correct contents."""
         design = np.ones((n_subjects, n_observations))
-        perm = permute_design(
+        perm = _permute_design(
             design=design,
             columns=np.arange(n_observations),
             n_permutations=n_permutations,
@@ -77,7 +77,7 @@ class TestPermutations:
     def test_flip_shuffle_contents(self, seed, n_subjects, n_observations, n_permutations):
         """Check that the permutation matrix has the correct contents."""
         design = np.repeat(np.arange(n_subjects)[:, None], n_observations, axis=1)
-        perm = permute_design(
+        perm = _permute_design(
             design=design,
             columns=np.arange(n_observations),
             n_permutations=n_permutations,
@@ -99,7 +99,7 @@ class TestPermutations:
         """Check that the first n_permutations of a larger permutation set are the same as a smaller permutation set."""
         design = np.repeat(np.arange(n_subjects)[:, None], n_observations, axis=1)
         
-        first = permute_design(
+        first = _permute_design(
             design=design,
             columns=np.arange(n_observations),
             n_permutations=n_permutations,
@@ -107,7 +107,7 @@ class TestPermutations:
             seed=seed,
         )
 
-        second = permute_design(
+        second = _permute_design(
             design=design,
             columns=np.arange(n_observations),
             n_permutations=n_permutations-1,
@@ -123,7 +123,7 @@ class TestPermutations:
     @pytest.mark.parametrize("n_permutations", [5, 10])
     def test_flip_n_subjects_stable(self, seed, n_subjects, n_observations, n_permutations):
         """Check that the first n_subjects of a larger flip-sign permutation set are the same as a smaller flip-sign permutation set."""
-        first = permute_design(
+        first = _permute_design(
             design=np.ones((n_subjects, n_observations)), 
             columns=np.arange(n_observations),
             n_permutations=n_permutations,
@@ -131,7 +131,7 @@ class TestPermutations:
             seed=seed,
         )
 
-        second = permute_design(
+        second = _permute_design(
             design=np.ones((n_subjects-1, n_observations)),
             columns=np.arange(n_observations),
             n_permutations=n_permutations,
@@ -149,7 +149,7 @@ class TestPermutations:
     def test_permutation_different_seeds(self, method, seed, n_subjects, n_observations, n_permutations):
         """Check that different seeds produce different permutation matrices."""
         perm = partial(
-            permute_design,
+            _permute_design,
             design=np.repeat(np.arange(n_subjects)[:, None], n_observations, axis=1),
             columns=np.arange(n_observations),
             n_permutations=n_permutations,
@@ -167,7 +167,7 @@ class TestPermutations:
     def test_shuffle_distribution(self, seed, method, n_subjects, n_permutations):
         """Check that the distribution of shuffle-row permutations is approximately uniform."""
         design = np.arange(n_subjects)[:, None]
-        perm = permute_design(
+        perm = _permute_design(
             design=design,
             columns=np.arange(1),
             n_permutations=n_permutations,
@@ -189,7 +189,7 @@ class TestPermutations:
     def test_flip_distribution(self, seed, method, n_subjects, n_permutations):
         """Check that the distribution of flip-sign permutations is approximately uniform."""
         design = np.ones((n_subjects, 1))
-        perm = permute_design(
+        perm = _permute_design(
             design=design,
             columns=np.arange(1),
             n_permutations=n_permutations,
