@@ -15,6 +15,7 @@ from nibabel.gifti.gifti import GiftiImage
 from nibabel.nifti1 import Nifti1Image
 from scipy.interpolate import RBFInterpolator, griddata
 from scipy.ndimage import binary_closing
+from scipy.spatial import KDTree
 
 from neuromodes.io import fs_extensions
 
@@ -409,12 +410,7 @@ def tetmesh_data_to_nifti(
     # TODO: consider adding a mapping parameter to avoid this check
     voxel_indices = np.column_stack(np.nonzero(nifti_mask.get_fdata()))
     voxel_coords = apply_affine(nifti_mask.affine, voxel_indices)
-    distances = np.linalg.norm(
-        tetmesh.v[:, None, :] - voxel_coords[None, :, :],
-        axis=2,
-    )
-    nearest_vertices = np.argmin(distances, axis=0)
-    nearest_distances = distances[nearest_vertices, np.arange(voxel_coords.shape[0])]
+    nearest_distances, nearest_vertices = KDTree(tetmesh.v).query(voxel_coords)
     if (np.any(nearest_distances > 1e-8)
             or np.unique(nearest_vertices).size != voxel_coords.shape[0]):
         raise ValueError("Every nonzero NIFTI mask voxel must correspond to a unique "
@@ -500,8 +496,7 @@ def nifti_data_to_tetmesh(
             raise ValueError("nifti_mask must be a 3D image with dimensions matching nifti_data.")
     
     # Get voxel coordinates and values
-    x, y, z = np.where(mask)
-    vox_coords = np.column_stack([x, y, z])
+    vox_coords = np.column_stack(np.where(mask))
     vox_coords = apply_affine(nifti_data.affine, vox_coords)
     
     # Linear interpolation within convex hull of voxel coordinates
