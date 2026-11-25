@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 from lapy import TetMesh, TriaMesh
-from nibabel import Nifti1Image, load
+from nibabel import Nifti1Image
 from nibabel.affines import apply_affine
 
 from neuromodes.mesh import (
@@ -30,7 +30,7 @@ def _vox_coords(image):
 
 def test_nifti_mask_to_tetmesh(mask_meshes):
     for name, mesh in mask_meshes.items():
-        image = load(DATA_DIR / name)
+        image = Nifti1Image.load(DATA_DIR / name)
         voxel_coords = _vox_coords(image)
 
         # check that all nonzero voxels are represented in the mesh
@@ -70,7 +70,7 @@ def test_nifti_mask_to_tetmesh_faulty_repair():
 
 def test_nifti_data_to_tetmesh(mask_meshes):
     # Load hippocampus mask
-    image = load(DATA_DIR / "hcp_hippo-lh_thr25.nii.gz")
+    image = Nifti1Image.load(DATA_DIR / "hcp_hippo-lh_thr25.nii.gz")
     mask = image.get_fdata() != 0
     voxel_indices = np.column_stack(np.nonzero(mask))
 
@@ -96,7 +96,7 @@ def test_nifti_data_to_tetmesh(mask_meshes):
 def test_nifti_data_to_tetmesh_multiple_maps(mask_meshes):
     # Load hippocampus mask and mesh
     hippo = "hcp_hippo-lh_thr25.nii.gz"
-    image = load(DATA_DIR / hippo)
+    image = Nifti1Image.load(DATA_DIR / hippo)
     mesh = mask_meshes[hippo]
     mask = image.get_fdata() != 0
 
@@ -117,7 +117,7 @@ def test_nifti_data_to_tetmesh_multiple_maps(mask_meshes):
 def test_tetmesh_data_to_nifti(mask_meshes):
     # Load hippocampus mask and mesh
     hippo = "hcp_hippo-lh_thr25.nii.gz"
-    image = load(DATA_DIR / hippo)
+    image = Nifti1Image.load(DATA_DIR / hippo)
     mesh = mask_meshes[hippo]
 
     # Create data on mesh and convert back to NIFTI
@@ -139,7 +139,7 @@ def test_tetmesh_data_to_nifti(mask_meshes):
 def test_tetmesh_data_to_nifti_multiple_maps(mask_meshes):
     # Load hippocampus mask and mesh
     hippo = "hcp_hippo-lh_thr25.nii.gz"
-    image = load(DATA_DIR / hippo)
+    image = Nifti1Image.load(DATA_DIR / hippo)
     mesh = mask_meshes[hippo]
 
     # Create data on mesh and convert back to NIFTI
@@ -164,7 +164,7 @@ def test_tetmesh_data_to_nifti_multiple_maps(mask_meshes):
 def test_tetmesh_data_to_nifti_aniso_affine():
     # Load hippocampus mask
     hippo = "hcp_hippo-lh_thr25.nii.gz"
-    image = load(DATA_DIR / hippo)
+    image = Nifti1Image.load(DATA_DIR / hippo)
 
     # Make affine anisotropic and create new mesh from it
     aniso_affine = image.affine.copy()
