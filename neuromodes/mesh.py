@@ -414,7 +414,7 @@ def tetmesh_data_to_nifti(
     # TODO P1 have a better way of getting the mask (rather than just assuming b/g is 0)
     # What if it should be a given ROI, or a given threshold, or a given set of labels?
     # A `mask_function` that is a Callable that takes the nifti_fdata and returns a boolean mask?
-    volume = _map_data_to_volume(data, tetmesh.v, nifti_mask.get_fdata() != 0, nifti_mask.affine)
+    volume = _map_data_to_volume(data, tetmesh.v, nifti_mask.get_fdata().astype(bool), nifti_mask.affine)
     return _copy_volume_to_nifti(volume, nifti_mask)
 
 def _map_data_to_volume(
@@ -463,14 +463,14 @@ def _map_vertices_to_volume(
 #     vertices: NDArray[np.floating],
 #     nifti_mask: Nifti1Image,
 # ) -> Nifti1Image:
-#     nifti_data = _map_data_to_volume(data, vertices, nifti_mask.get_fdata() != 0, nifti_mask.affine)
+#     nifti_data = _map_data_to_volume(data, vertices, nifti_mask.get_fdata().astype(bool), nifti_mask.affine)
 #     return _copy_data_to_nifti(nifti_data, nifti_mask)
 
 # def _map_vertices_to_nifti(
 #     vertices: NDArray[np.floating],
 #     nifti_mask: Nifti1Image,
 # ) -> Nifti1Image:
-#     nifti_data = _map_vertices_to_volume(vertices, nifti_mask.get_fdata() != 0, nifti_mask.affine)
+#     nifti_data = _map_vertices_to_volume(vertices, nifti_mask.get_fdata().astype(bool), nifti_mask.affine)
 #     return _copy_data_to_nifti(nifti_data, nifti_mask)
 
 # TODO: consider replacing linear interpolation and RBF with biharmonic inpainting
@@ -529,7 +529,7 @@ def nifti_data_to_tetmesh(
     if data.ndim not in (3, 4):
         raise ValueError("nifti_data must contain a 3D volume or a 4D series of maps.")
     if nifti_mask is None:
-        mask = data != 0
+        mask = data.astype(bool)
         # check that nonzeros are the same across all maps if 4D
         if data.ndim == 4:
             if not np.all(np.all(mask, axis=3)):
@@ -540,7 +540,7 @@ def nifti_data_to_tetmesh(
             mask = mask[:, :, :, 0]
     else:
         nifti_mask = _load_nifti(nifti_mask)
-        mask = nifti_mask.get_fdata() != 0
+        mask = nifti_mask.get_fdata().astype(bool)
         if mask.ndim != 3 or mask.shape != data.shape[:3]:
             raise ValueError("nifti_mask must be a 3D image with dimensions matching nifti_data.")
     
@@ -632,7 +632,7 @@ def nifti_mask_to_tetmesh(
         raise ValueError("Parameter `closings` must be a non-negative integer.")
     
     # Get binary ROI from NIFTI
-    roi = (nifti_mask.get_fdata() != 0).astype(np.uint8)
+    roi = nifti_mask.get_fdata().astype(bool).astype(np.uint8)
     if closings:
         roi = binary_closing(roi, iterations=closings)
 
