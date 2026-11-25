@@ -12,7 +12,6 @@ import numpy as np
 from lapy import TetMesh, TriaMesh
 from nibabel.affines import apply_affine
 from nibabel.gifti.gifti import GiftiImage
-from nibabel.loadsave import load
 from nibabel.nifti1 import Nifti1Image
 from scipy.interpolate import RBFInterpolator, griddata
 from scipy.ndimage import binary_closing
@@ -327,6 +326,33 @@ def check_surf(
         raise ValueError('Surface mesh is not manifold: contains edges belonging to more than two '
                          'cells.')
 
+def _load_nifti(nifti: str | Path | Nifti1Image) -> Nifti1Image:
+    """
+    Load a NIFTI file from a path or return the input if it is already a Nifti1Image.
+
+    Parameters
+    ----------
+    nifti : str, Path, or Nifti1Image
+        Input NIFTI file path or loaded ``Nifti1Image`` object.
+
+    Returns
+    -------
+    Nifti1Image
+        Loaded NIFTI image.
+
+    Raises
+    ------
+    TypeError
+        If ``nifti`` is not a ``Nifti1Image`` object or a path-like string to a valid ``.nii``
+        or ``.nii.gz`` file.
+    """
+    if isinstance(nifti, (str, Path)):
+        nifti = Nifti1Image.load(nifti)
+    elif not isinstance(nifti, Nifti1Image):
+        raise TypeError("nifti must be a Nifti1Image object or a path-like string to a valid "
+                        "`.nii` or `.nii.gz` file.")
+    return nifti
+
 def tetmesh_data_to_nifti(
     data: NDArray[np.floating],
     tetmesh: TetMesh,
@@ -377,11 +403,7 @@ def tetmesh_data_to_nifti(
         raise ValueError("data must have shape (n_verts,) or (n_verts, n_maps), where "
                          f"n_verts is {tetmesh.v.shape[0]}; got {data.shape}.")
 
-    if isinstance(nifti_mask, (str, Path)):
-        nifti_mask = load(nifti_mask)
-    elif not isinstance(nifti_mask, Nifti1Image):
-        raise TypeError("nifti_mask must be a Nifti1Image object or a path-like string to a valid "
-                         "`.nii` or `.nii.gz` file.")
+    nifti_mask = _load_nifti(nifti_mask)
 
     # Check that all nonzero voxels are represented in the mesh
     # TODO: consider adding a mapping parameter to avoid this check
@@ -455,11 +477,7 @@ def nifti_data_to_tetmesh(
         raise TypeError("tetmesh must be an instance of lapy.TetMesh.")
 
     # Load NIFTI if needed
-    if isinstance(nifti_data, (str, Path)):
-        nifti_data = load(nifti_data)
-    elif not isinstance(nifti_data, Nifti1Image):
-        raise TypeError("nifti_data must be a Nifti1Image object or path to a valid `.nii` or "
-                        "`.nii.gz` file.")
+    nifti_data = _load_nifti(nifti_data)
     
     # Get mask
     data = nifti_data.get_fdata()
@@ -476,11 +494,7 @@ def nifti_data_to_tetmesh(
                     )
             mask = mask[:, :, :, 0]
     else:
-        if isinstance(nifti_mask, (str, Path)):
-            nifti_mask = load(nifti_mask)
-        if not isinstance(nifti_mask, Nifti1Image):
-            raise TypeError("nifti_mask must be a Nifti1Image object or path to a valid `.nii` or "
-                            "`.nii.gz` file.")
+        nifti_mask = _load_nifti(nifti_mask)
         mask = nifti_mask.get_fdata() != 0
         if mask.ndim != 3 or mask.shape != data.shape[:3]:
             raise ValueError("nifti_mask must be a 3D image with dimensions matching nifti_data.")
@@ -568,11 +582,7 @@ def nifti_mask_to_tetmesh(
                           "neuromodes[vol]).") from e
 
     # Format / validate arguments
-    if isinstance(nifti_mask, (str, Path)):
-        nifti_mask = load(nifti_mask)
-    elif not isinstance(nifti_mask, Nifti1Image):
-        raise TypeError("vol must be a Nifti1Image object or a path-like string to a valid "
-                         "`.nii` or `.nii.gz` file.")
+    nifti_mask = _load_nifti(nifti_mask)
     if closings != int(closings) or closings < 0:
         raise ValueError("Parameter `closings` must be a non-negative integer.")
     
