@@ -396,9 +396,13 @@ def tetmesh_data_to_nifti(
         ``tetmesh``.
     """
     # Format / validate arguments
+    # TODO no need to check that tetmesh is a TetMesh (type hinted)
     if not isinstance(tetmesh, TetMesh):
         raise TypeError("tetmesh must be an instance of lapy.TetMesh.")
 
+    # TODO no need to check that data is array
+    # TODO no need to check for NaN and Inf --> just pass the user's data 
+    # TODO replace with _check_n_nverts once merged
     data = np.asarray_chkfinite(data)
     if data.ndim not in (1, 2) or data.shape[0] != tetmesh.v.shape[0]:
         raise ValueError("data must have shape (n_verts,) or (n_verts, n_maps), where "
@@ -406,23 +410,68 @@ def tetmesh_data_to_nifti(
 
     nifti_mask = _load_nifti(nifti_mask)
 
-    # Check that all nonzero voxels are represented in the mesh
-    # TODO: consider adding a mapping parameter to avoid this check
-    voxel_indices = np.column_stack(np.nonzero(nifti_mask.get_fdata()))
-    voxel_coords = apply_affine(nifti_mask.affine, voxel_indices)
-    nearest_distances, nearest_vertices = KDTree(tetmesh.v).query(voxel_coords)
+    # Main
+    # TODO P1 have a better way of getting the mask (rather than just assuming b/g is 0)
+    # What if it should be a given ROI, or a given threshold, or a given set of labels?
+    # A `mask_fucntion` that is a Callable that takes the nifti_fdata and returns a boolean mask?
+    volume = _map_data_to_volume(data, tetmesh.v, nifti_mask.get_fdata() != 0, nifti_mask.affine)
+    return _copy_volume_to_nifti(volume, nifti_mask)
+
+def _map_data_to_volume(
+    data: NDArray, # TODO type hint that output is same type as input
+    vertices: NDArray[np.floating],
+    volume: NDArray[np.bool_],
+    affine: NDArray[np.floating] | None,
+) -> NDArray:
+    assert data.shape[0] == vertices.shape[0]
+    voxel_indices = np.column_stack(np.nonzero(volume))
+    voxel_coords = apply_affine(affine, voxel_indices)
+    nearest_distances, nearest_vertices = KDTree(vertices).query(voxel_coords)
+
+    # TODO P1: review this. not a fan of the arbitary distance threshold ?return_distances
+    # also consider making the unique check optional ?on by default
     if (np.any(nearest_distances > 1e-8)
             or np.unique(nearest_vertices).size != voxel_coords.shape[0]):
         raise ValueError("Every nonzero NIFTI mask voxel must correspond to a unique "
                          "tetmesh vertex.")
 
     # Construct NIFTI via direct sampling of mesh data
-    output_shape = nifti_mask.shape + data.shape[1:]
-    nifti_data = np.zeros(output_shape, dtype=data.dtype)
-    nifti_data[tuple(voxel_indices.T)] = data[nearest_vertices]
-    header = nifti_mask.header.copy()
-    header.set_data_dtype(nifti_data.dtype)
-    return Nifti1Image(nifti_data, nifti_mask.affine, header=header)
+    # TODO P2 look for better way of setting background
+    output = np.zeros(volume.shape + data.shape[1:], dtype=data.dtype)
+    output[tuple(voxel_indices.T)] = data[nearest_vertices]
+    return output
+
+# TODO P1 read docs on how best to do this ?other data to be copied ?inbuilt function
+def _copy_volume_to_nifti(
+    volume: NDArray,
+    nifti: Nifti1Image,
+) -> Nifti1Image:
+    header = nifti.header.copy()
+    header.set_data_dtype(volume.dtype)
+    return Nifti1Image(volume, nifti.affine, header=header)
+
+# TODO consider if the following three functions are needed/useful and delete/uncomment as desired
+def _map_vertices_to_volume(
+    vertices: NDArray[np.floating],
+    volume: NDArray[np.bool_],
+    affine: NDArray[np.floating] | None,
+) -> NDArray[np.intp]:
+    return _map_data_to_volume(np.arange(1, vertices.shape[0] + 1, dtype=np.intp), 
+                               vertices, volume, affine)
+# def _map_data_to_nifti(
+#     data: NDArray[np.floating],
+#     vertices: NDArray[np.floating],
+#     nifti_mask: Nifti1Image,
+# ) -> Nifti1Image:
+#     nifti_data = _map_data_to_volume(data, vertices, nifti_mask.get_fdata() != 0, nifti_mask.affine)
+#     return _copy_data_to_nifti(nifti_data, nifti_mask)
+
+# def _map_vertices_to_nifti(
+#     vertices: NDArray[np.floating],
+#     nifti_mask: Nifti1Image,
+# ) -> Nifti1Image:
+#     nifti_data = _map_vertices_to_volume(vertices, nifti_mask.get_fdata() != 0, nifti_mask.affine)
+#     return _copy_data_to_nifti(nifti_data, nifti_mask)
 
 # TODO: consider replacing linear interpolation and RBF with biharmonic inpainting
 def nifti_data_to_tetmesh(
