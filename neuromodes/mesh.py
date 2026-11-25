@@ -413,7 +413,7 @@ def tetmesh_data_to_nifti(
     # Main
     # TODO P1 have a better way of getting the mask (rather than just assuming b/g is 0)
     # What if it should be a given ROI, or a given threshold, or a given set of labels?
-    # A `mask_fucntion` that is a Callable that takes the nifti_fdata and returns a boolean mask?
+    # A `mask_function` that is a Callable that takes the nifti_fdata and returns a boolean mask?
     volume = _map_data_to_volume(data, tetmesh.v, nifti_mask.get_fdata() != 0, nifti_mask.affine)
     return _copy_volume_to_nifti(volume, nifti_mask)
 
@@ -545,10 +545,11 @@ def nifti_data_to_tetmesh(
             raise ValueError("nifti_mask must be a 3D image with dimensions matching nifti_data.")
     
     # Get voxel coordinates and values
-    vox_coords = np.column_stack(np.where(mask))
+    vox_coords = np.column_stack(np.nonzero(mask))
     vox_coords = apply_affine(nifti_data.affine, vox_coords)
     
     # Linear interpolation within convex hull of voxel coordinates
+    # TODO P1 the convex hull is too broad. why not the surface of the mesh/mask?
     # TODO: consider adding a mapping parameter to use direct assignment for voxel-matching vertices
     values = data[mask]
     if (is_single_map := values.ndim == 1):
@@ -670,16 +671,13 @@ def nifti_mask_to_tetmesh(
     # Append vertices from marching cubes with voxel centers
     vox_coords = np.column_stack(np.nonzero(roi))
     vox_coords = apply_affine(nifti_mask.affine, vox_coords)
-    init_verts = np.vstack([surf.v, vox_coords])
 
     # Generate edges to complete tetrahedral mesh
-    tetgen = TetGen(init_verts, surf.t)
+    tetgen = TetGen(np.vstack([surf.v, vox_coords]), surf.t)
     tetgen.tetrahedralize(**tetgen_kwargs)
-    verts = tetgen.node
-    tetras = tetgen.elem
 
     # Convert to lapy
-    mesh = TetMesh(v=verts.astype(np.float64), t=tetras.astype(np.int32))
+    mesh = TetMesh(v=tetgen.node, t=tetgen.elem)
 
     # Ensure the generated volume mesh is valid
     check_vol(mesh)
