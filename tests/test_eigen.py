@@ -228,24 +228,15 @@ def test_reading_writing_h5_all_modes(solver, tmp_path):
 
 def test_reading_writing_h5_zero_modes(solver, tmp_path):
     h5_path = tmp_path / "solver_zero.h5"
-    solver.write_h5(h5_path, n_modes=0)
-    solver2 = EigenSolver.read_h5(h5_path, n_modes=0)
 
-    assert solver2.emodes.shape[1] == 0, "Expected zero modes read from HDF5."
-    assert solver2.evals.shape[0] == 0, "Expected zero eigenvalues read from HDF5."
+    with pytest.raises(NotImplementedError, match="Saving 0 modes is not yet implemented."):
+        solver.write_h5(h5_path, n_modes=0)
 
 def test_reading_writing_h5_more_modes(solver, tmp_path):
     h5_path = tmp_path / "solver_more.h5"
-    solver.write_h5(h5_path, n_modes=solver.n_modes + 1)
 
-    # Requesting more modes functions the same as requesting more data from an array
-    # e.g. `a = np.arange(10); a[:20]` returns all 10 elements, not 20, and does not error
-    solver2 = EigenSolver.read_h5(h5_path, n_modes=solver.n_modes + 1)
-
-    # Test that n_modes gets reset to the actual number, not the requested number
-    np.testing.assert_equal(solver2.n_modes, solver.n_modes)
-    np.testing.assert_allclose(solver2.emodes, solver.emodes)
-    np.testing.assert_allclose(solver2.evals, solver.evals)
+    with pytest.raises(ValueError, match=r"number of solved modes \(16\)"):
+        solver.write_h5(h5_path, n_modes=solver.n_modes + 1)
 
 @pytest.mark.parametrize("n_modes", [0, 1])
 def test_reading_writing_h5_unsolved_modes(surf_medmask, n_modes, tmp_path):

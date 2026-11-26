@@ -434,12 +434,14 @@ class EigenSolver(Solver):
         mode : {'w', 'x', 'w-'}, optional
             The mode in which to open the file. Default is ``'x'`` (exclusive creation).
         """
-        if n_modes is not None and self._n_modes is not None: 
-            n_modes = min(n_modes, self._n_modes)
-        elif n_modes is not None: # and self._n_modes is None:
-            raise ValueError("Eigenmodes not found. Please run the solve() method first.")
-        elif n_modes is None:
-            n_modes = self._n_modes # use _n_modes (not n_modes) as we are happy with `None` (still skipped)
+        if n_modes is not None and (n_modes < 0 or n_modes > self.n_modes):
+            raise ValueError("n_modes must be a positive integer no greater than the number of "
+                             f"solved modes ({self.n_modes}).")
+        elif n_modes == 0:
+        # TODO
+        # I think MGH says for consistency if 0 is allowed it should save empty arrays, so solve(0)
+        # and __init__() should also set the same.
+            raise NotImplementedError("Saving 0 modes is not yet implemented.")
 
         with h5py.File(path, mode) as f:
             f.create_dataset('geometry/vertices', data=self.geometry.v)
@@ -449,10 +451,10 @@ class EigenSolver(Solver):
             if self.hetero is not None:
                 f.create_dataset('hetero', data=self.hetero)
 
-            if n_modes is not None and self.emodes is not None and self.evals is not None:
+            if self._n_modes is not None:
                 f.create_dataset('emodes', data=self.emodes[:, :n_modes])
                 f.create_dataset('evals', data=self.evals[:n_modes])
-                f.attrs['n_modes'] = n_modes
+                f.attrs['n_modes'] = self.n_modes if n_modes is None else n_modes
 
             _write_csc_to_h5(f, "mass", self.mass)
             _write_csc_to_h5(f, "stiffness", self.stiffness)
