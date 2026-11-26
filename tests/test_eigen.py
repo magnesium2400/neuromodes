@@ -4,7 +4,12 @@ import numpy as np
 import pytest
 from lapy.shapedna import normalize_ev
 
-from neuromodes.eigen import EigenSolver, align_basis, get_eigengroup_inds, is_orthonormal_basis
+from neuromodes.eigen import (
+    EigenSolver,
+    align_basis,
+    get_eigengroup_inds,
+    is_orthonormal_basis,
+)
 from neuromodes.io import fetch_example_map, fetch_example_surf, fetch_example_vol
 from neuromodes.mesh import normalize_vol
 from neuromodes.stats import sigmoid_rescale, zscorew
@@ -263,7 +268,7 @@ def test_reading_writing_h5_unsolved_modes(surf_medmask, n_modes, tmp_path):
 def test_reading_writing_h5_some_modes(solver, tmp_path):
     alln = solver.n_modes
     halfn = solver.n_modes // 2
-    error_msg = f"Unexpected number of modes read from HDF5."
+    error_msg = "Unexpected number of modes read from HDF5."
 
     # write default modes and see how many are read back
     h5_path = tmp_path / "solver_default.h5"

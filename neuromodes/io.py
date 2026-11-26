@@ -8,12 +8,14 @@ from importlib.resources import as_file, files
 from importlib.util import find_spec
 from os import getenv
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
+import h5py
 import numpy as np
 from lapy import TetMesh, TriaMesh
 from nibabel.gifti.gifti import GiftiImage
 from nibabel.loadsave import load
+from scipy.sparse import csc_matrix
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -337,3 +339,43 @@ def _cache_output(
 
     # Return cached version of the function
     return Memory(cache_dir, verbose=0).cache(function)
+
+def _write_csc_to_h5(
+    h5: h5py.File,
+    name: str,
+    mat: csc_matrix
+    ) -> None:
+    grp = h5.create_group(name)
+    grp.create_dataset('indptr', data=mat.indptr)
+    grp.create_dataset('indices', data=mat.indices)
+    grp.create_dataset('data', data=mat.data)
+    grp.attrs['shape'] = mat.shape
+
+def _read_nparray_from_h5(
+    h5: h5py.File,
+    key: str,
+    index: Any = ()
+    ) -> np.ndarray:
+    obj = h5[key]
+    if not isinstance(obj, h5py.Dataset):
+        raise TypeError(f"Expected HDF5 dataset at '{key}', got {type(obj).__name__}.")
+    return np.asarray(obj[index])
+
+def _read_csc_from_h5(
+    h5: h5py.File,
+    name: str
+    ) -> csc_matrix | None:
+    if name not in h5:
+        return None
+    grp = h5[name]
+    if not isinstance(grp, h5py.Group):
+        raise TypeError(f"Expected HDF5 group at '{name}', got {type(grp).__name__}.")
+    shape = tuple(int(x) for x in np.asarray(grp.attrs["shape"]))
+    return csc_matrix(
+        (
+            _read_nparray_from_h5(h5, f"{name}/data"),
+            _read_nparray_from_h5(h5, f"{name}/indices"),
+            _read_nparray_from_h5(h5, f"{name}/indptr"),
+        ),
+        shape=shape,
+    )
