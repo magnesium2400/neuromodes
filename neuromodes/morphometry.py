@@ -22,7 +22,7 @@ StatLiteral = Literal['t', 'f', 'z']
 PermutationLiteral = Literal["flip", "shuffle", "flip_shuffle"]
 
 @dataclass(frozen=True, slots=True)
-class _TailFitResult:
+class TailFitResult:
     """Generalized Pareto distribution (GPD) tail-fit diagnostics aligned with the statistical map.
 
     Attributes
@@ -185,7 +185,7 @@ def _iter_permute_design(
             yield perm_design
     return _stream()
 
-def _iter_null_stat_maps(
+def iter_null_stat_maps(
     design: NDArray,
     response: NDArray,
     contrast: NDArray | np.number | float,
@@ -224,7 +224,7 @@ def generate_null_stat_maps(
 
     If `n_permutations` is None, all permutations are generated (if finite).
     """
-    stream = _iter_null_stat_maps(design, response, contrast, statistic, method, seed)
+    stream = iter_null_stat_maps(design, response, contrast, statistic, method, seed)
     return _stack_arrays(stream, n=n_permutations)
 
 @overload
@@ -264,7 +264,7 @@ def compute_p_values(
     *,
     return_tail: Literal[False] = False,
     return_fit: Literal[True],
-) -> tuple[NDArray[np.floating], _TailFitResult]: ...
+) -> tuple[NDArray[np.floating], TailFitResult]: ...
 
 @overload
 def compute_p_values(
@@ -277,7 +277,7 @@ def compute_p_values(
     *,
     return_tail: Literal[True],
     return_fit: Literal[True],
-) -> tuple[NDArray[np.floating], NDArray[np.bool_], _TailFitResult]: ...
+) -> tuple[NDArray[np.floating], NDArray[np.bool_], TailFitResult]: ...
 
 # TODO FUTURE look at ways of vectorising this across vertices ?Newton method for MLE ?method of moments
 # TODO FUTURE support observed_stat_map being 2D for alternative == two-sided ?recursion
@@ -295,8 +295,8 @@ def compute_p_values(
     return_fit: bool = False,
 ) -> NDArray[np.floating] \
     | tuple[NDArray[np.floating], NDArray[np.bool_]] \
-    | tuple[NDArray[np.floating], _TailFitResult] \
-    | tuple[NDArray[np.floating], NDArray[np.bool_], _TailFitResult]: 
+    | tuple[NDArray[np.floating], TailFitResult] \
+    | tuple[NDArray[np.floating], NDArray[np.bool_], TailFitResult]: 
 
     # Note that fit_candidate_sizes and fit_trigger should be specified as 
     # integers (like in Knijnenberg et al. 2009), NOT as fractions (like in PALM).
@@ -420,7 +420,7 @@ def compute_p_values(
         fit_params = sqz1(fit_params)
         fit_pvalue = sqz1(fit_pvalue)
 
-    fit_result = _TailFitResult(n=fit_n, fit=fit_params, pvalue=fit_pvalue)
+    fit_result = TailFitResult(n=fit_n, fit=fit_params, pvalue=fit_pvalue)
 
     if not return_tail and not return_fit:
         return p_values
