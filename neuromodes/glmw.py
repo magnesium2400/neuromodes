@@ -1,24 +1,28 @@
 from __future__ import annotations
+
 from types import SimpleNamespace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
+
 import numpy as np
 import scipy.stats as sps
 
 from neuromodes.eigen import EigenData
-from neuromodes.stats import ssqw, solvew
+from neuromodes.stats import solvew, ssqw
 
 if TYPE_CHECKING:
-    from typing import Literal
+    from numpy.typing import NDArray
     from scipy.sparse import csc_matrix
+
+AlternativeLiteral = Literal["two-sided", "greater", "less"]
 
 # TODO check performace on unequal variance data (Welch's t-test/ANOVA)
 
 def _glmw(
-    design: np.ndarray, # (n_vertices, n_predictors)
-    response: np.ndarray, # (n_vertices, n_data)
-    contrast: np.ndarray, # (n_contrasts, n_predictors)
+    design: NDArray, # (n_vertices, n_predictors)
+    response: NDArray, # (n_vertices, n_data)
+    contrast: NDArray, # (n_contrasts, n_predictors)
     mass: csc_matrix, # (n_vertices, n_vertices)
-):
+) -> tuple[NDArray, NDArray, int]:
     # 0. Input validation
     ved = EigenData(data=(design, response), mass=mass)
     design, response = ved.data
@@ -68,11 +72,11 @@ def _glmw(
 
 # TODO P5 consider writing wrapper for ttest_1samp, f_oneway etc. 
 def ttestw(
-    design: np.ndarray, 
-    response: np.ndarray, 
-    contrast: np.ndarray, 
+    design: NDArray, 
+    response: NDArray, 
+    contrast: NDArray, 
     mass: csc_matrix, 
-    alternative: Literal['two-sided', 'greater', 'less'] = 'two-sided'
+    alternative: AlternativeLiteral = 'two-sided'
 ) -> SimpleNamespace:
     """Weighted t-test for one or two samples."""
 
@@ -99,6 +103,8 @@ def ttestw(
     # return a SimpleNamespace for compatibility with sps.ttest_*
     # (sps returns a TTestResult object with statistic, pvalue, and df attributes)
     # we don't return a confidence_interval method (?yet)
+    # TODO: consider returning a dataclass object for immutability / type safety / consistency with
+    # mbm.FitResult / IDE autocompletion
     return SimpleNamespace(
         statistic=statistic, 
         pvalue=pvalue,
@@ -107,11 +113,11 @@ def ttestw(
 
 # TODO add tests for this
 def ztestw(
-    design: np.ndarray, 
-    response: np.ndarray, 
-    contrast: np.ndarray, 
+    design: NDArray, 
+    response: NDArray, 
+    contrast: NDArray, 
     mass: csc_matrix, 
-    alternative: Literal['two-sided', 'greater', 'less'] = 'two-sided'
+    alternative: AlternativeLiteral = 'two-sided'
 ) -> SimpleNamespace:
     """Weighted z-test derived from ttestw."""
     res = ttestw(design, response, contrast, mass, alternative=alternative)
@@ -131,11 +137,11 @@ def ztestw(
     )
 
 def ftestw(
-    design: np.ndarray, 
-    response: np.ndarray, 
-    contrast: np.ndarray, 
+    design: NDArray, 
+    response: NDArray, 
+    contrast: NDArray, 
     mass: csc_matrix
-) -> tuple:
+) -> tuple[NDArray, NDArray]:
     """Weighted F-test for one-way ANOVA and ANCOVA."""
     Q, _, df = _glmw(design, response, contrast, mass)
     
