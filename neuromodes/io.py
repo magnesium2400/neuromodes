@@ -8,12 +8,14 @@ from importlib.resources import as_file, files
 from importlib.util import find_spec
 from os import getenv
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
+import h5py
 import numpy as np
 from lapy import TetMesh, TriaMesh
 from nibabel.gifti.gifti import GiftiImage
 from nibabel.loadsave import load
+from scipy.sparse import csc_matrix
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -337,3 +339,107 @@ def _cache_output(
 
     # Return cached version of the function
     return Memory(cache_dir, verbose=0).cache(function)
+
+def _write_csc_to_h5(
+    h5: h5py.File,
+    key: str,
+    mat: csc_matrix
+    ) -> None:
+    """
+    Write a sparse matrix to an HDF5 file.
+
+    Parameters
+    ----------
+    h5 : h5py.File
+        The HDF5 file to write to.
+    key : str
+        The key of the group to create.
+    mat : csc_matrix
+        The sparse matrix to write.
+    """
+    grp = h5.create_group(key)
+    grp.create_dataset('indptr', data=mat.indptr)
+    grp.create_dataset('indices', data=mat.indices)
+    grp.create_dataset('data', data=mat.data)
+    grp.attrs['shape'] = mat.shape
+
+def _read_nparray_from_h5(
+    h5: h5py.File,
+    key: str,
+    index: Any = ()
+    ) -> NDArray:
+    """
+    Read a NumPy array from an HDF5 file.
+
+    Parameters
+    ----------
+    h5 : h5py.File
+        The HDF5 file to read from.
+    key : str
+        The key of the group to read.
+    index : Any, optional
+        The index to use when reading the array. Default is an empty tuple, which reads the entire
+        array.
+
+    Returns
+    -------
+    np.ndarray
+        The read NumPy array.
+
+    Raises
+    ------
+    KeyError
+        If the dataset with the specified key is not found in the HDF5 file.
+    TypeError
+        If the object at the specified key is not an HDF5 dataset.
+    """
+    if key not in h5:
+        raise KeyError(f"Dataset '{key}' not found in HDF5 file.")
+    grp = h5[key]
+    if not isinstance(grp, h5py.Dataset):
+        raise TypeError(f"Expected HDF5 dataset at '{key}', got {type(grp).__name__}.")
+    
+    return np.asarray(grp[index])
+
+def _read_csc_from_h5(
+    h5: h5py.File,
+    key: str
+    ) -> csc_matrix:
+    """
+    Read a sparse matrix from an HDF5 file.
+
+    Parameters
+    ----------
+    h5 : h5py.File
+        The HDF5 file to read from.
+    key : str
+        The key of the group to read.
+
+    Returns
+    -------
+    csc_matrix
+        The read sparse matrix.
+
+    Raises
+    ------
+    KeyError
+        If the group with the specified name is not found in the HDF5 file.
+    TypeError
+        If the object at the specified name is not an HDF5 group.
+    """
+    if key not in h5:
+        raise KeyError(f"Group '{key}' not found in HDF5 file.")
+    grp = h5[key]
+    if not isinstance(grp, h5py.Group):
+        raise TypeError(f"Expected HDF5 group at '{key}', got {type(grp).__name__}.")
+    
+    shape = tuple(int(x) for x in np.asarray(grp.attrs["shape"]))
+
+    return csc_matrix(
+        (
+            _read_nparray_from_h5(h5, f"{key}/data"),
+            _read_nparray_from_h5(h5, f"{key}/indices"),
+            _read_nparray_from_h5(h5, f"{key}/indptr"),
+        ),
+        shape=shape,
+    )

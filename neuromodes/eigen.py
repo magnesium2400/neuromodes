@@ -5,16 +5,22 @@ Module for computing geometric eigenmodes of brain structures from surface and v
 from __future__ import annotations
 
 from dataclasses import dataclass
+from importlib.metadata import version
 from typing import TYPE_CHECKING, cast, overload
 from warnings import warn
-from importlib.metadata import version
 
+import h5py
 import numpy as np
 from lapy import Solver
-from scipy.sparse import csc_matrix, isspmatrix_csc
-import h5py
+from scipy.sparse import csc_matrix
 
-from neuromodes.io import read_surf, read_vol
+from neuromodes.io import (
+    _read_csc_from_h5,
+    _read_nparray_from_h5,
+    _write_csc_to_h5,
+    read_surf,
+    read_vol,
+)
 from neuromodes.mesh import check_surf, check_vol, is_vol, mask_mesh
 
 if TYPE_CHECKING:
@@ -428,25 +434,16 @@ class EigenSolver(Solver):
         mode : {'w', 'x', 'w-'}, optional
             The mode in which to open the file. Default is ``'x'`` (exclusive creation).
         """
-        if n_modes is not None and self._n_modes is not None: 
-            if n_modes > self._n_modes:
-                n_modes = self._n_modes
-        elif n_modes is not None: # and self._n_modes is None:
-            raise ValueError("Eigenmodes not found. Please run the solve() method first.")
-        elif n_modes is None:
-            n_modes = self._n_modes # use _n_modes (not n_modes) as we are happy with `None` (still skipped)
+        if n_modes is not None and (n_modes < 0 or n_modes > self.n_modes):
+            raise ValueError("n_modes must be a positive integer no greater than the number of "
+                             f"solved modes ({self.n_modes}).")
+        elif n_modes == 0:
+        # TODO
+        # I think MGH says for consistency if 0 is allowed it should save empty arrays, so solve(0)
+        # and __init__() should also set the same.
+            raise NotImplementedError("Saving 0 modes is not yet implemented.")
 
         with h5py.File(path, mode) as f:
-            def write_csc(name: str, mat: Any) -> bool:
-                if not isspmatrix_csc(mat):
-                    return False
-                grp = f.create_group(name)
-                grp.create_dataset('indptr', data=mat.indptr)
-                grp.create_dataset('indices', data=mat.indices)
-                grp.create_dataset('data', data=mat.data)
-                grp.attrs['shape'] = mat.shape
-                return True
-
             f.create_dataset('geometry/vertices', data=self.geometry.v)
             f.create_dataset('geometry/cells', data=self.geometry.t)
             if self.mask is not None:
@@ -454,16 +451,13 @@ class EigenSolver(Solver):
             if self.hetero is not None:
                 f.create_dataset('hetero', data=self.hetero)
 
-            if n_modes is not None and self.emodes is not None and self.evals is not None:
+            if self._n_modes is not None:
                 f.create_dataset('emodes', data=self.emodes[:, :n_modes])
                 f.create_dataset('evals', data=self.evals[:n_modes])
-                f.attrs['n_modes'] = n_modes
+                f.attrs['n_modes'] = self.n_modes if n_modes is None else n_modes
 
-            if not write_csc("mass", self.mass):
-                warn("Mass matrix is not a sparse CSC matrix. It will not be saved.")
-
-            if not write_csc("stiffness", self.stiffness):
-                warn("Stiffness matrix is not a sparse CSC matrix. It will not be saved.")
+            _write_csc_to_h5(f, "mass", self.mass)
+            _write_csc_to_h5(f, "stiffness", self.stiffness)
 
             f.attrs['lump'] = self.lump
             f.attrs['use_cholmod'] = self.use_cholmod
@@ -494,42 +488,20 @@ class EigenSolver(Solver):
             The ``EigenSolver`` instance.
         """
         with h5py.File(path, "r") as f:
-            def read_nparray(key: str, index: Any = ()) -> np.ndarray:
-                obj = f[key]
-                if not isinstance(obj, h5py.Dataset):
-                    raise TypeError(f"Expected HDF5 dataset at '{key}', got {type(obj).__name__}.")
-                return np.asarray(obj[index])
-
-            def read_csc(name: str) -> csc_matrix | None:
-                if name not in f:
-                    return None
-                grp = f[name]
-                if not isinstance(grp, h5py.Group):
-                    raise TypeError(f"Expected HDF5 group at '{name}', got {type(grp).__name__}.")
-                shape = tuple(int(x) for x in np.asarray(grp.attrs["shape"]))
-                return csc_matrix(
-                    (
-                        read_nparray(f"{name}/data"),
-                        read_nparray(f"{name}/indices"),
-                        read_nparray(f"{name}/indptr"),
-                    ),
-                    shape=shape,
-                )
-
             geometry = {
-                "vertices": read_nparray("geometry/vertices"),
-                "cells": read_nparray("geometry/cells"),
+                "vertices": _read_nparray_from_h5(f, "geometry/vertices"),
+                "cells": _read_nparray_from_h5(f, "geometry/cells"),
             }
-            mask = read_nparray("mask") if "mask" in f else None
+            mask = _read_nparray_from_h5(f, "mask") if "mask" in f else None
 
             lump = bool(f.attrs['lump'])
-            hetero = read_nparray('hetero') if 'hetero' in f else None
+            hetero = _read_nparray_from_h5(f, 'hetero') if 'hetero' in f else None
             use_cholmod = bool(f.attrs['use_cholmod'])
             n_verts = cast(int, f.attrs['n_verts'])
 
             if "n_modes" in f.attrs and "emodes" in f:
-                emodes = read_nparray("emodes", (slice(None), slice(None, n_modes)))
-                evals = read_nparray("evals", slice(None, n_modes))
+                emodes = _read_nparray_from_h5(f, "emodes", (slice(None), slice(None, n_modes)))
+                evals = _read_nparray_from_h5(f, "evals", slice(None, n_modes))
                 n_modes = emodes.shape[1]
             elif n_modes is None:
                 emodes = None
@@ -541,8 +513,8 @@ class EigenSolver(Solver):
                     "No modes can be loaded."
                 )
 
-            mass = read_csc("mass")
-            stiffness = read_csc("stiffness")
+            mass = _read_csc_from_h5(f, "mass")
+            stiffness = _read_csc_from_h5(f, "stiffness")
 
         solver = cls(geometry)
         # manually set other things

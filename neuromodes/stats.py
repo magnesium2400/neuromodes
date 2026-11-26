@@ -233,8 +233,8 @@ def momentw(
     order : int
         The order of the moment to compute.
     keepdims : bool, optional
-        If ``True``, the output will have the same number of dimensions as the input array. Default is
-        ``False``.
+        If ``True``, the output will have the same number of dimensions as the input array. Default
+        is ``False``.
 
     Returns
     -------
@@ -271,8 +271,8 @@ def stdw(
     mass : array-like
         The mass matrix, of shape ``(n_verts, n_verts)``.
     keepdims : bool, optional
-        If ``True``, the output will have the same number of dimensions as the input array. Default is
-        ``False``.
+        If ``True``, the output will have the same number of dimensions as the input array. Default
+        is ``False``.
 
     Returns
     -------
